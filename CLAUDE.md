@@ -6,7 +6,7 @@ Fork of [Superpowers](https://github.com/obra/superpowers) v5.0.5 — customized
 
 ```
 skills/          — one dir per skill, each with SKILL.md + references/
-hooks/           — SessionStart (diet-activate), UserPromptSubmit (diet-track), PreToolUse:Bash (cmd-rewrite), PreCompact + SessionEnd (wiki-archive)
+hooks/           — SessionStart (diet-activate), UserPromptSubmit (diet-track), PreToolUse:Bash (cmd-rewrite + auto-review), PreCompact + SessionEnd (wiki-archive)
 agents/          — subagent prompts (code-reviewer, codex-rescue)
 scripts/         — codex-bridge.mjs (native Codex CLI integration)
 schemas/         — structured output contracts for Codex (implementation, spec-review, quality-review)
@@ -23,3 +23,4 @@ tests/           — skill and brainstorm-server tests
 - Diet hooks: `hooks/package.json` is `{"type":"commonjs"}` even though the repo root is ESM — needed because hook files use CJS. Don't delete it
 - Project wiki lives at `<cwd>/.claude/wiki/`: per-session JSON+MD in `sessions/`, plus `decisions.md`, `gotchas.md`, `index.md`. Sidecars are also symlinked into `~/.claude/sessions/` for cross-project tooling
 - All skill changes must be eval-tested before committing
+- `git push` / `gh pr create` / `gh pr ready` trigger an auto-review hook that blocks unless Codex verdict=approve. Bypass: `SSPOWER_AUTO_REVIEW=off` (emergencies only). Three SKILL.md HARD-GATEs (writing-plans, subagent-driven-development, finishing-a-development-branch) enforce the same review at earlier checkpoints
