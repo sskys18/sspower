@@ -11,9 +11,22 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 ## The Process
 
-### Step 0: Verify Second Opinion Complete (HARD GATE)
+### Step 0: Verify Codex Branch Review Complete (HARD GATE)
 
-Before anything else: has `sspower:second-opinion` been run on this branch? If not, invoke it now. Do NOT proceed to Step 1 without an independent Codex review.
+Before anything else: run a Codex review of the full branch diff. Skipping this step is a merge-readiness failure, regardless of whether tests pass or Claude already reviewed.
+
+```bash
+git diff $(git merge-base HEAD main)..HEAD > /tmp/branch.diff
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review \
+  --prompt "Review the branch diff at /tmp/branch.diff. Flag bugs, regressions, missing tests, security issues. Out of scope: stylistic refactors. Return structured verdict."
+```
+
+Block on `verdict`:
+- `approve` → proceed to Step 1.
+- `needs-attention` → fix every issue from `issues[]`, commit, re-run review until `approve`. Do NOT merge or PR with unresolved findings.
+- `reject` → return to implementation; the branch is not ready.
+
+If `sspower:second-opinion` was already invoked and approved on the current HEAD, that satisfies this gate — skip the re-run.
 
 ### Step 1: Verify Tests
 
