@@ -7,6 +7,15 @@ description: Use when executing implementation plans with independent tasks in t
 
 Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance first, then code quality.
 
+<HARD-GATE>
+**Codex review is MANDATORY for both review stages, not optional.** After every task implementation, run `codex-bridge.mjs spec-review` then `codex-bridge.mjs review`. Block on each `verdict`:
+- `approve` → proceed.
+- `needs-attention` → fix every issue, re-run review until `approve`.
+- `reject` → return to implementation.
+
+Claude-only reviews are insufficient for the merge gate. The Codex gate is the source of truth.
+</HARD-GATE>
+
 **Why subagents:** Isolated context per task. You construct exactly what they need — they never inherit your session history.
 
 **Core principle:** Fresh subagent per task + two-stage review = high quality, fast iteration
@@ -137,6 +146,7 @@ See `references/codex-integration.md` for full details on engine selection, thre
 **Never:**
 - Start on main/master without explicit consent
 - Skip reviews (spec OR quality)
+- Skip the Codex review gate, even if the Claude review approved
 - Proceed with unfixed issues
 - Dispatch parallel implementation subagents
 - Make subagent read plan file (provide full text)
