@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # sspower auto-review hook (PreToolUse:Bash)
 #
-# Fires before every Bash call. Only acts when the command is a `git push`.
+# Fires before every Bash call. Acts when the command is a chokepoint:
+#   - `git push ...`         (local -> remote)
+#   - `gh pr create ...`     (open PR)
+#   - `gh pr ready ...`      (mark draft PR ready for review)
 # Runs a Codex review of the branch diff vs upstream (or main) and blocks
-# the push if the verdict is not `approve`.
+# the action if the verdict is not `approve`.
 #
 # Bypass: set SSPOWER_AUTO_REVIEW=off in the env. Useful for emergencies
 # and for the hook's own self-tests.
@@ -27,9 +30,10 @@ fi
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Only intercept `git push` invocations. Match the leading token; ignore
-# pipelines/subshells where push is buried.
-if ! echo "$CMD" | grep -Eq '^[[:space:]]*git[[:space:]]+push(\b|$)'; then
+# Only intercept push / PR-publish chokepoints. Match the leading tokens;
+# pipelines/subshells where these are buried are intentionally allowed
+# through (an explicit caller-side bypass).
+if ! echo "$CMD" | grep -Eq '^[[:space:]]*(git[[:space:]]+push([[:space:]]|$)|gh[[:space:]]+pr[[:space:]]+(create|ready)([[:space:]]|$))'; then
   exit 0
 fi
 
@@ -95,7 +99,7 @@ SUMMARY=$(echo "$RESULT" | jq -r '
   end
 ' 2>/dev/null)
 
-REASON=$(printf 'Codex auto-review blocked this push.\n%s\n\nFix the issues, commit, and try again. Bypass with SSPOWER_AUTO_REVIEW=off only for emergencies.' "$SUMMARY")
+REASON=$(printf 'Codex auto-review blocked this push/PR.\n%s\n\nFix the issues, commit, and try again. Bypass with SSPOWER_AUTO_REVIEW=off only for emergencies.' "$SUMMARY")
 
 jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
