@@ -11,6 +11,15 @@ Write comprehensive implementation plans assuming the engineer has zero context 
 
 **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md` (user preferences override)
 
+## Pre-flight: read project wiki
+
+Before drafting the plan, read these if they exist:
+
+- `<cwd>/.claude/wiki/decisions.md` — prior architectural calls; align plan with them or flag conflicts
+- `<cwd>/.claude/wiki/sessions/` — last 3 session `.md` files for recent project state
+
+Skip silently if the directory doesn't exist.
+
 ## Scope Check
 
 If the spec covers multiple independent subsystems, suggest breaking into separate plans — one per subsystem. Each plan should produce working, testable software on its own.
@@ -43,6 +52,24 @@ After writing the complete plan, check:
 3. **Type consistency:** Names match across tasks?
 
 Fix issues inline. If spec requirement has no task, add the task.
+
+## Codex Spec Review (MANDATORY)
+
+<HARD-GATE>
+After self-review, run an independent Codex spec-review. Skipping this step is a plan failure.
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" spec-review \
+  --prompt @docs/plans/YYYY-MM-DD-<feature-name>.md
+```
+
+Block on the structured `verdict`:
+- `approve` → proceed to Execution Handoff.
+- `needs-attention` → fix every issue from the `issues[]` array inline in the plan, then re-run spec-review until `approve`. Do NOT proceed to execution with unresolved findings.
+- `reject` → discard the plan, return to brainstorming.
+
+Save the review structured output under `docs/reviews/<plan-name>-spec-review.json` if the user requests an audit trail.
+</HARD-GATE>
 
 ## Execution Handoff
 
