@@ -11,6 +11,7 @@ A complete software development workflow for Claude Code. Fork of [Superpowers](
 - **Wired skills** — `brainstorming`, `writing-plans`, and `systematic-debugging` now read the project wiki before proposing work, so prior decisions and gotchas inform every new design and bug investigation.
 - **Codex defaults** — `codex-bridge.mjs` defaults to `gpt-5.5` model with `xhigh` reasoning effort. Override per-call with `--model` / `--effort`.
 - **Command rewrite hook** — `PreToolUse:Bash` hook (`hooks/cmd-rewrite.sh`) routes shell commands through an external rewriter for token-saving substitutions. Default rewriter is the [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`. Optional — needs the rewriter binary (>= 0.23.0) and `jq` on PATH; the hook is a no-op when either is missing.
+- **Auto-review on push** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push` and runs Codex review on the branch diff vs upstream. Blocks the push when the verdict is not `approve`, surfacing the issue list to Claude. Iteration cost is zero (local commits aren't reviewed); review fires once per push attempt. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 
 ## Installation
 
