@@ -19,6 +19,11 @@ set -u
 if [ "${SSPOWER_AUTO_REVIEW:-on}" = "off" ]; then
   exit 0
 fi
+# Per-repo bypass file. Touch `.sspower-skip-auto-review` at the
+# repo root to disable the hook for one push window.
+if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.sspower-skip-auto-review" ]; then
+  exit 0
+fi
 
 if ! command -v jq &>/dev/null; then
   exit 0
