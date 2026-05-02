@@ -7,14 +7,20 @@ description: Use when executing implementation plans with independent tasks in t
 
 Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance first, then code quality.
 
-<HARD-GATE>
-**Codex review is MANDATORY for both review stages, not optional.** After every task implementation, run `codex-bridge.mjs spec-review` then `codex-bridge.mjs review`. Block on each `verdict`:
+**Codex review per task is strongly recommended** for high-quality
+iteration. Run `codex-bridge.mjs spec-review` then `codex-bridge.mjs
+review` after each task implementation. On each `verdict`:
 - `approve` → proceed.
 - `needs-attention` → fix every issue, re-run review until `approve`.
 - `reject` → return to implementation.
 
-Claude-only reviews are insufficient for the merge gate. The Codex gate is the source of truth.
-</HARD-GATE>
+**Final enforcement is automatic:** the `auto-review.sh` PreToolUse hook
+runs Codex `review` on the full branch diff before `git push` /
+`gh pr create` / `gh pr ready` and **blocks** unless verdict is
+`approve`. Claude-only per-task reviews can pass quickly, but the merge
+gate is the source of truth — anything that wouldn't survive the branch
+review will be caught there. Bypass: `SSPOWER_AUTO_REVIEW=off`
+(emergencies only).
 
 **Why subagents:** Isolated context per task. You construct exactly what they need — they never inherit your session history.
 

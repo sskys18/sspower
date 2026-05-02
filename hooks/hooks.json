@@ -47,6 +47,11 @@
           },
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/auto-spec-gate.sh\"",
+            "timeout": 600
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/auto-review.sh\"",
             "timeout": 600
           }

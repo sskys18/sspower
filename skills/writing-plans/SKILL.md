@@ -53,23 +53,28 @@ After writing the complete plan, check:
 
 Fix issues inline. If spec requirement has no task, add the task.
 
-## Codex Spec Review (MANDATORY)
+## Codex Spec Review (auto-enforced at commit)
 
-<HARD-GATE>
-After self-review, run an independent Codex spec-review. Skipping this step is a plan failure.
+The `auto-spec-gate.sh` PreToolUse hook fires on `git commit` whenever
+staged files include `docs/plans/*.md`. It runs Codex `spec-review` on
+the staged plan and **blocks the commit** unless verdict is `approve`.
+No honor system — the commit fails with the issues summary.
+
+When the gate denies:
+- Read the issues list from the deny payload.
+- Fix every issue inline in the plan.
+- Restage and recommit. Hook re-runs.
+- `reject` verdict → discard the plan, return to brainstorming.
+
+Optionally pre-flight before staging to surface issues earlier:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" spec-review \
   --prompt @docs/plans/YYYY-MM-DD-<feature-name>.md
 ```
 
-Block on the structured `verdict`:
-- `approve` → proceed to Execution Handoff.
-- `needs-attention` → fix every issue from the `issues[]` array inline in the plan, then re-run spec-review until `approve`. Do NOT proceed to execution with unresolved findings.
-- `reject` → discard the plan, return to brainstorming.
-
-Save the review structured output under `docs/reviews/<plan-name>-spec-review.json` if the user requests an audit trail.
-</HARD-GATE>
+Save review JSON under `docs/reviews/<plan-name>-spec-review.json` if the
+user wants an audit trail. Bypass: `SSPOWER_AUTO_REVIEW=off` (emergencies).
 
 ## Execution Handoff
 

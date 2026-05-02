@@ -11,9 +11,15 @@ description: Use when implementation is complete, all tests pass, and you need t
 
 ## The Process
 
-### Step 0: Verify Codex Branch Review Complete (HARD GATE)
+### Step 0: Pre-flight Codex Branch Review (recommended)
 
-Before anything else: run a Codex review of the full branch diff. Skipping this step is a merge-readiness failure, regardless of whether tests pass or Claude already reviewed.
+The `auto-review.sh` PreToolUse hook **auto-runs** Codex `review` on the
+full branch diff at `git push` / `gh pr create` / `gh pr ready` and
+blocks the action unless verdict is `approve`. The hook is the real
+merge gate.
+
+You SHOULD pre-flight here to surface findings before the push attempt
+fails noisily:
 
 ```bash
 git diff $(git merge-base HEAD main)..HEAD > /tmp/branch.diff
@@ -21,12 +27,12 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review \
   --prompt "Review the branch diff at /tmp/branch.diff. Flag bugs, regressions, missing tests, security issues. Out of scope: stylistic refactors. Return structured verdict."
 ```
 
-Block on `verdict`:
+On `verdict`:
 - `approve` → proceed to Step 1.
-- `needs-attention` → fix every issue from `issues[]`, commit, re-run review until `approve`. Do NOT merge or PR with unresolved findings.
+- `needs-attention` → fix every issue from `issues[]`, commit, re-run until `approve`.
 - `reject` → return to implementation; the branch is not ready.
 
-If `sspower:second-opinion` was already invoked and approved on the current HEAD, that satisfies this gate — skip the re-run.
+If `sspower:second-opinion` already approved current HEAD, this pre-flight is redundant — skip it. The push hook still enforces at the chokepoint. Bypass: `SSPOWER_AUTO_REVIEW=off` (emergencies).
 
 ### Step 1: Verify Tests
 
