@@ -70,6 +70,7 @@ def _empty() -> dict:
         "merge_source": "",
         "commit_all": False,
         "commit_pathspecs": [],
+        "work_dir": "",
     }
 
 
@@ -88,18 +89,30 @@ def parse(cmd: str) -> dict:
         return _empty()
     toks = toks[1:]
 
-    # Strip git-level flags (and paired values).
+    # Strip git-level flags (and paired values). Capture -C / --git-dir
+    # so the hook can run subsequent git invocations against the right
+    # repo.
+    out_work_dir = ""
     skip_next = False
+    capture_next_as = ""
     while toks:
         if skip_next:
+            if capture_next_as == "work_dir":
+                out_work_dir = toks[0]
+                capture_next_as = ""
             toks.pop(0)
             skip_next = False
             continue
         t = toks[0]
         if t.startswith("--") and "=" in t:
+            key, _, val = t.partition("=")
+            if key in ("--git-dir", "--work-tree"):
+                out_work_dir = val
             toks.pop(0)
             continue
         if t in _GIT_FLAGS_WITH_VALUE:
+            if t in ("-C", "--git-dir", "--work-tree"):
+                capture_next_as = "work_dir"
             toks.pop(0)
             skip_next = True
             continue
@@ -113,6 +126,7 @@ def parse(cmd: str) -> dict:
 
     out = _empty()
     out["subcommand"] = toks[0]
+    out["work_dir"] = out_work_dir
     rest = toks[1:]
 
     if out["subcommand"] == "commit":

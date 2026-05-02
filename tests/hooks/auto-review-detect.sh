@@ -79,6 +79,13 @@ assert_eq "multiple pathspecs"      "$(printf 'a.md\nb.md')" "$(parse_arr commit
 assert_eq "pathspec after --"       "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m foo -- docs/plans/x.md')"
 assert_eq "pathspec with quoted msg" "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m "msg with space" docs/plans/x.md')"
 
+echo "[parser: work_dir capture]"
+assert_eq "no -C"                   ""           "$(parse_field work_dir 'git commit')"
+assert_eq "-C dir"                  "/tmp/x"     "$(parse_field work_dir 'git -C /tmp/x commit')"
+assert_eq "--git-dir=path"          "/tmp/x.git" "$(parse_field work_dir 'git --git-dir=/tmp/x.git commit')"
+assert_eq "--work-tree path"        "/tmp/wt"    "$(parse_field work_dir 'git --work-tree /tmp/wt commit')"
+assert_eq "-C with quoted dir"      "/path with space" "$(parse_field work_dir 'git -C "/path with space" commit')"
+
 echo "[parser: merge_source -S handling]"
 assert_eq "merge -S feat/X"         "feat/foo"   "$(parse_field merge_source 'git merge -S feat/foo')"
 assert_eq "merge -Skeyid feat/X"    "feat/foo"   "$(parse_field merge_source 'git merge -Skeyid feat/foo')"
@@ -151,6 +158,60 @@ assert_eq "commit -a + plan dirty exit" "0" "$rc"
 # commit_pathspecs. Use bypass-on so we don't actually call codex.
 out=$(run_gate_in_work 'git commit -m bump docs/plans/test.md' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
 assert_eq "pathspec commit + bypass exit" "0" "$rc"
+
+# Pathspec commit OUTSIDE the plan dir, even with another plan staged
+# in the index, must NOT trigger the gate -- the staged plan won't be
+# in this commit. (We can't easily assert "no codex call" without
+# mocking; assert exit 0 and nothing in stderr indicating a review.)
+(
+  cd "$WORK"
+  git checkout -q -- docs/plans/test.md
+  echo "# v3" > docs/plans/test.md
+  git add docs/plans/test.md
+  echo "unrelated" > other.txt
+)
+out=$(run_gate_in_work 'git commit -m unrelated other.txt' 2>&1); rc=$?
+assert_eq "pathspec outside plan: exit"  "0" "$rc"
+assert_eq "pathspec outside plan: no review" "" "$(printf '%s' "$out" | grep -i review || true)"
+
+# Symlink under docs/plans/ must be refused, not copied.
+(
+  cd "$WORK"
+  rm -f docs/plans/evil.md
+  ln -s /etc/passwd docs/plans/evil.md
+)
+out=$(run_gate_in_work 'git commit -m bump docs/plans/evil.md' 2>&1); rc=$?
+assert_eq "symlink pathspec: exit"  "0" "$rc"
+assert_eq "symlink pathspec: warning emitted" "1" "$(printf '%s' "$out" | grep -c 'refusing symlink' || true)"
+
+# Pathspec with `..` escape must be refused at the regex stage.
+out=$(run_gate_in_work 'git commit -m x ../escape.md' 2>&1); rc=$?
+assert_eq "pathspec ../ rejected: exit" "0" "$rc"
+
+# `git -C otherrepo commit` must consult OTHER repo's index, not WORK.
+OTHER=$(mktemp -d -t sspower-other-XXXXXX)
+(
+  cd "$OTHER"
+  git init -q
+  git config user.email t@t
+  git config user.name t
+  mkdir -p docs/plans
+  echo "# other" > docs/plans/o.md
+  git add docs/plans/o.md
+)
+# Run from WORK (which has nothing staged after checkout above) but
+# with -C pointing at OTHER (which has a staged plan). The hook must
+# detect the staged plan in OTHER and reach the codex path -- which
+# we short-circuit via the bypass. We assert exit 0 (would otherwise
+# be opaque without bypass).
+out=$(cd "$WORK" && SSPOWER_AUTO_REVIEW=off CLAUDE_PLUGIN_ROOT="$ROOT" \
+  bash "$GATE" <<EOF
+{"tool_input":{"command":"git -C $OTHER commit -m x"}}
+EOF
+)
+rc=$?
+assert_eq "git -C otherrepo respected: exit" "0" "$rc"
+rm -rf "$OTHER"
 
 # --- auto-review.sh --------------------------------------------------------
 echo "[auto-review.sh]"

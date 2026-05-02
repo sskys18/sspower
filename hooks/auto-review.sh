@@ -37,6 +37,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
 MERGE_SRC=$(printf '%s' "$PARSED" | jq -r '.merge_source // empty' 2>/dev/null)
+WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir // empty' 2>/dev/null)
+GIT_OPTS=()
+if [ -n "$WORK_DIR" ]; then
+  GIT_OPTS+=(-C "$WORK_DIR")
+fi
+git_in_repo() {
+  if [ ${#GIT_OPTS[@]} -gt 0 ]; then
+    git "${GIT_OPTS[@]}" "$@"
+  else
+    git "$@"
+  fi
+}
 
 # Chokepoints: git push, git merge (local merge bypasses push), gh pr
 # create / ready. Pipelines/subshells deliberately allowed through.
@@ -80,26 +92,26 @@ trap 'rm -f "$DIFF_FILE"' EXIT
 if [ "$SUBCMD" = "merge" ]; then
   # MERGE_SRC came from the python parser, which honours quoting and
   # the value-bearing flags (-m, -X, -s, -F, --strategy, etc.).
-  if [ -z "$MERGE_SRC" ] || ! git rev-parse --verify --quiet "$MERGE_SRC" >/dev/null; then
+  if [ -z "$MERGE_SRC" ] || ! git_in_repo rev-parse --verify --quiet "$MERGE_SRC" >/dev/null; then
     # Can't resolve target (e.g. `git merge --abort`, `git merge --continue`,
     # or a missing arg). Don't block.
     exit 0
   fi
-  if ! git diff "HEAD...$MERGE_SRC" > "$DIFF_FILE" 2>/dev/null; then
+  if ! git_in_repo diff "HEAD...$MERGE_SRC" > "$DIFF_FILE" 2>/dev/null; then
     exit 0
   fi
 else
-  BASE=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+  BASE=$(git_in_repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
   if [ -z "$BASE" ]; then
     for cand in main master; do
-      if git show-ref --verify --quiet "refs/heads/$cand"; then BASE="$cand"; break; fi
+      if git_in_repo show-ref --verify --quiet "refs/heads/$cand"; then BASE="$cand"; break; fi
     done
   fi
   if [ -z "$BASE" ]; then
     # Nothing to compare against; let the action through.
     exit 0
   fi
-  if ! git diff "$BASE"..HEAD > "$DIFF_FILE" 2>/dev/null; then
+  if ! git_in_repo diff "$BASE"..HEAD > "$DIFF_FILE" 2>/dev/null; then
     exit 0
   fi
 fi

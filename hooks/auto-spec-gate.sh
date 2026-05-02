@@ -34,43 +34,76 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand' 2>/dev/null)
 COMMIT_ALL=$(printf '%s' "$PARSED" | jq -r '.commit_all' 2>/dev/null)
+WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir' 2>/dev/null)
 # Pathspecs given on the command line (e.g. `git commit docs/plans/x.md`).
-# `git commit <path>...` stages and commits those paths from the working
-# tree, bypassing the index for everything else.
+# Pathspec commits stage + commit ONLY the listed paths -- index entries
+# outside the pathspec are NOT included. So when pathspecs are present
+# we must ignore the index and look only at the pathspec set.
 PATHSPECS=$(printf '%s' "$PARSED" | jq -r '.commit_pathspecs[]?' 2>/dev/null)
 if [ "$SUBCMD" != "commit" ]; then
   exit 0
 fi
 
-# Plan markdown that this commit will record. Sources:
-#   - index (`git diff --cached`)             always counted
-#   - working tree if `-a`/--all              auto-staged at commit time
-#   - working tree for explicit pathspecs     `git commit foo.md`
-PLAN_RX='(^|/)docs/plans/[^/]+\.md$'
-STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-  | grep -E "$PLAN_RX" || true)
-if [ "$COMMIT_ALL" = "true" ]; then
-  UNSTAGED=$(git diff --name-only --diff-filter=ACM 2>/dev/null \
-    | grep -E "$PLAN_RX" || true)
-  STAGED=$(printf '%s\n%s\n' "$STAGED" "$UNSTAGED")
+# All git invocations target the repo named by -C / --git-dir if given;
+# otherwise the hook's current cwd. `git -C ""` is invalid, so guard.
+GIT_OPTS=()
+if [ -n "$WORK_DIR" ]; then
+  GIT_OPTS+=(-C "$WORK_DIR")
 fi
-# Add pathspec'd plan files. We accept anything matching the regex,
-# even if not currently tracked (e.g. new plan being added by name).
-if [ -n "$PATHSPECS" ]; then
-  while IFS= read -r p; do
-    [ -z "$p" ] && continue
-    if printf '%s\n' "$p" | grep -Eq "$PLAN_RX"; then
-      STAGED=$(printf '%s\n%s\n' "$STAGED" "$p")
-    fi
-  done <<< "$PATHSPECS"
-fi
-STAGED=$(printf '%s\n' "$STAGED" | awk 'NF && !seen[$0]++')
-if [ -z "$STAGED" ]; then
+git_in_repo() {
+  # Bash 3.2 + `set -u` treats `"${ARR[@]}"` on an empty array as
+  # unbound. Guard explicitly.
+  if [ ${#GIT_OPTS[@]} -gt 0 ]; then
+    git "${GIT_OPTS[@]}" "$@"
+  else
+    git "$@"
+  fi
+}
+# Resolve the absolute repo root for safe symlink checks below.
+REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
+if [ -z "$REPO_ROOT" ]; then
   exit 0
 fi
-# Pathspec commits source from working tree, same as -a.
+
+# Plan markdown that this commit will RECORD. Three modes:
+#   1. pathspec form  (git commit <path>...): ONLY pathspec'd files
+#      land. Index entries outside the pathspec are NOT in this commit.
+#   2. -a / --all     : working tree of every tracked modified file.
+#   3. plain commit   : the index, exactly.
+PLAN_RX='(^|/)docs/plans/[^/]+\.md$'
+SOURCE_MODE=index   # one of: index, worktree
+PLANS=""
+
 if [ -n "$PATHSPECS" ]; then
-  COMMIT_ALL=true
+  # Mode 1: pathspecs only. Source = working tree.
+  SOURCE_MODE=worktree
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    # Reject pathspec magic, parent escapes, absolute paths -- we don't
+    # try to resolve those safely.
+    case "$p" in
+      :\(*) continue ;;
+      /*) continue ;;
+      *..*) continue ;;
+    esac
+    if printf '%s\n' "$p" | grep -Eq "$PLAN_RX"; then
+      PLANS=$(printf '%s\n%s\n' "$PLANS" "$p")
+    fi
+  done <<< "$PATHSPECS"
+else
+  PLANS=$(git_in_repo diff --cached --name-only --diff-filter=ACM 2>/dev/null \
+    | grep -E "$PLAN_RX" || true)
+  if [ "$COMMIT_ALL" = "true" ]; then
+    SOURCE_MODE=worktree
+    UNSTAGED=$(git_in_repo diff --name-only --diff-filter=ACM 2>/dev/null \
+      | grep -E "$PLAN_RX" || true)
+    PLANS=$(printf '%s\n%s\n' "$PLANS" "$UNSTAGED")
+  fi
+fi
+
+PLANS=$(printf '%s\n' "$PLANS" | awk 'NF && !seen[$0]++')
+if [ -z "$PLANS" ]; then
+  exit 0
 fi
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
@@ -83,16 +116,41 @@ ISSUES=""
 ANY_FAIL=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  # Review the version that this commit will record:
-  #   - `git commit -a` records the working-tree content of any tracked
-  #     modified file (re-stages it). Always prefer working tree.
-  #   - plain `git commit` records the index version.
+  # Review the exact bytes this commit will record. SOURCE_MODE drives
+  # where we read from. For worktree-sourced files, refuse symlinks --
+  # an attacker (or an honest mistake) could point a plan path at
+  # /etc/passwd, ~/.aws/credentials, etc., and we'd ship those bytes
+  # to Codex.
   STAGED_FILE=$(mktemp -t sspower-spec-staged-XXXXXX)
-  if [ "$COMMIT_ALL" = "true" ] && [ -f "$f" ]; then
-    cp "$f" "$STAGED_FILE" || { rm -f "$STAGED_FILE"; continue; }
-  elif ! git show ":$f" > "$STAGED_FILE" 2>/dev/null; then
-    rm -f "$STAGED_FILE"
-    continue
+  if [ "$SOURCE_MODE" = "worktree" ]; then
+    ABS="$REPO_ROOT/$f"
+    if [ -L "$ABS" ]; then
+      echo "[auto-spec-gate] WARNING: refusing symlink at $f; skipping." >&2
+      rm -f "$STAGED_FILE"
+      continue
+    fi
+    if [ ! -f "$ABS" ]; then
+      rm -f "$STAGED_FILE"
+      continue
+    fi
+    # Verify the resolved path is still inside the repo (defence in
+    # depth: the pathspec regex already rejected `..` and absolute
+    # paths, but a tracked file could still be a regular file with a
+    # name like `docs/plans/x.md` that resolves outside via a parent
+    # symlink. We check the directory chain.)
+    REAL=$(cd "$REPO_ROOT" && python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$ABS" 2>/dev/null)
+    case "$REAL" in
+      "$REPO_ROOT"/*) ;;
+      *) echo "[auto-spec-gate] WARNING: $f resolves outside repo; skipping." >&2
+         rm -f "$STAGED_FILE"
+         continue ;;
+    esac
+    cp -P "$ABS" "$STAGED_FILE" || { rm -f "$STAGED_FILE"; continue; }
+  else
+    if ! git_in_repo show ":$f" > "$STAGED_FILE" 2>/dev/null; then
+      rm -f "$STAGED_FILE"
+      continue
+    fi
   fi
 
   PROMPT=$(mktemp -t sspower-spec-prompt-XXXXXX)
@@ -131,7 +189,7 @@ EOF
     end
   ' 2>/dev/null)
   ISSUES+=$'\n\n== '"$f"' =='$'\n'"$SUMMARY"
-done <<< "$STAGED"
+done <<< "$PLANS"
 
 if [ "$ANY_FAIL" -eq 0 ]; then
   exit 0
