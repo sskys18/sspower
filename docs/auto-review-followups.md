@@ -1,0 +1,48 @@
+# Auto-review chokepoints — known gaps + Path B
+
+The `auto-review.sh` and `auto-spec-gate.sh` hooks gate `git push`,
+`git merge`, `gh pr create|ready`, and plan-touching `git commit` by
+parsing the bash command string with `_parse-git-cmd.py` (Python
+`shlex`). Parsing arbitrary bash to infer git intent is unbounded — we
+ship a tight subset and accept rare-form bypasses.
+
+## Known acceptable bypasses (Path A)
+
+These either fail safely (hook exits 0, no false block) or require an
+unusual invocation:
+
+- `git -S keyid <ref>` (3-token gpg-sign with separate keyid before a
+  ref) — `-S` is treated as a no-value flag; `keyid` would be parsed as
+  the positional, fail `git rev-parse`, hook exits 0.
+- Pipelines, subshells, command substitutions: `eval "git push"`,
+  `(cd dir && git commit)`, etc. Treated as caller-side bypass.
+- Aliases (`git ci`, `git up`): not expanded. Real git invocation
+  inside the alias fires through git's own hooks if installed.
+- Custom `git` on `$PATH` resolved by full path (`/usr/local/bin/git
+  commit`): only bare `git ` is matched. Full-path invocation skips
+  the gate.
+
+These are documented, not bugs.
+
+## Path B — git-native hooks (follow-up)
+
+The Claude-Code hook approach has a structural cap on accuracy:
+parsing arbitrary bash. The robust replacement is to install
+git's own hooks in the working repo:
+
+- `.git/hooks/pre-commit` — runs Codex review on staged plan files.
+- `.git/hooks/pre-merge-commit` — runs Codex review on incoming diff.
+- `.git/hooks/pre-push` — runs Codex review on outgoing diff.
+
+Git itself invokes these with known semantics; no bash parsing
+required. Trade-offs:
+
+- Per-repo install (not automatic on plugin load).
+- Needs an installer command (`/sspower-install-git-hooks`?).
+- `core.hooksPath` / `git commit --no-verify` can still bypass, but
+  those are explicit user actions, not parsing edge cases.
+
+Suggested next step: ship a small `scripts/install-git-hooks.sh` that
+writes the three hook files into the current repo and add a one-liner
+to the README. Keep the bash-parser hooks as a defense-in-depth layer
+for sessions where the git hooks weren't installed.

@@ -32,24 +32,45 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # treated as caller-side bypass.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
-SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
-COMMIT_ALL=$(printf '%s' "$PARSED" | jq -r '.commit_all // false' 2>/dev/null)
+SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand' 2>/dev/null)
+COMMIT_ALL=$(printf '%s' "$PARSED" | jq -r '.commit_all' 2>/dev/null)
+# Pathspecs given on the command line (e.g. `git commit docs/plans/x.md`).
+# `git commit <path>...` stages and commits those paths from the working
+# tree, bypassing the index for everything else.
+PATHSPECS=$(printf '%s' "$PARSED" | jq -r '.commit_pathspecs[]?' 2>/dev/null)
 if [ "$SUBCMD" != "commit" ]; then
   exit 0
 fi
 
-# Plan markdown that this commit will record. For plain `git commit`,
-# only the index counts. For `git commit -a`, also include unstaged
-# tracked modifications since `-a` auto-stages them at commit time.
+# Plan markdown that this commit will record. Sources:
+#   - index (`git diff --cached`)             always counted
+#   - working tree if `-a`/--all              auto-staged at commit time
+#   - working tree for explicit pathspecs     `git commit foo.md`
+PLAN_RX='(^|/)docs/plans/[^/]+\.md$'
 STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
-  | grep -E '(^|/)docs/plans/[^/]+\.md$' || true)
+  | grep -E "$PLAN_RX" || true)
 if [ "$COMMIT_ALL" = "true" ]; then
   UNSTAGED=$(git diff --name-only --diff-filter=ACM 2>/dev/null \
-    | grep -E '(^|/)docs/plans/[^/]+\.md$' || true)
-  STAGED=$(printf '%s\n%s\n' "$STAGED" "$UNSTAGED" | awk 'NF && !seen[$0]++')
+    | grep -E "$PLAN_RX" || true)
+  STAGED=$(printf '%s\n%s\n' "$STAGED" "$UNSTAGED")
 fi
+# Add pathspec'd plan files. We accept anything matching the regex,
+# even if not currently tracked (e.g. new plan being added by name).
+if [ -n "$PATHSPECS" ]; then
+  while IFS= read -r p; do
+    [ -z "$p" ] && continue
+    if printf '%s\n' "$p" | grep -Eq "$PLAN_RX"; then
+      STAGED=$(printf '%s\n%s\n' "$STAGED" "$p")
+    fi
+  done <<< "$PATHSPECS"
+fi
+STAGED=$(printf '%s\n' "$STAGED" | awk 'NF && !seen[$0]++')
 if [ -z "$STAGED" ]; then
   exit 0
+fi
+# Pathspec commits source from working tree, same as -a.
+if [ -n "$PATHSPECS" ]; then
+  COMMIT_ALL=true
 fi
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

@@ -63,6 +63,26 @@ assert_eq "-avm combo"              "true"   "$(parse_field commit_all 'git comm
 assert_eq "-vS no a"                "false"  "$(parse_field commit_all 'git commit -vS')"
 assert_eq "quoted -m no a"          "false"  "$(parse_field commit_all 'git commit -m "all hands"')"
 
+echo "[parser: commit_all false-positive guards]"
+assert_eq "-Sabcdef no a"           "false"  "$(parse_field commit_all 'git commit -Sabcdef -m foo')"
+assert_eq "-S keyid sep"            "false"  "$(parse_field commit_all 'git commit -S abcdef -m foo')"
+assert_eq "-mmsg attached"          "false"  "$(parse_field commit_all 'git commit -mmsg')"
+
+echo "[parser: commit_pathspecs]"
+parse_arr() {
+  local field="$1" cmd="$2"
+  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}[]?"
+}
+assert_eq "no pathspec"             ""           "$(parse_arr commit_pathspecs 'git commit -m foo')"
+assert_eq "single pathspec"         "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m foo docs/plans/x.md')"
+assert_eq "multiple pathspecs"      "$(printf 'a.md\nb.md')" "$(parse_arr commit_pathspecs 'git commit -m foo a.md b.md')"
+assert_eq "pathspec after --"       "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m foo -- docs/plans/x.md')"
+assert_eq "pathspec with quoted msg" "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m "msg with space" docs/plans/x.md')"
+
+echo "[parser: merge_source -S handling]"
+assert_eq "merge -S feat/X"         "feat/foo"   "$(parse_field merge_source 'git merge -S feat/foo')"
+assert_eq "merge -Skeyid feat/X"    "feat/foo"   "$(parse_field merge_source 'git merge -Skeyid feat/foo')"
+
 echo "[parser: merge_source]"
 assert_eq "merge feat/X"            "feat/foo" "$(parse_field merge_source 'git merge feat/foo')"
 assert_eq "merge -m msg feat/X"     "feat/foo" "$(parse_field merge_source 'git merge -m "merge msg" feat/foo')"
@@ -125,6 +145,12 @@ assert_eq "quoted -c nostaged"   "0" "$rc"
 )
 out=$(run_gate_in_work 'git commit -am bump' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
 assert_eq "commit -a + plan dirty exit" "0" "$rc"
+
+# Pathspec form: `git commit docs/plans/foo.md -m msg` — file modified
+# in working tree, not staged. Used to bypass; now caught by
+# commit_pathspecs. Use bypass-on so we don't actually call codex.
+out=$(run_gate_in_work 'git commit -m bump docs/plans/test.md' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "pathspec commit + bypass exit" "0" "$rc"
 
 # --- auto-review.sh --------------------------------------------------------
 echo "[auto-review.sh]"

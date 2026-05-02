@@ -31,25 +31,46 @@ _GIT_FLAGS_WITH_VALUE = {
 }
 
 # Subcommand-specific flags that take a separate value token.
+# Notes:
+#   - `-S` (gpg-sign) is OPTIONAL-value in both `commit` and `merge`. The
+#     common forms are `-S` alone (default key) or `-Skeyid` attached.
+#     Treating it as value-bearing ate the next positional (e.g. the
+#     merge source). We exclude it; the rare `-S keyid <ref>` form will
+#     mis-parse keyid as positional, fail `git rev-parse`, and the hook
+#     exits 0 -- acceptable.
+#   - `--gpg-sign` with `=` form is fine; without `=` it's also optional
+#     but uncommon, omitted for the same reason.
 _SUBCMD_FLAGS_WITH_VALUE = {
     "merge": {
-        "-m", "-F", "-X", "-s", "-S", "-T",
+        "-m", "-F", "-X", "-s",
         "--message", "--file", "--strategy", "--strategy-option",
-        "--gpg-sign", "--into-name",
+        "--into-name",
     },
     "commit": {
-        "-m", "-F", "-c", "-C", "-t", "-S",
+        "-m", "-F", "-c", "-C", "-t",
         "--message", "--file", "--reedit-message", "--reuse-message",
-        "--template", "--gpg-sign", "--cleanup", "--author", "--date",
+        "--template", "--cleanup", "--author", "--date",
         "--fixup", "--squash", "--pathspec-from-file", "--trailer",
     },
+}
+
+# Short flags that take an *attached* value: `-Skeyid`, `-mmsg`, `-Cref`.
+# Used to suppress short-combo detection on tokens like `-Sabcdef`.
+_SHORT_VALUE_TAKERS = {
+    "commit": set("SCcmFt"),
+    "merge":  set("SmFXs"),
 }
 
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def _empty() -> dict:
-    return {"subcommand": "", "merge_source": "", "commit_all": False}
+    return {
+        "subcommand": "",
+        "merge_source": "",
+        "commit_all": False,
+        "commit_pathspecs": [],
+    }
 
 
 def parse(cmd: str) -> dict:
@@ -95,16 +116,41 @@ def parse(cmd: str) -> dict:
     rest = toks[1:]
 
     if out["subcommand"] == "commit":
-        # `-a` / `--all` auto-stages tracked modifications. Also catch
-        # short-flag combos like `-am`, `-av`, `-avm`.
+        # Pass 1: detect `-a` / `--all` / short combo `-am` etc.
+        # Pass 2: collect positional pathspecs (`git commit foo.md`).
+        flags_with_value = _SUBCMD_FLAGS_WITH_VALUE["commit"]
+        short_value_takers = _SHORT_VALUE_TAKERS["commit"]
         short_combo = re.compile(r"^-[A-Za-z]+$")
+        skip_next = False
         for t in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if t == "--":
+                # Everything after is pathspec.
+                continue
             if t == "--all":
                 out["commit_all"] = True
-                break
-            if short_combo.match(t) and "a" in t[1:]:
-                out["commit_all"] = True
-                break
+                continue
+            if t.startswith("--") and "=" in t:
+                continue
+            if t in flags_with_value:
+                skip_next = True
+                continue
+            if t.startswith("-"):
+                # Short combo like `-am`, but skip `-Skeyid` / `-mmsg`
+                # / `-Cref` where the leading char is a value-taker
+                # with attached value.
+                if (
+                    short_combo.match(t)
+                    and len(t) >= 2
+                    and t[1] not in short_value_takers
+                    and "a" in t[1:]
+                ):
+                    out["commit_all"] = True
+                continue
+            # Positional: pathspec (file, dir, glob, magic).
+            out["commit_pathspecs"].append(t)
 
     elif out["subcommand"] == "merge":
         flags_with_value = _SUBCMD_FLAGS_WITH_VALUE["merge"]
