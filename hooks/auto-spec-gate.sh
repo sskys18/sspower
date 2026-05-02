@@ -25,9 +25,14 @@ command -v git >/dev/null 2>&1 || exit 0
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Match `git commit ...` (incl. --amend). Pipelines/subshells deliberately
-# allowed through as caller-side bypass.
-if ! echo "$CMD" | grep -Eq '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then
+# Resolve the git subcommand robustly (handles `git -c X commit`,
+# `git --no-pager commit`, `FOO=bar git commit`, etc.). Pipelines and
+# subshells are intentionally allowed through as caller-side bypass.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./_git-cmd-detect.sh
+. "$SCRIPT_DIR/_git-cmd-detect.sh"
+SUBCMD=$(git_subcommand "$CMD")
+if [ "$SUBCMD" != "commit" ]; then
   exit 0
 fi
 

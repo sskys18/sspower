@@ -30,10 +30,21 @@ fi
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Only intercept push / PR-publish chokepoints. Match the leading tokens;
-# pipelines/subshells where these are buried are intentionally allowed
-# through (an explicit caller-side bypass).
-if ! echo "$CMD" | grep -Eq '^[[:space:]]*(git[[:space:]]+push([[:space:]]|$)|gh[[:space:]]+pr[[:space:]]+(create|ready)([[:space:]]|$))'; then
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=./_git-cmd-detect.sh
+. "$SCRIPT_DIR/_git-cmd-detect.sh"
+SUBCMD=$(git_subcommand "$CMD")
+
+# Chokepoints: git push, git merge (local merge into main bypasses push),
+# gh pr create / ready. Pipelines/subshells deliberately allowed through.
+TRIGGER=0
+case "$SUBCMD" in
+  push|merge) TRIGGER=1 ;;
+esac
+if [ "$TRIGGER" -eq 0 ] && echo "$CMD" | grep -Eq '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+(create|ready)([[:space:]]|$)'; then
+  TRIGGER=1
+fi
+if [ "$TRIGGER" -eq 0 ]; then
   exit 0
 fi
 
@@ -43,23 +54,50 @@ if [ ! -f "$BRIDGE" ]; then
   exit 0
 fi
 
-# Determine base branch for diff. Prefer upstream; fall back to main/master.
-BASE=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
-if [ -z "$BASE" ]; then
-  for cand in main master; do
-    if git show-ref --verify --quiet "refs/heads/$cand"; then BASE="$cand"; break; fi
-  done
-fi
-if [ -z "$BASE" ]; then
-  # Nothing to compare against; let the push through.
-  exit 0
-fi
-
+# Determine the diff range.
+# - For push / gh pr: review what HEAD adds over upstream (or main/master).
+# - For merge: review what the source branch will add over current HEAD.
 DIFF_FILE=$(mktemp -t sspower-autoreview-XXXXXX)
 trap 'rm -f "$DIFF_FILE"' EXIT
 
-if ! git diff "$BASE"..HEAD > "$DIFF_FILE" 2>/dev/null; then
-  exit 0
+if [ "$SUBCMD" = "merge" ]; then
+  # Extract the first positional arg (branch/ref to merge in).
+  MERGE_SRC=""
+  # shellcheck disable=SC2086
+  set -- $CMD
+  saw_subcmd=0
+  for tok in "$@"; do
+    if [ "$saw_subcmd" -eq 0 ]; then
+      [ "$tok" = "merge" ] && saw_subcmd=1
+      continue
+    fi
+    case "$tok" in
+      -*) continue ;;
+      *) MERGE_SRC="$tok"; break ;;
+    esac
+  done
+  if [ -z "$MERGE_SRC" ] || ! git rev-parse --verify --quiet "$MERGE_SRC" >/dev/null; then
+    # Can't resolve target (e.g. `git merge --abort`, `git merge --continue`,
+    # or a missing arg). Don't block.
+    exit 0
+  fi
+  if ! git diff "HEAD...$MERGE_SRC" > "$DIFF_FILE" 2>/dev/null; then
+    exit 0
+  fi
+else
+  BASE=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+  if [ -z "$BASE" ]; then
+    for cand in main master; do
+      if git show-ref --verify --quiet "refs/heads/$cand"; then BASE="$cand"; break; fi
+    done
+  fi
+  if [ -z "$BASE" ]; then
+    # Nothing to compare against; let the action through.
+    exit 0
+  fi
+  if ! git diff "$BASE"..HEAD > "$DIFF_FILE" 2>/dev/null; then
+    exit 0
+  fi
 fi
 if [ ! -s "$DIFF_FILE" ]; then
   # Empty diff (push of merged work, etc.) — nothing to review.
