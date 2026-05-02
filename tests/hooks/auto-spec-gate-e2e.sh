@@ -177,8 +177,6 @@ out=$(run_gate 'git commit -m foo -i docs/plans/b.md' approve 2>&1); rc=$?
 assert_eq "-i mixed: exit"                   "0" "$rc"
 assert_eq "-i mixed: 2 bridge calls"         "2" "$(call_count)"
 
-# Chained commands: `cd subdir && git commit` and `(git commit)` and
-# `env FOO=bar git commit` must all reach the gate.
 echo "[e2e: chained / wrapped commands]"
 (
   cd "$WORK"
@@ -188,16 +186,32 @@ echo "[e2e: chained / wrapped commands]"
   echo "# v1" > docs/plans/c.md
   git add docs/plans/c.md
 )
+# Subshell still has 1 segment (parens don't terminate, they wrap).
+# Should reach the bridge.
 out=$(run_gate '(git commit -m foo)' approve 2>&1); rc=$?
-assert_eq "(commit): bridge fired"  "1" "$(call_count)"
+assert_eq "(commit): bridge fired"   "1" "$(call_count)"
 
+# `env FOO=bar git commit` is NOT chained -- it's a single command
+# with an env-prefix wrapper. Should reach the bridge.
 (cd "$WORK" && git reset HEAD -q && git add docs/plans/c.md)
 out=$(run_gate 'env FOO=bar git commit -m foo' approve 2>&1); rc=$?
 assert_eq "env wrapped: bridge fired" "1" "$(call_count)"
 
+# Real chain `echo hi && git commit` MUST be denied -- the echo could
+# write to a plan file before commit, so the gate has no way to know
+# the final bytes. Block.
 (cd "$WORK" && git reset HEAD -q && git add docs/plans/c.md)
 out=$(run_gate 'echo hi && git commit -m foo' approve 2>&1); rc=$?
-assert_eq "echo && commit: bridge fired" "1" "$(call_count)"
+assert_eq "chain: no bridge call"    "0" "$(call_count)"
+assert_eq "chain: deny payload"      "1" "$(printf '%s' "$out" | grep -c '"permissionDecision":' || true)"
+assert_eq "chain: deny mentions"     "1" "$(printf '%s' "$out" | grep -c 'chained shell command' || true)"
+
+# Redirection counts as redirect, not as a separate segment, so plain
+# `git commit -m foo > log.txt` should still reach the bridge.
+(cd "$WORK" && git reset HEAD -q && git add docs/plans/c.md)
+out=$(run_gate 'git commit -m foo > /tmp/sspower-redirect-test.log' approve 2>&1); rc=$?
+assert_eq "redirect: bridge fired"   "1" "$(call_count)"
+rm -f /tmp/sspower-redirect-test.log
 
 echo
 echo "passed: $PASS"

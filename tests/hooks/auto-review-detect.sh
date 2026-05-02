@@ -84,6 +84,28 @@ assert_eq "| pipes"                 "1"      "$(parse_count 'echo foo | git comm
 assert_eq "subshell push"           "push"   "$(parse_field subcommand '(cd dir && git push)')"
 assert_eq "gh pr create chained"    "pr create" "$(parse_nth_subcmd 1 'git status && gh pr create --title t')"
 
+echo "[parser: redirection ignored, no false pathspec]"
+parse_args() { printf '%s' "$1" | python3 "$PARSER" | jq -r '.invocations[0].subcommand_args | join(",")'; }
+assert_eq "> log.txt"               "-m,foo"      "$(parse_args 'git commit -m foo > log.txt')"
+assert_eq ">> log.txt"              "-m,foo"      "$(parse_args 'git commit -m foo >> log.txt')"
+assert_eq "2>&1"                    "-m,foo"      "$(parse_args 'git commit -m foo 2>&1')"
+assert_eq "1>file 2>file"           "-m,foo"      "$(parse_args 'git commit -m foo 1>out 2>err')"
+assert_eq "redirect doesnt segment" "1"           "$(parse_count 'git commit -m foo > log.txt')"
+
+echo "[parser: gh-level flags with values]"
+assert_eq "gh -R x/y pr create"     "pr create"   "$(parse_field subcommand 'gh -R owner/repo pr create')"
+assert_eq "gh --repo x/y pr ready"  "pr ready"    "$(parse_field subcommand 'gh --repo owner/repo pr ready')"
+assert_eq "gh --hostname h pr"      "pr create"   "$(parse_field subcommand 'gh --hostname h.example.com pr create')"
+assert_eq "gh --json=x pr create"   "pr create"   "$(parse_field subcommand 'gh --json=x pr create')"
+
+echo "[parser: segments_count]"
+seg_count() { printf '%s' "$1" | python3 "$PARSER" | jq -r '.segments_count // 0'; }
+assert_eq "single"                  "1"  "$(seg_count 'git commit')"
+assert_eq "&&"                      "2"  "$(seg_count 'a && b')"
+assert_eq ";"                       "2"  "$(seg_count 'a; b')"
+assert_eq "|"                       "2"  "$(seg_count 'a | b')"
+assert_eq "redirect doesnt count"   "1"  "$(seg_count 'a > b')"
+
 echo "[parser: work_dir capture]"
 assert_eq "no -C"                   ""           "$(parse_field work_dir 'git commit')"
 assert_eq "-C dir"                  "/tmp/x"     "$(parse_field work_dir 'git -C /tmp/x commit')"

@@ -75,8 +75,16 @@ _COMMIT_WORKTREE_SHORT_LETTERS = set("aiop")
 
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
-# Shell tokens that terminate one segment and start another.
+# Shell control operators that terminate one segment and start another.
 _OPERATORS = {"&&", "||", "&", ";", "|", "|&", "(", ")", "{", "}", ";;", "!"}
+
+# Shell redirection operators. We drop the operator AND its target
+# token, and (if the operator includes `&` or follows a numeric fd
+# token) drop the source fd too.
+_REDIRECT_OPS = {">", "<", ">>", "<<", "<<<", ">&", "<&", "&>", "&>>"}
+
+# Gh-level flags that take a separate value before the subcommand.
+_GH_FLAGS_WITH_VALUE = {"-R", "--repo", "--hostname"}
 
 # Wrappers we strip before looking for `git`.
 _PASSTHROUGH_WRAPPERS = {"command", "exec", "builtin", "nice", "nohup", "stdbuf", "ionice", "time"}
@@ -134,16 +142,31 @@ def _strip_env_prefix(toks: list[str]) -> None:
 
 
 def _segment(toks: list[str]) -> list[list[str]]:
-    """Split tokens on shell control operators."""
+    """Split tokens on shell control operators. Discard redirection
+    operators and their targets so files like `> log.txt` don't end up
+    parsed as positional pathspec args."""
     out: list[list[str]] = []
     cur: list[str] = []
-    for t in toks:
+    i = 0
+    while i < len(toks):
+        t = toks[i]
         if t in _OPERATORS:
             if cur:
                 out.append(cur)
                 cur = []
-        else:
-            cur.append(t)
+            i += 1
+            continue
+        if t in _REDIRECT_OPS:
+            # `2>file` shows up as [`2`, `>`, `file`] -- drop the fd.
+            # `2>&1` shows up as [`2`, `>&`, `1`] -- same idea.
+            if cur and cur[-1].isdigit():
+                cur.pop()
+            i += 1
+            if i < len(toks):
+                i += 1   # also skip the redirect target
+            continue
+        cur.append(t)
+        i += 1
     if cur:
         out.append(cur)
     return out
@@ -265,9 +288,25 @@ def _parse_gh_segment(toks: list[str]) -> dict | None:
     if not toks or not _is_gh_token(toks[0]):
         return None
     toks.pop(0)
-    # `gh` itself takes few flags before its subcommand. Ignore them.
-    while toks and toks[0].startswith("-"):
-        toks.pop(0)
+    # Strip gh-level flags (and paired values) before the subcommand.
+    skip_next = False
+    while toks:
+        if skip_next:
+            toks.pop(0)
+            skip_next = False
+            continue
+        t = toks[0]
+        if t.startswith("--") and "=" in t:
+            toks.pop(0)
+            continue
+        if t in _GH_FLAGS_WITH_VALUE:
+            toks.pop(0)
+            skip_next = True
+            continue
+        if t.startswith("-"):
+            toks.pop(0)
+            continue
+        break
     if not toks:
         return None
     if len(toks) >= 2 and toks[0] == "pr" and toks[1] in ("create", "ready", "merge"):
@@ -299,17 +338,26 @@ def parse(cmd: str) -> dict:
         lex.whitespace_split = True
         toks = list(lex)
     except ValueError:
-        return {"invocations": []}
+        return {"invocations": [], "segments_count": 0}
 
+    segments = _segment(toks)
     invocations = []
-    for seg in _segment(toks):
+    for seg in segments:
         inv = _parse_git_segment(seg)
         if inv is None:
             inv = _parse_gh_segment(seg)
         if inv is not None and inv["subcommand"]:
             invocations.append(inv)
 
-    return {"invocations": invocations}
+    return {
+        "invocations": invocations,
+        # Number of non-empty command segments. > 1 means chained
+        # (e.g. `cd dir && git commit`, `git diff && git push`,
+        # `echo > foo && git commit`). The hooks block when a
+        # chokepoint is found in a chain because pre-execution gates
+        # can't see state changes from earlier commands.
+        "segments_count": len(segments),
+    }
 
 
 def main() -> int:

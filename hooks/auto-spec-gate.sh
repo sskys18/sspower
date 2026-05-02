@@ -33,10 +33,29 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 
-# Locate the FIRST `git commit` invocation in this command (chains
-# like `cd dir && git commit` and `(git commit)` resolve here).
+# Locate the FIRST `git commit` invocation. Chains like `cd && git
+# commit`, `(git commit)`, `env FOO=bar git commit` resolve here.
 INV=$(printf '%s' "$PARSED" | jq -c '[.invocations[] | select(.tool=="git" and .subcommand=="commit")] | .[0] // empty' 2>/dev/null)
 if [ -z "$INV" ]; then
+  exit 0
+fi
+
+# CHAIN BLOCK. If the user wrote `echo > docs/plans/x.md && git commit`
+# or `git add docs/plans/x.md && git commit`, the file content / index
+# state at the time WE run is NOT what `git commit` will see -- the
+# preceding commands haven't executed yet (we're a PreToolUse hook).
+# Reviewing now would gate on stale bytes. Refuse and ask the user to
+# split the chain.
+SEG_COUNT=$(printf '%s' "$PARSED" | jq -r '.segments_count // 0')
+if [ "$SEG_COUNT" -gt 1 ]; then
+  REASON='Codex auto plan-review cannot gate `git commit` inside a chained shell command -- previous segments may modify worktree or index after this hook runs, leaving the review blind. Run the commit on its own line so the gate sees the final state. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies.'
+  jq -n --arg reason "$REASON" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $reason
+    }
+  }'
   exit 0
 fi
 
