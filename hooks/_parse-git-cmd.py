@@ -62,6 +62,11 @@ _COMMIT_WORKTREE_OPTS = {
     "-p", "--patch",
     "--interactive",
 }
+# Value-bearing flags that nonetheless imply worktree-source: feeding
+# pathspecs from a file behaves like positional pathspecs.
+_COMMIT_WORKTREE_VALUE_OPTS = {
+    "--pathspec-from-file",
+}
 # Same set, expressed as short-combo letters (a, i, o, p).
 _COMMIT_WORKTREE_SHORT_LETTERS = set("aiop")
 
@@ -167,6 +172,13 @@ def parse(cmd: str) -> dict:
                 out["commit_uses_worktree"] = True
                 continue
             if t.startswith("--") and "=" in t:
+                key, _, _ = t.partition("=")
+                if key in _COMMIT_WORKTREE_VALUE_OPTS:
+                    out["commit_uses_worktree"] = True
+                continue
+            if t in _COMMIT_WORKTREE_VALUE_OPTS:
+                out["commit_uses_worktree"] = True
+                skip = True
                 continue
             if t in _COMMIT_FLAGS_WITH_VALUE:
                 skip = True

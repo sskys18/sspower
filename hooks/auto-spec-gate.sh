@@ -144,6 +144,15 @@ while IFS= read -r f; do
     esac
     cp -P "$ABS" "$STAGED_FILE" || { rm -f "$STAGED_FILE"; continue; }
   else
+    # Index source. Refuse staged symlinks: the index "content" of a
+    # 120000 entry is the link target string, not a plan -- reviewing
+    # it is meaningless and could leak filesystem layout.
+    MODE=$(git_in_repo ls-files --stage -- "$f" 2>/dev/null | awk '{print $1}' | head -1)
+    if [ "$MODE" = "120000" ]; then
+      echo "[auto-spec-gate] WARNING: refusing staged symlink at $f; skipping." >&2
+      rm -f "$STAGED_FILE"
+      continue
+    fi
     if ! git_in_repo show ":$f" > "$STAGED_FILE" 2>/dev/null; then
       rm -f "$STAGED_FILE"
       continue

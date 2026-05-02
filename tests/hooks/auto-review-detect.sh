@@ -82,6 +82,8 @@ assert_eq "--only"                  "true"   "$(parse_field commit_uses_worktree
 assert_eq "--patch"                 "true"   "$(parse_field commit_uses_worktree 'git commit --patch')"
 assert_eq "positional pathspec"     "true"   "$(parse_field commit_uses_worktree 'git commit -m foo bar.md')"
 assert_eq "after --"                "true"   "$(parse_field commit_uses_worktree 'git commit -m foo -- bar.md')"
+assert_eq "--pathspec-from-file=f"  "true"   "$(parse_field commit_uses_worktree 'git commit --pathspec-from-file=.pf')"
+assert_eq "--pathspec-from-file f"  "true"   "$(parse_field commit_uses_worktree 'git commit --pathspec-from-file .pf')"
 
 echo "[parser: merge_sources octopus]"
 assert_eq "single source"           "feat/foo"   "$(parse_arr merge_sources 'git merge feat/foo')"
