@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Smoke tests for hook command-detection logic. No Codex round-trip;
-# we exercise the bypass + non-trigger paths and the new git-subcommand
-# helper directly.
+# Smoke tests for the hook command-detection logic. No Codex round-trip;
+# we exercise the python parser directly and the bypass / non-trigger
+# paths of the two hook scripts.
 
 set -u
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HOOKS="$ROOT/hooks"
-DETECT="$HOOKS/_git-cmd-detect.sh"
+PARSER="$HOOKS/_parse-git-cmd.py"
 GATE="$HOOKS/auto-spec-gate.sh"
 REVIEW="$HOOKS/auto-review.sh"
 
@@ -27,36 +27,53 @@ assert_eq() {
   fi
 }
 
-# --- _git-cmd-detect.sh -----------------------------------------------------
-echo "[git_subcommand]"
-# shellcheck source=../../hooks/_git-cmd-detect.sh
-. "$DETECT"
+parse_field() {
+  local field="$1" cmd="$2"
+  # Don't use `// empty` — that swallows `false` (jq's // alternative
+  # treats false as nullish, so `.commit_all // empty` yields "" for
+  # `false`). Plain `.${field}` returns "" for absent and the literal
+  # for booleans / strings.
+  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}"
+}
 
-assert_eq "plain commit"          "commit" "$(git_subcommand 'git commit -m foo')"
-assert_eq "amend"                 "commit" "$(git_subcommand 'git commit --amend')"
-assert_eq "git -c X commit"       "commit" "$(git_subcommand 'git -c user.name=x commit -m foo')"
-assert_eq "git --no-pager commit" "commit" "$(git_subcommand 'git --no-pager commit -m foo')"
-assert_eq "git -C dir commit"     "commit" "$(git_subcommand 'git -C /tmp/repo commit -m foo')"
-assert_eq "env-prefixed"          "commit" "$(git_subcommand 'GIT_EDITOR=vi FOO=bar git commit')"
-assert_eq "git push"              "push"   "$(git_subcommand 'git push origin main')"
-assert_eq "git -c X push"         "push"   "$(git_subcommand 'git -c http.proxy=p push')"
-assert_eq "git merge"             "merge"  "$(git_subcommand 'git merge feat/foo')"
-assert_eq "commit-tree (not commit)" "commit-tree" "$(git_subcommand 'git commit-tree X')"
-assert_eq "non-git"               ""       "$(git_subcommand 'ls -la')"
-assert_eq "pipeline (caller-bypass)" ""    "$(git_subcommand 'cd dir && git commit')"
+# --- _parse-git-cmd.py ------------------------------------------------------
+echo "[parser: subcommand]"
+assert_eq "plain commit"            "commit" "$(parse_field subcommand 'git commit -m foo')"
+assert_eq "amend"                   "commit" "$(parse_field subcommand 'git commit --amend')"
+assert_eq "git -c X commit"         "commit" "$(parse_field subcommand 'git -c user.name=x commit -m foo')"
+assert_eq "git --no-pager commit"   "commit" "$(parse_field subcommand 'git --no-pager commit -m foo')"
+assert_eq "git -C dir commit"       "commit" "$(parse_field subcommand 'git -C /tmp/repo commit -m foo')"
+assert_eq "env-prefixed"            "commit" "$(parse_field subcommand 'GIT_EDITOR=vi FOO=bar git commit')"
+assert_eq "quoted -c value"         "commit" "$(parse_field subcommand 'git -c "user.name=foo bar" commit')"
+assert_eq "quoted env value"        "commit" "$(parse_field subcommand 'FOO="bar baz" git commit')"
+assert_eq "quoted -m message"       "commit" "$(parse_field subcommand 'git commit -m "msg with space"')"
+assert_eq "git push"                "push"   "$(parse_field subcommand 'git push origin main')"
+assert_eq "git -c X push"           "push"   "$(parse_field subcommand 'git -c http.proxy=p push')"
+assert_eq "git merge"               "merge"  "$(parse_field subcommand 'git merge feat/foo')"
+assert_eq "commit-tree (not commit)" "commit-tree" "$(parse_field subcommand 'git commit-tree X')"
+assert_eq "non-git"                 ""       "$(parse_field subcommand 'ls -la')"
+assert_eq "unbalanced quotes"       ""       "$(parse_field subcommand 'git "commit -m foo')"
+
+echo "[parser: commit_all]"
+assert_eq "plain commit -> false"   "false"  "$(parse_field commit_all 'git commit -m foo')"
+assert_eq "-a"                      "true"   "$(parse_field commit_all 'git commit -a -m foo')"
+assert_eq "--all"                   "true"   "$(parse_field commit_all 'git commit --all')"
+assert_eq "-am combo"               "true"   "$(parse_field commit_all 'git commit -am foo')"
+assert_eq "-avm combo"              "true"   "$(parse_field commit_all 'git commit -avm foo')"
+assert_eq "-vS no a"                "false"  "$(parse_field commit_all 'git commit -vS')"
+assert_eq "quoted -m no a"          "false"  "$(parse_field commit_all 'git commit -m "all hands"')"
+
+echo "[parser: merge_source]"
+assert_eq "merge feat/X"            "feat/foo" "$(parse_field merge_source 'git merge feat/foo')"
+assert_eq "merge -m msg feat/X"     "feat/foo" "$(parse_field merge_source 'git merge -m "merge msg" feat/foo')"
+assert_eq "merge -X theirs feat/X"  "feat/foo" "$(parse_field merge_source 'git merge -X theirs feat/foo')"
+assert_eq "merge -s recursive feat/X" "feat/foo" "$(parse_field merge_source 'git merge -s recursive feat/foo')"
+assert_eq "merge --strategy=ours feat/X" "feat/foo" "$(parse_field merge_source 'git merge --strategy=ours feat/foo')"
+assert_eq "merge --abort"           ""       "$(parse_field merge_source 'git merge --abort')"
 
 # --- auto-spec-gate.sh ------------------------------------------------------
 echo "[auto-spec-gate.sh]"
 
-run_gate() {
-  local cmd="$1"
-  CLAUDE_PLUGIN_ROOT="$ROOT" bash "$GATE" <<EOF
-{"tool_input":{"command":"$cmd"}}
-EOF
-}
-
-# Set up a throwaway repo so `git diff --cached` can run even though we
-# never actually commit.
 WORK=$(mktemp -d -t sspower-hooktest-XXXXXX)
 trap 'rm -rf "$WORK"' EXIT
 (
@@ -66,56 +83,74 @@ trap 'rm -rf "$WORK"' EXIT
   git config user.name t
 )
 
-# Bypass via env var.
-out=$(SSPOWER_AUTO_REVIEW=off run_gate 'git commit -m x' 2>&1)
-rc=$?
-assert_eq "bypass exit"      "0" "$rc"
-assert_eq "bypass quiet"     ""  "$out"
+run_gate_in_work() {
+  local cmd="$1"
+  local extra_env="${2:-}"
+  cd "$WORK" && env $extra_env CLAUDE_PLUGIN_ROOT="$ROOT" \
+    bash "$GATE" <<EOF
+{"tool_input":{"command":"$cmd"}}
+EOF
+}
 
-# Non-commit: pass through silently.
-out=$(cd "$WORK" && CLAUDE_PLUGIN_ROOT="$ROOT" bash "$GATE" <<<'{"tool_input":{"command":"ls -la"}}' 2>&1)
+# Bypass.
+out=$(run_gate_in_work 'git commit -m x' 'SSPOWER_AUTO_REVIEW=off' 2>&1)
 rc=$?
+assert_eq "bypass exit"   "0" "$rc"
+assert_eq "bypass quiet"  ""  "$out"
+
+# Non-commit.
+out=$(run_gate_in_work 'ls -la' 2>&1); rc=$?
 assert_eq "non-commit exit"  "0" "$rc"
 assert_eq "non-commit quiet" ""  "$out"
 
-# `git -c X commit` with no plan staged: pass through (used to MISS the
-# commit-detection regex entirely; helper now catches it).
-out=$(cd "$WORK" && CLAUDE_PLUGIN_ROOT="$ROOT" bash "$GATE" <<<'{"tool_input":{"command":"git -c user.name=x commit -m foo"}}' 2>&1)
-rc=$?
-assert_eq "git-c-commit nostaged exit"  "0" "$rc"
-assert_eq "git-c-commit nostaged quiet" "" "$out"
+# Quoted env + commit, no plan staged.
+out=$(run_gate_in_work 'FOO="a b" git commit -m foo' 2>&1); rc=$?
+assert_eq "quoted-env nostaged"  "0" "$rc"
 
-# Plan staged + bypass on (would otherwise call codex). Use bypass to
-# avoid network.
+# Quoted -c + commit, no plan staged.
+out=$(run_gate_in_work 'git -c "user.name=foo bar" commit -m m' 2>&1); rc=$?
+assert_eq "quoted -c nostaged"   "0" "$rc"
+
+# `git commit -a` with plan modified-not-staged: bypass-on so no codex
+# call, but verify the hook reaches the trigger path. (Hard to assert
+# without mocking codex; SSPOWER_AUTO_REVIEW=off short-circuits early
+# anyway. We just confirm exit 0.)
 (
   cd "$WORK"
   mkdir -p docs/plans
-  echo "# Plan" > docs/plans/test.md
+  echo "# v1" > docs/plans/test.md
   git add docs/plans/test.md
+  git commit -q -m initial
+  echo "# v2" > docs/plans/test.md
 )
-out=$(cd "$WORK" && SSPOWER_AUTO_REVIEW=off CLAUDE_PLUGIN_ROOT="$ROOT" bash "$GATE" <<<'{"tool_input":{"command":"git -c x=y commit -m foo"}}' 2>&1)
-rc=$?
-assert_eq "plan staged + bypass exit"  "0" "$rc"
+out=$(run_gate_in_work 'git commit -am bump' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "commit -a + plan dirty exit" "0" "$rc"
 
 # --- auto-review.sh --------------------------------------------------------
 echo "[auto-review.sh]"
 
-# Bypass.
-out=$(cd "$WORK" && SSPOWER_AUTO_REVIEW=off CLAUDE_PLUGIN_ROOT="$ROOT" bash "$REVIEW" <<<'{"tool_input":{"command":"git push"}}' 2>&1)
-rc=$?
+run_review_in_work() {
+  local cmd="$1"
+  local extra_env="${2:-}"
+  cd "$WORK" && env $extra_env CLAUDE_PLUGIN_ROOT="$ROOT" \
+    bash "$REVIEW" <<EOF
+{"tool_input":{"command":"$cmd"}}
+EOF
+}
+
+out=$(run_review_in_work 'git push' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
 assert_eq "push bypass exit"  "0" "$rc"
 
-# Non-trigger.
-out=$(cd "$WORK" && CLAUDE_PLUGIN_ROOT="$ROOT" bash "$REVIEW" <<<'{"tool_input":{"command":"ls"}}' 2>&1)
-rc=$?
+out=$(run_review_in_work 'ls' 2>&1); rc=$?
 assert_eq "non-trigger exit"  "0" "$rc"
 
-# git merge --abort / no resolvable source: pass through.
-out=$(cd "$WORK" && CLAUDE_PLUGIN_ROOT="$ROOT" bash "$REVIEW" <<<'{"tool_input":{"command":"git merge --abort"}}' 2>&1)
-rc=$?
+out=$(run_review_in_work 'git merge --abort' 2>&1); rc=$?
 assert_eq "merge --abort exit"  "0" "$rc"
 
-# Summary.
+# `gh pr create` with quoted body — must trigger (and bypass-out exit 0).
+out=$(run_review_in_work 'gh pr create --title "t" --body "b"' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "gh pr create quoted bypass" "0" "$rc"
+
 echo
 echo "passed: $PASS"
 echo "failed: $FAIL"

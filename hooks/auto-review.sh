@@ -26,22 +26,39 @@ fi
 if ! command -v node &>/dev/null; then
   exit 0
 fi
+if ! command -v python3 &>/dev/null; then
+  exit 0
+fi
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=./_git-cmd-detect.sh
-. "$SCRIPT_DIR/_git-cmd-detect.sh"
-SUBCMD=$(git_subcommand "$CMD")
+PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
+SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
+MERGE_SRC=$(printf '%s' "$PARSED" | jq -r '.merge_source // empty' 2>/dev/null)
 
-# Chokepoints: git push, git merge (local merge into main bypasses push),
-# gh pr create / ready. Pipelines/subshells deliberately allowed through.
+# Chokepoints: git push, git merge (local merge bypasses push), gh pr
+# create / ready. Pipelines/subshells deliberately allowed through.
 TRIGGER=0
 case "$SUBCMD" in
   push|merge) TRIGGER=1 ;;
 esac
-if [ "$TRIGGER" -eq 0 ] && echo "$CMD" | grep -Eq '^[[:space:]]*gh[[:space:]]+pr[[:space:]]+(create|ready)([[:space:]]|$)'; then
+# `gh pr create|ready` doesn't go through `git`, so detect via shlex too.
+GH_SUB=$(printf '%s' "$CMD" | python3 -c '
+import json, shlex, sys
+try:
+    toks = shlex.split(sys.stdin.read(), posix=True)
+except ValueError:
+    toks = []
+while toks and "=" in toks[0] and not toks[0].startswith("-") and toks[0][0].isalpha():
+    toks.pop(0)
+sub = ""
+if len(toks) >= 3 and toks[0] == "gh" and toks[1] == "pr" and toks[2] in ("create", "ready"):
+    sub = toks[2]
+print(sub)
+' 2>/dev/null)
+if [ -n "$GH_SUB" ]; then
   TRIGGER=1
 fi
 if [ "$TRIGGER" -eq 0 ]; then
@@ -61,21 +78,8 @@ DIFF_FILE=$(mktemp -t sspower-autoreview-XXXXXX)
 trap 'rm -f "$DIFF_FILE"' EXIT
 
 if [ "$SUBCMD" = "merge" ]; then
-  # Extract the first positional arg (branch/ref to merge in).
-  MERGE_SRC=""
-  # shellcheck disable=SC2086
-  set -- $CMD
-  saw_subcmd=0
-  for tok in "$@"; do
-    if [ "$saw_subcmd" -eq 0 ]; then
-      [ "$tok" = "merge" ] && saw_subcmd=1
-      continue
-    fi
-    case "$tok" in
-      -*) continue ;;
-      *) MERGE_SRC="$tok"; break ;;
-    esac
-  done
+  # MERGE_SRC came from the python parser, which honours quoting and
+  # the value-bearing flags (-m, -X, -s, -F, --strategy, etc.).
   if [ -z "$MERGE_SRC" ] || ! git rev-parse --verify --quiet "$MERGE_SRC" >/dev/null; then
     # Can't resolve target (e.g. `git merge --abort`, `git merge --continue`,
     # or a missing arg). Don't block.

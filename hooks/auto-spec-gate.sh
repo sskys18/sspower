@@ -21,24 +21,33 @@ fi
 command -v jq >/dev/null 2>&1 || exit 0
 command -v node >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Resolve the git subcommand robustly (handles `git -c X commit`,
-# `git --no-pager commit`, `FOO=bar git commit`, etc.). Pipelines and
-# subshells are intentionally allowed through as caller-side bypass.
+# Parse the bash command with shell-aware tokenisation. Handles
+# `git -c "user.name=foo bar" commit`, `FOO="a b" git commit`,
+# `git commit -a`/`-am`, etc. Pipelines and subshells are intentionally
+# treated as caller-side bypass.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=./_git-cmd-detect.sh
-. "$SCRIPT_DIR/_git-cmd-detect.sh"
-SUBCMD=$(git_subcommand "$CMD")
+PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
+SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
+COMMIT_ALL=$(printf '%s' "$PARSED" | jq -r '.commit_all // false' 2>/dev/null)
 if [ "$SUBCMD" != "commit" ]; then
   exit 0
 fi
 
-# Staged plan markdown only.
+# Plan markdown that this commit will record. For plain `git commit`,
+# only the index counts. For `git commit -a`, also include unstaged
+# tracked modifications since `-a` auto-stages them at commit time.
 STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
   | grep -E '(^|/)docs/plans/[^/]+\.md$' || true)
+if [ "$COMMIT_ALL" = "true" ]; then
+  UNSTAGED=$(git diff --name-only --diff-filter=ACM 2>/dev/null \
+    | grep -E '(^|/)docs/plans/[^/]+\.md$' || true)
+  STAGED=$(printf '%s\n%s\n' "$STAGED" "$UNSTAGED" | awk 'NF && !seen[$0]++')
+fi
 if [ -z "$STAGED" ]; then
   exit 0
 fi
@@ -53,9 +62,14 @@ ISSUES=""
 ANY_FAIL=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  # Review the staged version, not the working tree.
+  # Review the version that this commit will record:
+  #   - `git commit -a` records the working-tree content of any tracked
+  #     modified file (re-stages it). Always prefer working tree.
+  #   - plain `git commit` records the index version.
   STAGED_FILE=$(mktemp -t sspower-spec-staged-XXXXXX)
-  if ! git show ":$f" > "$STAGED_FILE" 2>/dev/null; then
+  if [ "$COMMIT_ALL" = "true" ] && [ -f "$f" ]; then
+    cp "$f" "$STAGED_FILE" || { rm -f "$STAGED_FILE"; continue; }
+  elif ! git show ":$f" > "$STAGED_FILE" 2>/dev/null; then
     rm -f "$STAGED_FILE"
     continue
   fi
