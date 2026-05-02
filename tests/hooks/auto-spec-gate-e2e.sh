@@ -118,7 +118,8 @@ out=$(run_gate 'git commit -m foo --pathspec-from-file=.pf' approve 2>&1); rc=$?
 assert_eq "pathspec-from-file: exit"        "0" "$rc"
 assert_eq "pathspec-from-file: bridge call" "1" "$(call_count)"
 
-# Staged symlink must be refused, NOT reviewed.
+# Staged symlink must be refused (no bridge call) AND BLOCK the
+# commit (deny payload), not silently skip.
 echo "[e2e: staged symlink]"
 (
   cd "$WORK"
@@ -127,9 +128,54 @@ echo "[e2e: staged symlink]"
   git add docs/plans/sym.md
 )
 out=$(run_gate 'git commit -m foo' approve 2>&1); rc=$?
-assert_eq "staged symlink: exit"            "0" "$rc"
-assert_eq "staged symlink: warned"          "1" "$(printf '%s' "$out" | grep -c 'staged symlink' || true)"
-assert_eq "staged symlink: no bridge call"  "0" "$(call_count)"
+assert_eq "staged symlink: exit"             "0" "$rc"
+assert_eq "staged symlink: no bridge call"   "0" "$(call_count)"
+assert_eq "staged symlink: deny on stdout"   "1" "$(printf '%s' "$out" | grep -c '"permissionDecision":' || true)"
+assert_eq "staged symlink: deny mentions sym" "1" "$(printf '%s' "$out" | grep -c 'staged symlink refused' || true)"
+
+# `-p` / `--patch`: dry-run can't predict interactive selection; gate
+# must conservatively cover any worktree-modified plan even if dry-run
+# reports nothing in this commit.
+echo "[e2e: -p interactive patch]"
+(
+  cd "$WORK"
+  # Reset to a known clean state, commit a tracked plan, then modify
+  # it ONLY in the worktree (not staged).
+  git reset --hard HEAD -q 2>/dev/null
+  rm -rf docs/plans
+  mkdir -p docs/plans
+  echo "# v1" > docs/plans/i.md
+  git add docs/plans/i.md
+  git commit -q -m "track i"
+  echo "# v2 worktree" > docs/plans/i.md
+)
+out=$(run_gate 'git commit -m foo -p' approve 2>&1); rc=$?
+assert_eq "-p with worktree plan: exit"     "0" "$rc"
+assert_eq "-p with worktree plan: bridge"   "1" "$(call_count)"
+
+# `-i` mixed: pre-existing index entry + newly-named pathspec. Index
+# entry must be sourced from the index; pathspec from worktree. Easy
+# end-to-end: stage one plan, modify another in worktree, commit -i
+# with the second plan as pathspec. Both should be reviewed.
+echo "[e2e: -i mixed]"
+(
+  cd "$WORK"
+  git reset --hard HEAD -q 2>/dev/null
+  rm -rf docs/plans
+  mkdir -p docs/plans
+  echo "# v1-a" > docs/plans/a.md
+  echo "# v1-b" > docs/plans/b.md
+  git add docs/plans/a.md docs/plans/b.md
+  git commit -q -m "init a b"
+  # a.md: stage a new revision
+  echo "# v2-a" > docs/plans/a.md
+  git add docs/plans/a.md
+  # b.md: only modify worktree, do NOT stage
+  echo "# v2-b" > docs/plans/b.md
+)
+out=$(run_gate 'git commit -m foo -i docs/plans/b.md' approve 2>&1); rc=$?
+assert_eq "-i mixed: exit"                   "0" "$rc"
+assert_eq "-i mixed: 2 bridge calls"         "2" "$(call_count)"
 
 echo
 echo "passed: $PASS"

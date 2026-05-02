@@ -87,23 +87,71 @@ fi
 # We want the name actually in the commit -- new name for renames.
 # Also strip surrounding double-quotes that git adds when the path
 # has special chars.
-PLANS=$(printf '%s\n' "$DRY" | awk '
-  /^[ACDMRTU]/ {
-    s = substr($0, 4)
-    n = index(s, " -> ")
-    if (n > 0) s = substr(s, n + 4)
-    if (length(s) >= 2 && substr(s, 1, 1) == "\"" && substr(s, length(s), 1) == "\"") {
-      s = substr(s, 2, length(s) - 2)
-      gsub(/\\\\/, "\\", s)
-      gsub(/\\"/, "\"", s)
+extract_plans() {
+  awk '
+    /^[ACDMRTU]/ {
+      s = substr($0, 4)
+      n = index(s, " -> ")
+      if (n > 0) s = substr(s, n + 4)
+      if (length(s) >= 2 && substr(s, 1, 1) == "\"" && substr(s, length(s), 1) == "\"") {
+        s = substr(s, 2, length(s) - 2)
+        gsub(/\\\\/, "\\", s)
+        gsub(/\\"/, "\"", s)
+      }
+      print s
     }
-    print s
-  }
-' | grep -E "$PLAN_RX" || true)
+  '
+}
+
+PLANS=$(printf '%s\n' "$DRY" | extract_plans | grep -E "$PLAN_RX" || true)
+
+# Detect interactive patch mode -- `-p` / `--patch`. The user picks
+# hunks at commit time, so the dry-run output can't predict what
+# actually lands. Conservative: treat ALL worktree-modified plans as
+# in-scope. False positives (user ultimately picks no plan hunks) just
+# trigger an extra review; false negatives are not acceptable.
+INTERACTIVE_PATCH=0
+for a in "${COMMIT_ARGS[@]:-}"; do
+  case "$a" in
+    -p|--patch|--interactive)
+      INTERACTIVE_PATCH=1
+      break ;;
+    -*p*)
+      # Short combo containing 'p'. Skip combos starting with a value-
+      # taking short flag (-Skeyid, -mmsg, etc.).
+      case "$a" in
+        -[SCcmFt]*) ;;
+        *) INTERACTIVE_PATCH=1; break ;;
+      esac
+      ;;
+  esac
+done
+if [ "$INTERACTIVE_PATCH" -eq 1 ]; then
+  WORKTREE_PLANS=$(git_in_repo diff --name-only --diff-filter=ACMR 2>/dev/null \
+    | grep -E "$PLAN_RX" || true)
+  PLANS=$(printf '%s\n%s\n' "$PLANS" "$WORKTREE_PLANS" | awk 'NF && !seen[$0]++')
+fi
 
 if [ -z "$PLANS" ]; then
   exit 0
 fi
+
+# Pre-existing index entries (before this commit's args could have
+# staged anything). Used for per-file source decisions when --include
+# is given: index entries source from `git show :path`; everything
+# else this commit pulls in sources from the working tree.
+PRE_INDEX=$(git_in_repo diff --cached --name-only 2>/dev/null || true)
+
+# Was -i / --include given? With -i, the per-file source is mixed:
+# previously-staged entries -> index; newly-listed pathspecs -> worktree.
+INCLUDE_MODE=0
+for a in "${COMMIT_ARGS[@]:-}"; do
+  case "$a" in
+    -i|--include) INCLUDE_MODE=1; break ;;
+    -[SCcmFt]*) ;;
+    -*i*) INCLUDE_MODE=1; break ;;
+  esac
+done
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 BRIDGE="$PLUGIN_ROOT/scripts/codex-bridge.mjs"
@@ -115,19 +163,28 @@ ISSUES=""
 ANY_FAIL=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  # Read the exact bytes git would record:
-  #   - plain `git commit` / `git commit -m msg` / `--amend`: index is
-  #     the truth -> `git show :file`.
-  #   - any of -a, -i, -o, -p, --include, --only, --patch, --interactive,
-  #     or a positional pathspec: working tree is what gets recorded ->
-  #     copy from worktree, with symlink + out-of-repo guards.
-  # USES_WORKTREE comes from the python parser, which does correct
-  # flag-value skipping (so `-m foo` doesn't read `foo` as pathspec).
+  # Per-file source decision:
+  #   - With --include: pre-existing index entries -> index source;
+  #     everything else this commit drags in -> worktree.
+  #   - Otherwise: USES_WORKTREE (from parser) applies to all files.
+  # Symlink refusals are HARD blocks (ANY_FAIL=1, ISSUES updated) so
+  # the gate denies the commit instead of silently skipping.
   STAGED_FILE=$(mktemp -t sspower-spec-staged-XXXXXX)
-  if [ "$USES_WORKTREE" = "true" ]; then
+  FILE_USES_WORKTREE="$USES_WORKTREE"
+  if [ "$INCLUDE_MODE" -eq 1 ]; then
+    if printf '%s\n' "$PRE_INDEX" | grep -Fqx "$f"; then
+      FILE_USES_WORKTREE=false
+    else
+      FILE_USES_WORKTREE=true
+    fi
+  fi
+
+  if [ "$FILE_USES_WORKTREE" = "true" ]; then
     ABS="$REPO_ROOT/$f"
     if [ -L "$ABS" ]; then
-      echo "[auto-spec-gate] WARNING: refusing symlink at $f; skipping." >&2
+      ANY_FAIL=1
+      ISSUES+=$'\n\n== '"$f"' =='$'\nverdict: blocked\n- [critical] worktree symlink refused (would leak filesystem contents to review)'
+      echo "[auto-spec-gate] BLOCK: refusing symlink at $f." >&2
       rm -f "$STAGED_FILE"
       continue
     fi
@@ -138,18 +195,21 @@ while IFS= read -r f; do
     REAL=$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$ABS" 2>/dev/null)
     case "$REAL" in
       "$REPO_ROOT"/*) ;;
-      *) echo "[auto-spec-gate] WARNING: $f resolves outside repo; skipping." >&2
+      *) ANY_FAIL=1
+         ISSUES+=$'\n\n== '"$f"' =='$'\nverdict: blocked\n- [critical] resolves outside repo (refused)'
+         echo "[auto-spec-gate] BLOCK: $f resolves outside repo." >&2
          rm -f "$STAGED_FILE"
          continue ;;
     esac
     cp -P "$ABS" "$STAGED_FILE" || { rm -f "$STAGED_FILE"; continue; }
   else
-    # Index source. Refuse staged symlinks: the index "content" of a
-    # 120000 entry is the link target string, not a plan -- reviewing
-    # it is meaningless and could leak filesystem layout.
+    # Index source. Staged symlinks (mode 120000) hold the link target
+    # string as content, not a plan. Refuse + block.
     MODE=$(git_in_repo ls-files --stage -- "$f" 2>/dev/null | awk '{print $1}' | head -1)
     if [ "$MODE" = "120000" ]; then
-      echo "[auto-spec-gate] WARNING: refusing staged symlink at $f; skipping." >&2
+      ANY_FAIL=1
+      ISSUES+=$'\n\n== '"$f"' =='$'\nverdict: blocked\n- [critical] staged symlink refused (mode 120000)'
+      echo "[auto-spec-gate] BLOCK: refusing staged symlink at $f." >&2
       rm -f "$STAGED_FILE"
       continue
     fi
