@@ -53,28 +53,30 @@ After writing the complete plan, check:
 
 Fix issues inline. If spec requirement has no task, add the task.
 
-## Codex Spec Review (auto-enforced at commit)
+## Codex Plan Review (auto-enforced at commit)
 
 The `auto-spec-gate.sh` PreToolUse hook fires on `git commit` whenever
-staged files include `docs/plans/*.md`. It runs Codex `spec-review` on
-the staged plan and **blocks the commit** unless verdict is `approve`.
+staged files include `docs/plans/*.md`. It runs Codex `review` on the
+staged plan and **blocks the commit** unless verdict is `approve`.
 No honor system — the commit fails with the issues summary.
 
 When the gate denies:
 - Read the issues list from the deny payload.
 - Fix every issue inline in the plan.
 - Restage and recommit. Hook re-runs.
-- `reject` verdict → discard the plan, return to brainstorming.
 
 Optionally pre-flight before staging to surface issues earlier:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" spec-review \
-  --prompt @docs/plans/YYYY-MM-DD-<feature-name>.md
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review \
+  --prompt "Review the plan at docs/plans/YYYY-MM-DD-<feature-name>.md. Flag missing acceptance criteria, ambiguous steps, unstated assumptions, risk gaps, contradictions. Out of scope: stylistic nits. Verdict approve if sound."
 ```
 
-Save review JSON under `docs/reviews/<plan-name>-spec-review.json` if the
-user wants an audit trail. Bypass: `SSPOWER_AUTO_REVIEW=off` (emergencies).
+The `spec-review` command exists too but is built for spec-vs-impl
+comparison (verdict enum: `compliant`/`non-compliant`). Use it after the
+implementation lands, not for the plan itself. Save review JSON under
+`docs/reviews/<plan-name>-review.json` if the user wants an audit trail.
+Bypass: `SSPOWER_AUTO_REVIEW=off` (emergencies).
 
 ## Execution Handoff
 

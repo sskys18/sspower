@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# sspower auto spec-review hook (PreToolUse:Bash)
+# sspower auto plan-review hook (PreToolUse:Bash)
 #
 # Fires before `git commit`. If staged files include plan markdown
-# (docs/plans/*.md), run a Codex spec-review on each and block the commit
-# if any verdict is not `approve`. Pairs with auto-review.sh which gates
-# at push/PR time.
+# (docs/plans/*.md), runs Codex `review` (quality-review schema) on each
+# and blocks the commit if any verdict is not `approve`. Pairs with
+# auto-review.sh which gates at push/PR time.
+#
+# We use `review` not `spec-review` here because spec-review's schema
+# (compliant/non-compliant) is for spec-vs-impl comparison; a standalone
+# plan critique fits the quality-review verdict enum (approve/
+# needs-attention).
 #
 # Bypass: SSPOWER_AUTO_REVIEW=off (emergencies only).
 
@@ -52,13 +57,17 @@ while IFS= read -r f; do
 
   PROMPT=$(mktemp -t sspower-spec-prompt-XXXXXX)
   cat > "$PROMPT" <<EOF
-Spec-review the plan at $STAGED_FILE (staged version of $f).
+Review the plan at $STAGED_FILE (staged version of $f).
 Flag missing acceptance criteria, ambiguous steps, unstated assumptions,
-risk gaps, and contradictions. Out of scope: stylistic prose nits.
-If sound, return verdict approve.
+risk gaps, contradictions, and unspecified verification. Out of scope:
+stylistic prose nits. If sound, return verdict approve.
 EOF
 
-  RESULT=$(node "$BRIDGE" spec-review --prompt "@$PROMPT" 2>/dev/null || true)
+  # Use 'review' (quality-review schema: approve/needs-attention) for
+  # consistency with the push-time gate. spec-review schema uses
+  # compliant/non-compliant and assumes spec-vs-impl comparison, which
+  # doesn't fit a standalone plan critique.
+  RESULT=$(node "$BRIDGE" review --prompt "@$PROMPT" 2>/dev/null || true)
   rm -f "$PROMPT" "$STAGED_FILE"
 
   if [ -z "$RESULT" ]; then
