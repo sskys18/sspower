@@ -6,6 +6,41 @@ parsing the bash command string with `_parse-git-cmd.py` (Python
 `shlex`). Parsing arbitrary bash to infer git intent is unbounded — we
 ship a tight subset and accept rare-form bypasses.
 
+## Known gaps (current bash-parser implementation)
+
+The bash-string parser at `hooks/_parse-git-cmd.py` covers the common
+chokepoint forms (12 rounds of codex review iterated it from naive
+regex to shlex+segment+wrapper-strip). The remaining gaps below are
+documented here rather than patched -- the surface is unbounded and
+each fix invites the next finding. Path B (git-native hooks, see
+below) is the structural exit; until then these are accepted:
+
+- **`git commit -i a.md` with `a.md` already in pre-existing index.**
+  -i re-stages worktree at commit time, so the bytes recorded come
+  from the working tree even for files that were already in the
+  index. The current gate sources those files from the index. False
+  negative: a worktree-only edit to a pre-staged plan can pass the
+  review (the index version was reviewed, not the worktree version).
+  Mitigation: stage the worktree change before committing; the next
+  invocation of the gate will see the new index.
+
+- **`--git-dir` and `--work-tree` given separately.** The parser
+  collapses both into a single `work_dir` value and the hooks pass
+  it as `git -C $work_dir`. When a user splits the two
+  (`git --git-dir=/x.git --work-tree=/y commit`), only one is
+  honoured and git operations may target the wrong tree. Hook would
+  then `exit 0` (rev-parse fails) and let the action through. Rare
+  in practice; bypassable at user's own discretion.
+
+- **`gh pr merge`.** The current `auto-review.sh` reviews local diff
+  vs upstream, which is unrelated to a remote PR's contents. Gating
+  on local state for `gh pr merge` would either falsely block (when
+  local is dirty but the PR is fine) or falsely approve. The verb
+  is therefore NOT in the chokepoint list. PR contents are gated at
+  `gh pr create` / `gh pr ready` instead. If you want a merge-time
+  re-review, run `gh pr diff <num> | node scripts/codex-bridge.mjs
+  review --prompt @-` manually before merging.
+
 ## Known acceptable bypasses (Path A)
 
 These either fail safely (hook exits 0, no false block) or require an
