@@ -34,6 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand' 2>/dev/null)
 WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir' 2>/dev/null)
+USES_WORKTREE=$(printf '%s' "$PARSED" | jq -r '.commit_uses_worktree' 2>/dev/null)
 if [ "$SUBCMD" != "commit" ]; then
   exit 0
 fi
@@ -81,11 +82,24 @@ else
 fi
 
 # Pull names of files whose first column indicates "in this commit".
-# `awk '/^[ACDMRTU]/ {print substr($0,4)}'` keeps everything from col 4
-# onward, which is the path (handles spaces in filenames; rename
-# entries `R  old -> new` are uncommon in commits but the trailing
-# `-> new` would still get matched against PLAN_RX).
-PLANS=$(printf '%s\n' "$DRY" | awk '/^[ACDMRTU]/ {print substr($0,4)}' | grep -E "$PLAN_RX" || true)
+# Porcelain v1 line:  `XY filename` for non-renames,
+#                     `RY oldname -> newname` for renames/copies.
+# We want the name actually in the commit -- new name for renames.
+# Also strip surrounding double-quotes that git adds when the path
+# has special chars.
+PLANS=$(printf '%s\n' "$DRY" | awk '
+  /^[ACDMRTU]/ {
+    s = substr($0, 4)
+    n = index(s, " -> ")
+    if (n > 0) s = substr(s, n + 4)
+    if (length(s) >= 2 && substr(s, 1, 1) == "\"" && substr(s, length(s), 1) == "\"") {
+      s = substr(s, 2, length(s) - 2)
+      gsub(/\\\\/, "\\", s)
+      gsub(/\\"/, "\"", s)
+    }
+    print s
+  }
+' | grep -E "$PLAN_RX" || true)
 
 if [ -z "$PLANS" ]; then
   exit 0
@@ -101,33 +115,16 @@ ISSUES=""
 ANY_FAIL=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  # Read the exact bytes git would record. For staged-only files this
-  # is `git show :file`. For files staged by --dry-run from worktree
-  # (because of -a, pathspec, -i, etc.), git's index reflects the
-  # post-stage state for the duration of the dry-run only -- so we
-  # always source from the working tree when a worktree-affecting flag
-  # is present, with symlink and out-of-repo guards.
+  # Read the exact bytes git would record:
+  #   - plain `git commit` / `git commit -m msg` / `--amend`: index is
+  #     the truth -> `git show :file`.
+  #   - any of -a, -i, -o, -p, --include, --only, --patch, --interactive,
+  #     or a positional pathspec: working tree is what gets recorded ->
+  #     copy from worktree, with symlink + out-of-repo guards.
+  # USES_WORKTREE comes from the python parser, which does correct
+  # flag-value skipping (so `-m foo` doesn't read `foo` as pathspec).
   STAGED_FILE=$(mktemp -t sspower-spec-staged-XXXXXX)
-  USE_WORKTREE=0
-  case " ${COMMIT_ARGS[*]:-} " in
-    *" -a "*|*" --all "*|*" -am "*|*" -avm "*|*" -i "*|*" --include "*|*" -o "*|*" --only "*|*" --patch "*|*" -p "*)
-      USE_WORKTREE=1 ;;
-  esac
-  # Pathspec (positional, non-flag arg) also implies worktree source.
-  if [ "$USE_WORKTREE" -eq 0 ]; then
-    saw_dashdash=0
-    for a in "${COMMIT_ARGS[@]:-}"; do
-      if [ "$saw_dashdash" -eq 1 ]; then USE_WORKTREE=1; break; fi
-      case "$a" in
-        --) saw_dashdash=1 ;;
-        --*=*) ;;
-        --*|-*) ;;
-        *) USE_WORKTREE=1; break ;;
-      esac
-    done
-  fi
-
-  if [ "$USE_WORKTREE" -eq 1 ]; then
+  if [ "$USES_WORKTREE" = "true" ]; then
     ABS="$REPO_ROOT/$f"
     if [ -L "$ABS" ]; then
       echo "[auto-spec-gate] WARNING: refusing symlink at $f; skipping." >&2

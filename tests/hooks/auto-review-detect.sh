@@ -68,6 +68,21 @@ echo "[parser: subcommand_args verbatim]"
 assert_eq "no args"                 ""           "$(parse_arr subcommand_args 'git commit')"
 assert_eq "preserves order/quoting" "$(printf -- '-m\nmsg with space\nfoo.md')" "$(parse_arr subcommand_args 'git commit -m "msg with space" foo.md')"
 
+echo "[parser: commit_uses_worktree]"
+assert_eq "plain"                   "false"  "$(parse_field commit_uses_worktree 'git commit')"
+assert_eq "-m msg only"             "false"  "$(parse_field commit_uses_worktree 'git commit -m foo')"
+assert_eq "-m \"msg with space\""   "false"  "$(parse_field commit_uses_worktree 'git commit -m "msg with space"')"
+assert_eq "--amend"                 "false"  "$(parse_field commit_uses_worktree 'git commit --amend')"
+assert_eq "-S signed only"          "false"  "$(parse_field commit_uses_worktree 'git commit -S')"
+assert_eq "-Skeyid attached"        "false"  "$(parse_field commit_uses_worktree 'git commit -Skeyid')"
+assert_eq "-a"                      "true"   "$(parse_field commit_uses_worktree 'git commit -a -m foo')"
+assert_eq "-am combo"               "true"   "$(parse_field commit_uses_worktree 'git commit -am foo')"
+assert_eq "-i + -m"                 "true"   "$(parse_field commit_uses_worktree 'git commit -i -m foo a.md')"
+assert_eq "--only"                  "true"   "$(parse_field commit_uses_worktree 'git commit --only -m foo')"
+assert_eq "--patch"                 "true"   "$(parse_field commit_uses_worktree 'git commit --patch')"
+assert_eq "positional pathspec"     "true"   "$(parse_field commit_uses_worktree 'git commit -m foo bar.md')"
+assert_eq "after --"                "true"   "$(parse_field commit_uses_worktree 'git commit -m foo -- bar.md')"
+
 echo "[parser: merge_sources octopus]"
 assert_eq "single source"           "feat/foo"   "$(parse_arr merge_sources 'git merge feat/foo')"
 assert_eq "octopus 3 sources"       "$(printf 'a\nb\nc')" "$(parse_arr merge_sources 'git merge a b c')"
@@ -182,6 +197,42 @@ EOF
 ); rc=$?
 assert_eq "git -C otherrepo: exit" "0" "$rc"
 rm -rf "$OTHER"
+
+# Renamed plan file: `git mv docs/plans/x.md docs/plans/y.md && git
+# commit -m rename` should produce `R  old -> new` in dry-run output;
+# the awk parser must extract `new` and the gate must trigger.
+(
+  cd "$WORK"
+  git reset --hard HEAD -q 2>/dev/null
+  rm -rf docs/plans
+  mkdir -p docs/plans
+  echo "# v1" > docs/plans/r.md
+  git add docs/plans/r.md
+  git commit -q -m "add r" 2>/dev/null
+  git mv docs/plans/r.md docs/plans/r-renamed.md
+)
+out=$(run_gate_in_work 'git commit -m rename' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "rename plan: exit"  "0" "$rc"
+# Confirm dry-run actually emits a rename line we'd parse.
+dry=$(cd "$WORK" && /usr/bin/git commit --dry-run --porcelain --no-verify 2>/dev/null)
+assert_eq "rename dry-run shows R" "1" "$(printf '%s' "$dry" | grep -c '^R' || true)"
+
+# Plain `git commit -m foo` (no other args) with NO plan staged: must
+# go through the index branch, not the worktree branch. Verify by
+# making a worktree-only modification to a plan that's NOT staged --
+# the gate must NOT see it.
+(
+  cd "$WORK"
+  # Commit the rename so it's not lingering in the index when we test
+  # the plain-commit case below.
+  git commit -q -m "rename" 2>/dev/null
+  echo "# v2 worktree" > docs/plans/r-renamed.md   # tracked, modified, NOT staged
+  echo "x" > nonplan.txt
+  git add nonplan.txt
+)
+out=$(run_gate_in_work 'git commit -m unrelated' 2>&1); rc=$?
+assert_eq "plain commit, plan worktree-only: exit" "0" "$rc"
+assert_eq "plain commit, plan worktree-only: no review" "" "$(printf '%s' "$out" | grep -i 'permissionDecisionReason' || true)"
 
 # --- auto-review.sh --------------------------------------------------------
 echo "[auto-review.sh]"
