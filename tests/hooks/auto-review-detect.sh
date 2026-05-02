@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Smoke tests for the hook command-detection logic. No Codex round-trip;
-# we exercise the python parser directly and the bypass / non-trigger
-# paths of the two hook scripts.
+# Smoke tests for the hook command-detection + decision logic. We
+# exercise the python parser directly and the bypass / non-trigger
+# paths of the two hook scripts. The end-to-end "this commit would
+# include a plan file" tests bypass codex (SSPOWER_AUTO_REVIEW=off)
+# but still exercise the dry-run discovery path.
 
 set -u
 
@@ -29,11 +31,12 @@ assert_eq() {
 
 parse_field() {
   local field="$1" cmd="$2"
-  # Don't use `// empty` — that swallows `false` (jq's // alternative
-  # treats false as nullish, so `.commit_all // empty` yields "" for
-  # `false`). Plain `.${field}` returns "" for absent and the literal
-  # for booleans / strings.
   printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}"
+}
+
+parse_arr() {
+  local field="$1" cmd="$2"
+  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}[]?"
 }
 
 # --- _parse-git-cmd.py ------------------------------------------------------
@@ -54,31 +57,6 @@ assert_eq "commit-tree (not commit)" "commit-tree" "$(parse_field subcommand 'gi
 assert_eq "non-git"                 ""       "$(parse_field subcommand 'ls -la')"
 assert_eq "unbalanced quotes"       ""       "$(parse_field subcommand 'git "commit -m foo')"
 
-echo "[parser: commit_all]"
-assert_eq "plain commit -> false"   "false"  "$(parse_field commit_all 'git commit -m foo')"
-assert_eq "-a"                      "true"   "$(parse_field commit_all 'git commit -a -m foo')"
-assert_eq "--all"                   "true"   "$(parse_field commit_all 'git commit --all')"
-assert_eq "-am combo"               "true"   "$(parse_field commit_all 'git commit -am foo')"
-assert_eq "-avm combo"              "true"   "$(parse_field commit_all 'git commit -avm foo')"
-assert_eq "-vS no a"                "false"  "$(parse_field commit_all 'git commit -vS')"
-assert_eq "quoted -m no a"          "false"  "$(parse_field commit_all 'git commit -m "all hands"')"
-
-echo "[parser: commit_all false-positive guards]"
-assert_eq "-Sabcdef no a"           "false"  "$(parse_field commit_all 'git commit -Sabcdef -m foo')"
-assert_eq "-S keyid sep"            "false"  "$(parse_field commit_all 'git commit -S abcdef -m foo')"
-assert_eq "-mmsg attached"          "false"  "$(parse_field commit_all 'git commit -mmsg')"
-
-echo "[parser: commit_pathspecs]"
-parse_arr() {
-  local field="$1" cmd="$2"
-  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}[]?"
-}
-assert_eq "no pathspec"             ""           "$(parse_arr commit_pathspecs 'git commit -m foo')"
-assert_eq "single pathspec"         "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m foo docs/plans/x.md')"
-assert_eq "multiple pathspecs"      "$(printf 'a.md\nb.md')" "$(parse_arr commit_pathspecs 'git commit -m foo a.md b.md')"
-assert_eq "pathspec after --"       "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m foo -- docs/plans/x.md')"
-assert_eq "pathspec with quoted msg" "docs/plans/x.md" "$(parse_arr commit_pathspecs 'git commit -m "msg with space" docs/plans/x.md')"
-
 echo "[parser: work_dir capture]"
 assert_eq "no -C"                   ""           "$(parse_field work_dir 'git commit')"
 assert_eq "-C dir"                  "/tmp/x"     "$(parse_field work_dir 'git -C /tmp/x commit')"
@@ -86,17 +64,16 @@ assert_eq "--git-dir=path"          "/tmp/x.git" "$(parse_field work_dir 'git --
 assert_eq "--work-tree path"        "/tmp/wt"    "$(parse_field work_dir 'git --work-tree /tmp/wt commit')"
 assert_eq "-C with quoted dir"      "/path with space" "$(parse_field work_dir 'git -C "/path with space" commit')"
 
-echo "[parser: merge_source -S handling]"
-assert_eq "merge -S feat/X"         "feat/foo"   "$(parse_field merge_source 'git merge -S feat/foo')"
-assert_eq "merge -Skeyid feat/X"    "feat/foo"   "$(parse_field merge_source 'git merge -Skeyid feat/foo')"
+echo "[parser: subcommand_args verbatim]"
+assert_eq "no args"                 ""           "$(parse_arr subcommand_args 'git commit')"
+assert_eq "preserves order/quoting" "$(printf -- '-m\nmsg with space\nfoo.md')" "$(parse_arr subcommand_args 'git commit -m "msg with space" foo.md')"
 
-echo "[parser: merge_source]"
-assert_eq "merge feat/X"            "feat/foo" "$(parse_field merge_source 'git merge feat/foo')"
-assert_eq "merge -m msg feat/X"     "feat/foo" "$(parse_field merge_source 'git merge -m "merge msg" feat/foo')"
-assert_eq "merge -X theirs feat/X"  "feat/foo" "$(parse_field merge_source 'git merge -X theirs feat/foo')"
-assert_eq "merge -s recursive feat/X" "feat/foo" "$(parse_field merge_source 'git merge -s recursive feat/foo')"
-assert_eq "merge --strategy=ours feat/X" "feat/foo" "$(parse_field merge_source 'git merge --strategy=ours feat/foo')"
-assert_eq "merge --abort"           ""       "$(parse_field merge_source 'git merge --abort')"
+echo "[parser: merge_sources octopus]"
+assert_eq "single source"           "feat/foo"   "$(parse_arr merge_sources 'git merge feat/foo')"
+assert_eq "octopus 3 sources"       "$(printf 'a\nb\nc')" "$(parse_arr merge_sources 'git merge a b c')"
+assert_eq "with -m + 2 sources"     "$(printf 'a\nb')"    "$(parse_arr merge_sources 'git merge -m "msg" a b')"
+assert_eq "with -X + 2 sources"     "$(printf 'a\nb')"    "$(parse_arr merge_sources 'git merge -X theirs a b')"
+assert_eq "merge --abort"           ""           "$(parse_arr merge_sources 'git merge --abort')"
 
 # --- auto-spec-gate.sh ------------------------------------------------------
 echo "[auto-spec-gate.sh]"
@@ -108,6 +85,10 @@ trap 'rm -rf "$WORK"' EXIT
   git init -q
   git config user.email t@t
   git config user.name t
+  git config commit.gpgsign false
+  echo "# initial" > seed.md
+  git add seed.md
+  git commit -q -m init
 )
 
 run_gate_in_work() {
@@ -120,8 +101,7 @@ EOF
 }
 
 # Bypass.
-out=$(run_gate_in_work 'git commit -m x' 'SSPOWER_AUTO_REVIEW=off' 2>&1)
-rc=$?
+out=$(run_gate_in_work 'git commit -m x' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
 assert_eq "bypass exit"   "0" "$rc"
 assert_eq "bypass quiet"  ""  "$out"
 
@@ -130,65 +110,61 @@ out=$(run_gate_in_work 'ls -la' 2>&1); rc=$?
 assert_eq "non-commit exit"  "0" "$rc"
 assert_eq "non-commit quiet" ""  "$out"
 
-# Quoted env + commit, no plan staged.
-out=$(run_gate_in_work 'FOO="a b" git commit -m foo' 2>&1); rc=$?
-assert_eq "quoted-env nostaged"  "0" "$rc"
+# User-typed --dry-run: don't gate.
+out=$(run_gate_in_work 'git commit --dry-run' 2>&1); rc=$?
+assert_eq "user --dry-run exit"  "0" "$rc"
+assert_eq "user --dry-run quiet" "" "$out"
 
-# Quoted -c + commit, no plan staged.
-out=$(run_gate_in_work 'git -c "user.name=foo bar" commit -m m' 2>&1); rc=$?
-assert_eq "quoted -c nostaged"   "0" "$rc"
+# Plain commit, no plan staged, nothing to do.
+(cd "$WORK" && echo "x" > unrelated.txt && git add unrelated.txt)
+out=$(run_gate_in_work 'git commit -m x' 2>&1); rc=$?
+assert_eq "plain no-plan exit"  "0" "$rc"
 
-# `git commit -a` with plan modified-not-staged: bypass-on so no codex
-# call, but verify the hook reaches the trigger path. (Hard to assert
-# without mocking codex; SSPOWER_AUTO_REVIEW=off short-circuits early
-# anyway. We just confirm exit 0.)
+# Pathspec commit OUTSIDE plan dir, with a plan ALSO staged: must NOT
+# gate (the staged plan won't be in this commit).
 (
   cd "$WORK"
   mkdir -p docs/plans
-  echo "# v1" > docs/plans/test.md
-  git add docs/plans/test.md
-  git commit -q -m initial
-  echo "# v2" > docs/plans/test.md
+  echo "# v1" > docs/plans/x.md
+  git add docs/plans/x.md
+  echo "y" > also.txt
+  git add also.txt
 )
-out=$(run_gate_in_work 'git commit -am bump' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
-assert_eq "commit -a + plan dirty exit" "0" "$rc"
-
-# Pathspec form: `git commit docs/plans/foo.md -m msg` — file modified
-# in working tree, not staged. Used to bypass; now caught by
-# commit_pathspecs. Use bypass-on so we don't actually call codex.
-out=$(run_gate_in_work 'git commit -m bump docs/plans/test.md' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
-assert_eq "pathspec commit + bypass exit" "0" "$rc"
-
-# Pathspec commit OUTSIDE the plan dir, even with another plan staged
-# in the index, must NOT trigger the gate -- the staged plan won't be
-# in this commit. (We can't easily assert "no codex call" without
-# mocking; assert exit 0 and nothing in stderr indicating a review.)
-(
-  cd "$WORK"
-  git checkout -q -- docs/plans/test.md
-  echo "# v3" > docs/plans/test.md
-  git add docs/plans/test.md
-  echo "unrelated" > other.txt
-)
-out=$(run_gate_in_work 'git commit -m unrelated other.txt' 2>&1); rc=$?
+out=$(run_gate_in_work 'git commit -m x also.txt' 2>&1); rc=$?
 assert_eq "pathspec outside plan: exit"  "0" "$rc"
 assert_eq "pathspec outside plan: no review" "" "$(printf '%s' "$out" | grep -i review || true)"
 
-# Symlink under docs/plans/ must be refused, not copied.
+# Pathspec commit INSIDE plan dir: gate triggers, bypass-on so exit 0.
+out=$(run_gate_in_work 'git commit -m x docs/plans/x.md' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "pathspec inside plan + bypass" "0" "$rc"
+
+# Directory pathspec: `git commit docs/plans` should match.
+# We can't easily assert "would gate" without mocking codex, so use
+# bypass and just verify it doesn't blow up.
+out=$(run_gate_in_work 'git commit -m x docs/plans' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "directory pathspec exit" "0" "$rc"
+
+# --include picks up index even with a non-plan pathspec. Prove the
+# dry-run path notices: with x.md staged AND also.txt also staged,
+# `git commit -i also.txt` includes BOTH. Our gate should see the plan.
+# Use bypass.
+out=$(run_gate_in_work 'git commit -m x -i also.txt' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
+assert_eq "--include + plan staged" "0" "$rc"
+
+# Symlink under docs/plans/ refused even when staged (so dry-run lists
+# it and we reach the worktree-source path). Without staging, git
+# rejects the pathspec itself; staging gets us into the gate.
 (
   cd "$WORK"
   rm -f docs/plans/evil.md
   ln -s /etc/passwd docs/plans/evil.md
+  git add docs/plans/evil.md
 )
 out=$(run_gate_in_work 'git commit -m bump docs/plans/evil.md' 2>&1); rc=$?
 assert_eq "symlink pathspec: exit"  "0" "$rc"
-assert_eq "symlink pathspec: warning emitted" "1" "$(printf '%s' "$out" | grep -c 'refusing symlink' || true)"
+assert_eq "symlink pathspec: warning" "1" "$(printf '%s' "$out" | grep -c 'refusing symlink' || true)"
 
-# Pathspec with `..` escape must be refused at the regex stage.
-out=$(run_gate_in_work 'git commit -m x ../escape.md' 2>&1); rc=$?
-assert_eq "pathspec ../ rejected: exit" "0" "$rc"
-
-# `git -C otherrepo commit` must consult OTHER repo's index, not WORK.
+# `git -C otherrepo commit` -- must consult the OTHER repo.
 OTHER=$(mktemp -d -t sspower-other-XXXXXX)
 (
   cd "$OTHER"
@@ -196,21 +172,15 @@ OTHER=$(mktemp -d -t sspower-other-XXXXXX)
   git config user.email t@t
   git config user.name t
   mkdir -p docs/plans
-  echo "# other" > docs/plans/o.md
+  echo "# o" > docs/plans/o.md
   git add docs/plans/o.md
 )
-# Run from WORK (which has nothing staged after checkout above) but
-# with -C pointing at OTHER (which has a staged plan). The hook must
-# detect the staged plan in OTHER and reach the codex path -- which
-# we short-circuit via the bypass. We assert exit 0 (would otherwise
-# be opaque without bypass).
 out=$(cd "$WORK" && SSPOWER_AUTO_REVIEW=off CLAUDE_PLUGIN_ROOT="$ROOT" \
   bash "$GATE" <<EOF
 {"tool_input":{"command":"git -C $OTHER commit -m x"}}
 EOF
-)
-rc=$?
-assert_eq "git -C otherrepo respected: exit" "0" "$rc"
+); rc=$?
+assert_eq "git -C otherrepo: exit" "0" "$rc"
 rm -rf "$OTHER"
 
 # --- auto-review.sh --------------------------------------------------------
@@ -226,17 +196,20 @@ EOF
 }
 
 out=$(run_review_in_work 'git push' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
-assert_eq "push bypass exit"  "0" "$rc"
+assert_eq "push bypass"  "0" "$rc"
 
 out=$(run_review_in_work 'ls' 2>&1); rc=$?
-assert_eq "non-trigger exit"  "0" "$rc"
+assert_eq "non-trigger"  "0" "$rc"
 
 out=$(run_review_in_work 'git merge --abort' 2>&1); rc=$?
-assert_eq "merge --abort exit"  "0" "$rc"
+assert_eq "merge --abort"  "0" "$rc"
 
-# `gh pr create` with quoted body — must trigger (and bypass-out exit 0).
 out=$(run_review_in_work 'gh pr create --title "t" --body "b"' 'SSPOWER_AUTO_REVIEW=off' 2>&1); rc=$?
 assert_eq "gh pr create quoted bypass" "0" "$rc"
+
+# Octopus merge: 3 unresolvable sources -> exit 0 (nothing reviewable).
+out=$(run_review_in_work 'git merge a b c' 2>&1); rc=$?
+assert_eq "octopus all-unresolvable" "0" "$rc"
 
 echo
 echo "passed: $PASS"

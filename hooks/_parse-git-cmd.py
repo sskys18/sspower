@@ -5,15 +5,22 @@ Reads the raw bash command from stdin. Writes a single JSON object to
 stdout with these keys (always present, defaults shown):
 
     {
-      "subcommand":   "",     # e.g. "commit", "push", "merge"
-      "merge_source": "",     # first positional arg of `git merge`
-      "commit_all":   false   # true if -a / --all (or short combo like -am)
+      "subcommand":      "",     # e.g. "commit", "push", "merge"
+      "work_dir":        "",     # value of -C / --git-dir / --work-tree
+      "subcommand_args": [],     # tokens after the subcommand, verbatim
+      "merge_sources":   []      # positional refs after `merge` (octopus
+                                 # safe -- collects all, not just the first)
     }
 
-Honours shell quoting via shlex so things like
+We deliberately stop trying to predict what each subcommand will do.
+Hooks that need that information should re-invoke git with the parsed
+args (e.g. `git commit --dry-run --porcelain --no-verify <args>`) and
+let git itself answer.
+
+shlex parses the command honouring shell quoting, so things like
   FOO="bar baz" git -c "user.name=foo bar" commit -m "msg with space"
-are parsed correctly. Pipelines and command substitutions are out of
-scope -- the auto-review hooks treat those as caller-side bypass.
+tokenise correctly. Pipelines / command substitutions are out of scope:
+the auto-review hooks treat those as caller-side bypass.
 """
 
 from __future__ import annotations
@@ -30,35 +37,12 @@ _GIT_FLAGS_WITH_VALUE = {
     "--exec-path", "--super-prefix", "--config-env",
 }
 
-# Subcommand-specific flags that take a separate value token.
-# Notes:
-#   - `-S` (gpg-sign) is OPTIONAL-value in both `commit` and `merge`. The
-#     common forms are `-S` alone (default key) or `-Skeyid` attached.
-#     Treating it as value-bearing ate the next positional (e.g. the
-#     merge source). We exclude it; the rare `-S keyid <ref>` form will
-#     mis-parse keyid as positional, fail `git rev-parse`, and the hook
-#     exits 0 -- acceptable.
-#   - `--gpg-sign` with `=` form is fine; without `=` it's also optional
-#     but uncommon, omitted for the same reason.
-_SUBCMD_FLAGS_WITH_VALUE = {
-    "merge": {
-        "-m", "-F", "-X", "-s",
-        "--message", "--file", "--strategy", "--strategy-option",
-        "--into-name",
-    },
-    "commit": {
-        "-m", "-F", "-c", "-C", "-t",
-        "--message", "--file", "--reedit-message", "--reuse-message",
-        "--template", "--cleanup", "--author", "--date",
-        "--fixup", "--squash", "--pathspec-from-file", "--trailer",
-    },
-}
-
-# Short flags that take an *attached* value: `-Skeyid`, `-mmsg`, `-Cref`.
-# Used to suppress short-combo detection on tokens like `-Sabcdef`.
-_SHORT_VALUE_TAKERS = {
-    "commit": set("SCcmFt"),
-    "merge":  set("SmFXs"),
+# Subcommand-specific flags that take a separate value token. We only
+# need this for `merge` now, to collect octopus sources correctly.
+_MERGE_FLAGS_WITH_VALUE = {
+    "-m", "-F", "-X", "-s",
+    "--message", "--file", "--strategy", "--strategy-option",
+    "--into-name",
 }
 
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -67,10 +51,9 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 def _empty() -> dict:
     return {
         "subcommand": "",
-        "merge_source": "",
-        "commit_all": False,
-        "commit_pathspecs": [],
         "work_dir": "",
+        "subcommand_args": [],
+        "merge_sources": [],
     }
 
 
@@ -78,10 +61,8 @@ def parse(cmd: str) -> dict:
     try:
         toks = shlex.split(cmd, posix=True)
     except ValueError:
-        # Unbalanced quotes etc. -- treat as opaque, no decision.
         return _empty()
 
-    # Strip leading env assignments (FOO=bar BAZ=qux git ...).
     while toks and _ENV_ASSIGN.match(toks[0]):
         toks.pop(0)
 
@@ -89,17 +70,14 @@ def parse(cmd: str) -> dict:
         return _empty()
     toks = toks[1:]
 
-    # Strip git-level flags (and paired values). Capture -C / --git-dir
-    # so the hook can run subsequent git invocations against the right
-    # repo.
     out_work_dir = ""
     skip_next = False
-    capture_next_as = ""
+    capture_next = False
     while toks:
         if skip_next:
-            if capture_next_as == "work_dir":
+            if capture_next:
                 out_work_dir = toks[0]
-                capture_next_as = ""
+                capture_next = False
             toks.pop(0)
             skip_next = False
             continue
@@ -112,7 +90,7 @@ def parse(cmd: str) -> dict:
             continue
         if t in _GIT_FLAGS_WITH_VALUE:
             if t in ("-C", "--git-dir", "--work-tree"):
-                capture_next_as = "work_dir"
+                capture_next = True
             toks.pop(0)
             skip_next = True
             continue
@@ -127,61 +105,24 @@ def parse(cmd: str) -> dict:
     out = _empty()
     out["subcommand"] = toks[0]
     out["work_dir"] = out_work_dir
-    rest = toks[1:]
+    out["subcommand_args"] = toks[1:]
 
-    if out["subcommand"] == "commit":
-        # Pass 1: detect `-a` / `--all` / short combo `-am` etc.
-        # Pass 2: collect positional pathspecs (`git commit foo.md`).
-        flags_with_value = _SUBCMD_FLAGS_WITH_VALUE["commit"]
-        short_value_takers = _SHORT_VALUE_TAKERS["commit"]
-        short_combo = re.compile(r"^-[A-Za-z]+$")
-        skip_next = False
-        for t in rest:
-            if skip_next:
-                skip_next = False
-                continue
-            if t == "--":
-                # Everything after is pathspec.
-                continue
-            if t == "--all":
-                out["commit_all"] = True
+    if out["subcommand"] == "merge":
+        # Walk the merge args, skipping flags and their paired values.
+        # Collect ALL non-flag tokens so octopus merges are caught.
+        skip = False
+        for t in out["subcommand_args"]:
+            if skip:
+                skip = False
                 continue
             if t.startswith("--") and "=" in t:
                 continue
-            if t in flags_with_value:
-                skip_next = True
-                continue
-            if t.startswith("-"):
-                # Short combo like `-am`, but skip `-Skeyid` / `-mmsg`
-                # / `-Cref` where the leading char is a value-taker
-                # with attached value.
-                if (
-                    short_combo.match(t)
-                    and len(t) >= 2
-                    and t[1] not in short_value_takers
-                    and "a" in t[1:]
-                ):
-                    out["commit_all"] = True
-                continue
-            # Positional: pathspec (file, dir, glob, magic).
-            out["commit_pathspecs"].append(t)
-
-    elif out["subcommand"] == "merge":
-        flags_with_value = _SUBCMD_FLAGS_WITH_VALUE["merge"]
-        skip_next = False
-        for t in rest:
-            if skip_next:
-                skip_next = False
-                continue
-            if t.startswith("--") and "=" in t:
-                continue
-            if t in flags_with_value:
-                skip_next = True
+            if t in _MERGE_FLAGS_WITH_VALUE:
+                skip = True
                 continue
             if t.startswith("-"):
                 continue
-            out["merge_source"] = t
-            break
+            out["merge_sources"].append(t)
 
     return out
 

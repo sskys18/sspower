@@ -24,6 +24,25 @@ unusual invocation:
 
 These are documented, not bugs.
 
+## Architecture: ask git, don't predict git
+
+The plan-commit gate (`auto-spec-gate.sh`) used to try to predict what
+`git commit` would record by parsing the bash command (`-a`, `-i`,
+pathspecs, directories, globs, `--include`, `--patch`, `--only`,
+`--pathspec-from-file`...). That surface is unbounded and produced a
+new bypass each review round.
+
+We now reconstruct the full arg vector from the parser and call
+`git commit --dry-run --porcelain --no-verify <args>`. Git itself
+expands directories, applies pathspecs, honours -i / -o, etc.; we read
+the porcelain output for files whose first column indicates "in this
+commit" (any of `[ACDMRTU]`). The parser only needs to know:
+`subcommand`, `work_dir`, and the verbatim `subcommand_args` list.
+
+The merge gate (`auto-review.sh`) uses the same principle for octopus
+merges -- the parser collects EVERY positional ref after `merge`, and
+the hook iterates `git diff HEAD...$src` per source.
+
 ## Path B — git-native hooks (follow-up)
 
 The Claude-Code hook approach has a structural cap on accuracy:

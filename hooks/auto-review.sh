@@ -36,8 +36,13 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
-MERGE_SRC=$(printf '%s' "$PARSED" | jq -r '.merge_source // empty' 2>/dev/null)
 WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir // empty' 2>/dev/null)
+# Octopus-safe: collect EVERY positional ref after `merge`, not just
+# the first one.
+MERGE_SOURCES=()
+while IFS= read -r r; do
+  [ -n "$r" ] && MERGE_SOURCES+=("$r")
+done < <(printf '%s' "$PARSED" | jq -r '.merge_sources[]?')
 GIT_OPTS=()
 if [ -n "$WORK_DIR" ]; then
   GIT_OPTS+=(-C "$WORK_DIR")
@@ -90,14 +95,25 @@ DIFF_FILE=$(mktemp -t sspower-autoreview-XXXXXX)
 trap 'rm -f "$DIFF_FILE"' EXIT
 
 if [ "$SUBCMD" = "merge" ]; then
-  # MERGE_SRC came from the python parser, which honours quoting and
-  # the value-bearing flags (-m, -X, -s, -F, --strategy, etc.).
-  if [ -z "$MERGE_SRC" ] || ! git_in_repo rev-parse --verify --quiet "$MERGE_SRC" >/dev/null; then
-    # Can't resolve target (e.g. `git merge --abort`, `git merge --continue`,
-    # or a missing arg). Don't block.
+  # No resolvable refs (e.g. `git merge --abort`, `--continue`, missing
+  # arg) -> let the action through, nothing to review.
+  if [ ${#MERGE_SOURCES[@]} -eq 0 ]; then
     exit 0
   fi
-  if ! git_in_repo diff "HEAD...$MERGE_SRC" > "$DIFF_FILE" 2>/dev/null; then
+  : > "$DIFF_FILE"
+  REVIEWABLE=0
+  for src in "${MERGE_SOURCES[@]}"; do
+    if ! git_in_repo rev-parse --verify --quiet "$src" >/dev/null; then
+      continue
+    fi
+    {
+      echo
+      echo "=== merging $src ==="
+      git_in_repo diff "HEAD...$src" 2>/dev/null || true
+    } >> "$DIFF_FILE"
+    REVIEWABLE=1
+  done
+  if [ "$REVIEWABLE" -eq 0 ]; then
     exit 0
   fi
 else
