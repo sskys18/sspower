@@ -35,14 +35,29 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
-SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand // empty' 2>/dev/null)
-WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir // empty' 2>/dev/null)
-# Octopus-safe: collect EVERY positional ref after `merge`, not just
-# the first one.
+
+# Find the first chokepoint in the command. Chokepoints:
+#   - git push / git merge (local merge bypasses push)
+#   - gh pr create / pr ready / pr merge
+INV=$(printf '%s' "$PARSED" | jq -c '
+  [.invocations[]
+   | select(
+       (.tool == "git" and (.subcommand == "push" or .subcommand == "merge"))
+       or (.tool == "gh" and (.subcommand == "pr create" or .subcommand == "pr ready" or .subcommand == "pr merge"))
+     )
+  ] | .[0] // empty
+' 2>/dev/null)
+if [ -z "$INV" ]; then
+  exit 0
+fi
+
+TOOL=$(printf '%s' "$INV" | jq -r '.tool')
+SUBCMD=$(printf '%s' "$INV" | jq -r '.subcommand')
+WORK_DIR=$(printf '%s' "$INV" | jq -r '.work_dir')
 MERGE_SOURCES=()
 while IFS= read -r r; do
   [ -n "$r" ] && MERGE_SOURCES+=("$r")
-done < <(printf '%s' "$PARSED" | jq -r '.merge_sources[]?')
+done < <(printf '%s' "$INV" | jq -r '.merge_sources[]?')
 GIT_OPTS=()
 if [ -n "$WORK_DIR" ]; then
   GIT_OPTS+=(-C "$WORK_DIR")
@@ -54,33 +69,6 @@ git_in_repo() {
     git "$@"
   fi
 }
-
-# Chokepoints: git push, git merge (local merge bypasses push), gh pr
-# create / ready. Pipelines/subshells deliberately allowed through.
-TRIGGER=0
-case "$SUBCMD" in
-  push|merge) TRIGGER=1 ;;
-esac
-# `gh pr create|ready` doesn't go through `git`, so detect via shlex too.
-GH_SUB=$(printf '%s' "$CMD" | python3 -c '
-import json, shlex, sys
-try:
-    toks = shlex.split(sys.stdin.read(), posix=True)
-except ValueError:
-    toks = []
-while toks and "=" in toks[0] and not toks[0].startswith("-") and toks[0][0].isalpha():
-    toks.pop(0)
-sub = ""
-if len(toks) >= 3 and toks[0] == "gh" and toks[1] == "pr" and toks[2] in ("create", "ready"):
-    sub = toks[2]
-print(sub)
-' 2>/dev/null)
-if [ -n "$GH_SUB" ]; then
-  TRIGGER=1
-fi
-if [ "$TRIGGER" -eq 0 ]; then
-  exit 0
-fi
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 BRIDGE="$PLUGIN_ROOT/scripts/codex-bridge.mjs"

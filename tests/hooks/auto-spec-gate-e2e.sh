@@ -177,6 +177,28 @@ out=$(run_gate 'git commit -m foo -i docs/plans/b.md' approve 2>&1); rc=$?
 assert_eq "-i mixed: exit"                   "0" "$rc"
 assert_eq "-i mixed: 2 bridge calls"         "2" "$(call_count)"
 
+# Chained commands: `cd subdir && git commit` and `(git commit)` and
+# `env FOO=bar git commit` must all reach the gate.
+echo "[e2e: chained / wrapped commands]"
+(
+  cd "$WORK"
+  git reset --hard HEAD -q 2>/dev/null
+  rm -rf docs/plans
+  mkdir -p docs/plans
+  echo "# v1" > docs/plans/c.md
+  git add docs/plans/c.md
+)
+out=$(run_gate '(git commit -m foo)' approve 2>&1); rc=$?
+assert_eq "(commit): bridge fired"  "1" "$(call_count)"
+
+(cd "$WORK" && git reset HEAD -q && git add docs/plans/c.md)
+out=$(run_gate 'env FOO=bar git commit -m foo' approve 2>&1); rc=$?
+assert_eq "env wrapped: bridge fired" "1" "$(call_count)"
+
+(cd "$WORK" && git reset HEAD -q && git add docs/plans/c.md)
+out=$(run_gate 'echo hi && git commit -m foo' approve 2>&1); rc=$?
+assert_eq "echo && commit: bridge fired" "1" "$(call_count)"
+
 echo
 echo "passed: $PASS"
 echo "failed: $FAIL"

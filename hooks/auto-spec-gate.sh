@@ -32,16 +32,19 @@ CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
-SUBCMD=$(printf '%s' "$PARSED" | jq -r '.subcommand' 2>/dev/null)
-WORK_DIR=$(printf '%s' "$PARSED" | jq -r '.work_dir' 2>/dev/null)
-USES_WORKTREE=$(printf '%s' "$PARSED" | jq -r '.commit_uses_worktree' 2>/dev/null)
-if [ "$SUBCMD" != "commit" ]; then
+
+# Locate the FIRST `git commit` invocation in this command (chains
+# like `cd dir && git commit` and `(git commit)` resolve here).
+INV=$(printf '%s' "$PARSED" | jq -c '[.invocations[] | select(.tool=="git" and .subcommand=="commit")] | .[0] // empty' 2>/dev/null)
+if [ -z "$INV" ]; then
   exit 0
 fi
 
-# A user-typed `git commit --dry-run` shouldn't trigger a real review --
-# they're already only previewing.
-if printf '%s' "$PARSED" | jq -e '.subcommand_args | index("--dry-run")' >/dev/null 2>&1; then
+WORK_DIR=$(printf '%s' "$INV" | jq -r '.work_dir' 2>/dev/null)
+USES_WORKTREE=$(printf '%s' "$INV" | jq -r '.commit_uses_worktree' 2>/dev/null)
+
+# Skip user-typed `git commit --dry-run` (preview only).
+if printf '%s' "$INV" | jq -e '.subcommand_args | index("--dry-run")' >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -50,7 +53,7 @@ fi
 COMMIT_ARGS=()
 while IFS= read -r arg; do
   COMMIT_ARGS+=("$arg")
-done < <(printf '%s' "$PARSED" | jq -r '.subcommand_args[]?')
+done < <(printf '%s' "$INV" | jq -r '.subcommand_args[]?')
 
 GIT_OPTS=()
 if [ -n "$WORK_DIR" ]; then

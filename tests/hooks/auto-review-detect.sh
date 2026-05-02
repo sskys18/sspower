@@ -31,12 +31,23 @@ assert_eq() {
 
 parse_field() {
   local field="$1" cmd="$2"
-  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}"
+  # First invocation. Use `if-then-else` directly (jq's `//` treats
+  # `false` as nullish, which would corrupt the boolean fields).
+  printf '%s' "$cmd" | python3 "$PARSER" \
+    | jq -r "if .invocations[0].${field} == null then \"\" else .invocations[0].${field} end"
 }
 
 parse_arr() {
   local field="$1" cmd="$2"
-  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".${field}[]?"
+  printf '%s' "$cmd" | python3 "$PARSER" | jq -r ".invocations[0].${field}[]?"
+}
+
+parse_count() {
+  printf '%s' "$1" | python3 "$PARSER" | jq -r '.invocations | length'
+}
+
+parse_nth_subcmd() {
+  printf '%s' "$2" | python3 "$PARSER" | jq -r ".invocations[$1].subcommand // \"\""
 }
 
 # --- _parse-git-cmd.py ------------------------------------------------------
@@ -56,6 +67,22 @@ assert_eq "git merge"               "merge"  "$(parse_field subcommand 'git merg
 assert_eq "commit-tree (not commit)" "commit-tree" "$(parse_field subcommand 'git commit-tree X')"
 assert_eq "non-git"                 ""       "$(parse_field subcommand 'ls -la')"
 assert_eq "unbalanced quotes"       ""       "$(parse_field subcommand 'git "commit -m foo')"
+
+echo "[parser: chained / wrapped commands]"
+assert_eq "cd && commit"            "commit" "$(parse_field subcommand 'cd dir && git commit')"
+assert_eq "(commit)"                "commit" "$(parse_field subcommand '(git commit -m foo)'  )"
+assert_eq "diff && commit -p"       "commit" "$(parse_nth_subcmd 1 'git diff && git commit -p')"
+assert_eq "chain count"             "2"      "$(parse_count 'git diff && git commit -p')"
+assert_eq "env FOO=bar git commit"  "commit" "$(parse_field subcommand 'env FOO=bar git commit')"
+assert_eq "env -i FOO=bar git ..."  "commit" "$(parse_field subcommand 'env -i FOO=bar git commit')"
+assert_eq "env -u VAR git ..."      "commit" "$(parse_field subcommand 'env -u TZ git commit')"
+assert_eq "command git commit"      "commit" "$(parse_field subcommand 'command git commit')"
+assert_eq "\\\\git commit"          "commit" "$(parse_field subcommand '\git commit')"
+assert_eq "/usr/bin/git commit"     "commit" "$(parse_field subcommand '/usr/bin/git commit')"
+assert_eq "; chains"                "2"      "$(parse_count 'git diff; git push')"
+assert_eq "| pipes"                 "1"      "$(parse_count 'echo foo | git commit-tree')"
+assert_eq "subshell push"           "push"   "$(parse_field subcommand '(cd dir && git push)')"
+assert_eq "gh pr create chained"    "pr create" "$(parse_nth_subcmd 1 'git status && gh pr create --title t')"
 
 echo "[parser: work_dir capture]"
 assert_eq "no -C"                   ""           "$(parse_field work_dir 'git commit')"
