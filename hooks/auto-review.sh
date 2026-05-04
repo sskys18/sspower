@@ -149,8 +149,11 @@ fi
 PROMPT_FILE=$(mktemp -t sspower-autoreview-prompt-XXXXXX)
 cat > "$PROMPT_FILE" <<EOF
 Review the branch diff at $DIFF_FILE before push. Flag bugs, regressions,
-missing tests, and security issues. Do NOT propose stylistic refactors or
-unrequested features. If everything is fine, return verdict approve.
+missing tests, and security issues. Also flag docs drift: code changes
+that contradict CLAUDE.md, README, or docs/ in the repo without updating
+those files (read the repo to verify, do not rely on the diff alone). Do
+NOT propose stylistic refactors or unrequested features. If everything is
+fine, return verdict approve.
 EOF
 
 # Run bridge synchronously. Capture structured output.
