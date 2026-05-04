@@ -146,18 +146,26 @@ if [ ! -s "$DIFF_FILE" ]; then
   exit 0
 fi
 
+# Resolve the repo root of the diff so Codex inspects the right tree
+# (`git -C /other/repo push` would otherwise be reviewed against cwd).
+REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
+
 PROMPT_FILE=$(mktemp -t sspower-autoreview-prompt-XXXXXX)
 cat > "$PROMPT_FILE" <<EOF
 Review the branch diff at $DIFF_FILE before push. Flag bugs, regressions,
 missing tests, and security issues. Also flag docs drift: code changes
-that contradict CLAUDE.md, README, or docs/ in the repo without updating
-those files (read the repo to verify, do not rely on the diff alone). Do
-NOT propose stylistic refactors or unrequested features. If everything is
-fine, return verdict approve.
+that contradict CLAUDE.md, README, or docs/ in the repo root (${REPO_ROOT:-cwd})
+without updating those files. Read the repo to verify; do not rely on the
+diff alone. Do NOT propose stylistic refactors or unrequested features.
+If everything is fine, return verdict approve.
 EOF
 
 # Run bridge synchronously. Capture structured output.
-RESULT=$(node "$BRIDGE" review --prompt "@$PROMPT_FILE" 2>/dev/null || true)
+BRIDGE_ARGS=(review --prompt "@$PROMPT_FILE")
+if [ -n "$REPO_ROOT" ]; then
+  BRIDGE_ARGS+=(--cd "$REPO_ROOT")
+fi
+RESULT=$(node "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>/dev/null || true)
 rm -f "$PROMPT_FILE"
 
 if [ -z "$RESULT" ]; then
