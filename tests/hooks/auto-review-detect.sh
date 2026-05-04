@@ -378,6 +378,36 @@ HOOKIN
   fi
   assert_eq "git -C otherrepo: --cd is otherrepo" "$REPO_REAL" "$CD_REAL"
 
+  # Per-repo skip file resolves to the target repo (not cwd). Place
+  # the marker in cwd ($WORK) but push targets $REPO_OUT: must NOT
+  # bypass, must call bridge.
+  : > "$ARGS_FILE"
+  touch "$WORK/.sspower-skip-auto-review"
+  out=$(cd "$WORK" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git -C $REPO_OUT push"}}
+HOOKIN
+  ); rc=$?
+  rm -f "$WORK/.sspower-skip-auto-review"
+  assert_eq "skip in cwd not target: exit" "0" "$rc"
+  assert_eq "skip in cwd not target: bridge ran" "1" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
+  # Marker in target repo: must bypass (bridge not invoked).
+  : > "$ARGS_FILE"
+  touch "$REPO_OUT/.sspower-skip-auto-review"
+  out=$(cd "$WORK" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git -C $REPO_OUT push"}}
+HOOKIN
+  ); rc=$?
+  rm -f "$REPO_OUT/.sspower-skip-auto-review"
+  assert_eq "skip in target repo: exit" "0" "$rc"
+  assert_eq "skip in target repo: bridge skipped" "0" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
   rm -rf "$STUB_ROOT" "$REPO_OUT" "$ARGS_FILE"
 else
   echo "  skip stub-bridge --cd test (node not installed)"

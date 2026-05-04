@@ -19,11 +19,8 @@ set -u
 if [ "${SSPOWER_AUTO_REVIEW:-on}" = "off" ]; then
   exit 0
 fi
-# Per-repo bypass file. Touch `.sspower-skip-auto-review` at the
-# repo root to disable the hook for one push window.
-if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.sspower-skip-auto-review" ]; then
-  exit 0
-fi
+# (Per-repo bypass file is checked AFTER we parse the command, so
+# `git -C /other/repo push` consults the target repo, not cwd.)
 
 if ! command -v jq &>/dev/null; then
   exit 0
@@ -91,6 +88,15 @@ git_in_repo() {
     git "$@"
   fi
 }
+
+# Per-repo bypass file. Touch `.sspower-skip-auto-review` at the
+# target repo root to disable the hook for one push window. Resolved
+# from the parsed git invocation so `git -C /other/repo push` checks
+# /other/repo, not cwd.
+SKIP_REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$SKIP_REPO_ROOT" ] && [ -f "$SKIP_REPO_ROOT/.sspower-skip-auto-review" ]; then
+  exit 0
+fi
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 BRIDGE="$PLUGIN_ROOT/scripts/codex-bridge.mjs"
