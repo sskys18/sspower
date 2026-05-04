@@ -394,6 +394,35 @@ HOOKIN
   assert_eq "skip in cwd not target: bridge ran" "1" \
     "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
 
+  # Chained command without skip file: must DENY (chain-block reason).
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git status && git push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "chained push without skip: exit" "0" "$rc"
+  assert_eq "chained push without skip: deny" "1" \
+    "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+
+  # Chained command WITH skip file in target repo: must bypass (no
+  # chain-deny output, bridge not invoked).
+  : > "$ARGS_FILE"
+  touch "$REPO_OUT/.sspower-skip-auto-review"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git status && git push"}}
+HOOKIN
+  ); rc=$?
+  rm -f "$REPO_OUT/.sspower-skip-auto-review"
+  assert_eq "chained push with skip: exit" "0" "$rc"
+  assert_eq "chained push with skip: silent" "" \
+    "$(printf '%s' "$out" | grep '"deny"' || true)"
+  assert_eq "chained push with skip: bridge skipped" "0" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
   # Marker in target repo: must bypass (bridge not invoked).
   : > "$ARGS_FILE"
   touch "$REPO_OUT/.sspower-skip-auto-review"

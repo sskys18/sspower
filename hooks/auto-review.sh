@@ -53,23 +53,6 @@ if [ -z "$INV" ]; then
   exit 0
 fi
 
-# Chain block: `git commit && git push`, `cd dir && git push`, etc.
-# The preceding segment may change HEAD or cwd after our hook runs, so
-# the diff we'd review here is stale. Refuse rather than approving the
-# wrong bytes.
-SEG_COUNT=$(printf '%s' "$PARSED" | jq -r '.segments_count // 0')
-if [ "$SEG_COUNT" -gt 1 ]; then
-  REASON='Codex auto-review cannot gate a push / merge / PR-publish inside a chained shell command -- the chain may change HEAD, cwd, or remote state between our review and the actual action. Run the chokepoint on its own line so the review sees the real diff. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies.'
-  jq -n --arg reason "$REASON" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: $reason
-    }
-  }'
-  exit 0
-fi
-
 TOOL=$(printf '%s' "$INV" | jq -r '.tool')
 SUBCMD=$(printf '%s' "$INV" | jq -r '.subcommand')
 WORK_DIR=$(printf '%s' "$INV" | jq -r '.work_dir')
@@ -92,9 +75,27 @@ git_in_repo() {
 # Per-repo bypass file. Touch `.sspower-skip-auto-review` at the
 # target repo root to disable the hook for one push window. Resolved
 # from the parsed git invocation so `git -C /other/repo push` checks
-# /other/repo, not cwd.
+# /other/repo, not cwd. Checked BEFORE the chain-deny so an explicit
+# repo-level bypass also covers chained pushes.
 SKIP_REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
 if [ -n "$SKIP_REPO_ROOT" ] && [ -f "$SKIP_REPO_ROOT/.sspower-skip-auto-review" ]; then
+  exit 0
+fi
+
+# Chain block: `git commit && git push`, `cd dir && git push`, etc.
+# The preceding segment may change HEAD or cwd after our hook runs, so
+# the diff we'd review here is stale. Refuse rather than approving the
+# wrong bytes.
+SEG_COUNT=$(printf '%s' "$PARSED" | jq -r '.segments_count // 0')
+if [ "$SEG_COUNT" -gt 1 ]; then
+  REASON='Codex auto-review cannot gate a push / merge / PR-publish inside a chained shell command -- the chain may change HEAD, cwd, or remote state between our review and the actual action. Run the chokepoint on its own line so the review sees the real diff. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies.'
+  jq -n --arg reason "$REASON" '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $reason
+    }
+  }'
   exit 0
 fi
 
