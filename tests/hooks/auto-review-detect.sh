@@ -313,6 +313,76 @@ assert_eq "gh pr create quoted bypass" "0" "$rc"
 out=$(run_review_in_work 'git merge a b c' 2>&1); rc=$?
 assert_eq "octopus all-unresolvable" "0" "$rc"
 
+# Bridge invocation: --cd points at the diff repo root, not cwd. Use a
+# stub bridge that records argv and approves so we exercise the real
+# argv-construction path without calling Codex.
+if command -v node >/dev/null 2>&1; then
+  STUB_ROOT=$(mktemp -d -t sspower-stub-XXXXXX)
+  mkdir -p "$STUB_ROOT/scripts"
+  cat > "$STUB_ROOT/scripts/codex-bridge.mjs" <<'STUB'
+import fs from "node:fs";
+fs.writeFileSync(process.env.SSPOWER_TEST_ARGS_FILE, JSON.stringify(process.argv.slice(2)));
+console.log(JSON.stringify({ verdict: "approve", strengths: [], issues: [], assessment: "ok" }));
+STUB
+  ARGS_FILE=$(mktemp -t sspower-bridge-args-XXXXXX)
+  REPO_OUT=$(mktemp -d -t sspower-revrepo-XXXXXX)
+  (
+    cd "$REPO_OUT"
+    git init -q -b main 2>/dev/null || git init -q
+    git symbolic-ref HEAD refs/heads/main 2>/dev/null || true
+    git config user.email t@t
+    git config user.name t
+    git config commit.gpgsign false
+    echo a > a.txt && git add a.txt && git commit -q -m init
+    git checkout -q -b feat
+    echo b > b.txt && git add b.txt && git commit -q -m feat
+    git branch --set-upstream-to=main feat 2>/dev/null
+  )
+  REPO_REAL=$(cd "$REPO_OUT" && pwd -P)
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "stub-bridge approve: exit" "0" "$rc"
+  CD_VAL=$(jq -r '
+    . as $a
+    | (range(0; length) | select($a[.] == "--cd") | $a[.+1])
+    | . // ""
+  ' "$ARGS_FILE" 2>/dev/null | head -n1)
+  CD_REAL=""
+  if [ -n "$CD_VAL" ] && [ -d "$CD_VAL" ]; then
+    CD_REAL=$(cd "$CD_VAL" && pwd -P)
+  fi
+  assert_eq "bridge received --cd repo root" "$REPO_REAL" "$CD_REAL"
+
+  # Same flag flow when invoked via `git -C otherrepo push` from an
+  # unrelated cwd: --cd must still point at otherrepo.
+  : > "$ARGS_FILE"
+  out=$(cd "$WORK" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git -C $REPO_OUT push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "git -C otherrepo push: exit" "0" "$rc"
+  CD_VAL=$(jq -r '
+    . as $a
+    | (range(0; length) | select($a[.] == "--cd") | $a[.+1])
+    | . // ""
+  ' "$ARGS_FILE" 2>/dev/null | head -n1)
+  CD_REAL=""
+  if [ -n "$CD_VAL" ] && [ -d "$CD_VAL" ]; then
+    CD_REAL=$(cd "$CD_VAL" && pwd -P)
+  fi
+  assert_eq "git -C otherrepo: --cd is otherrepo" "$REPO_REAL" "$CD_REAL"
+
+  rm -rf "$STUB_ROOT" "$REPO_OUT" "$ARGS_FILE"
+else
+  echo "  skip stub-bridge --cd test (node not installed)"
+fi
+
 echo
 echo "passed: $PASS"
 echo "failed: $FAIL"
