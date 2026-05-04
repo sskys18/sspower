@@ -406,8 +406,9 @@ HOOKIN
   assert_eq "chained push without skip: deny" "1" \
     "$(printf '%s' "$out" | grep -c '"deny"' || true)"
 
-  # Chained command WITH skip file in target repo: must bypass (no
-  # chain-deny output, bridge not invoked).
+  # Chained command WITH skip file in target repo: chain refusal is
+  # unconditional, must still DENY (we cannot prove the chain targets
+  # this repo after preceding segments run).
   : > "$ARGS_FILE"
   touch "$REPO_OUT/.sspower-skip-auto-review"
   out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
@@ -418,8 +419,8 @@ HOOKIN
   ); rc=$?
   rm -f "$REPO_OUT/.sspower-skip-auto-review"
   assert_eq "chained push with skip: exit" "0" "$rc"
-  assert_eq "chained push with skip: silent" "" \
-    "$(printf '%s' "$out" | grep '"deny"' || true)"
+  assert_eq "chained push with skip: still denies" "1" \
+    "$(printf '%s' "$out" | grep -c '"deny"' || true)"
   assert_eq "chained push with skip: bridge skipped" "0" \
     "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
 
