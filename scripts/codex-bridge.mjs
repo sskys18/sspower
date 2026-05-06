@@ -268,7 +268,6 @@ function runCodexExec(prompt, options = {}) {
   const resultFile = secureTmpFile("result", "");
 
   const args = ["exec"];
-  args.push("--full-auto");
   args.push("--json");
   if (ephemeral) args.push("--ephemeral");
   args.push("--sandbox", sandbox);
