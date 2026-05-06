@@ -36,7 +36,6 @@ command -v python3 >/dev/null 2>&1 || exit 0
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-CMD_PREVIEW=$(printf '%s' "$CMD" | head -c 200 | tr '\n' ' ')
 
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 
@@ -66,7 +65,7 @@ deny_chain() {
 }
 
 if [ "$CHOKE_POS" -gt 0 ]; then
-  log_event warn hook.auto-spec-gate kind=deny_predecessor cmd_preview="$CMD_PREVIEW"
+  log_event warn hook.auto-spec-gate kind=deny_predecessor chain_position="$CHOKE_POS"
   deny_chain "Codex auto plan-review: a command preceding 'git commit' may modify worktree or index between this gate and the commit. Use 'git -C <path>' instead of 'cd <path> && git commit'. Run the commit as its own Bash call. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies."
 fi
 
@@ -85,7 +84,7 @@ TAIL_VERDICT=$(printf '%s' "$PARSED" | jq -r --argjson pos "$CHOKE_POS" '
 ' 2>/dev/null)
 
 if [ "$TAIL_VERDICT" = "bad" ]; then
-  log_event warn hook.auto-spec-gate kind=deny_successor cmd_preview="$CMD_PREVIEW"
+  log_event warn hook.auto-spec-gate kind=deny_successor chain_position="$CHOKE_POS"
   deny_chain "Codex auto plan-review: only read-only output pipes (tail/head/grep/jq/...) allowed after 'git commit'. Conditional/sequential operators (&&, ||, ;, &) leave the gate blind to outcome. Run the commit on its own line. Bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 

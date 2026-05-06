@@ -45,22 +45,28 @@ command -v python3 &>/dev/null || exit 0
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
-CMD_PREVIEW=$(printf '%s' "$CMD" | head -c 200 | tr '\n' ' ')
 
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 
 # ---------- Chokepoint detection ----------
+# Note: `gh pr merge` is intentionally excluded. By merge time the PR diff
+# was already reviewed at `gh pr create` / `gh pr ready` time, and the
+# local branch diff that this hook computes is not necessarily the diff
+# being merged (PR head may diverge from local HEAD). Reviewing the wrong
+# diff here would only produce noise without adding safety.
 INV=$(printf '%s' "$PARSED" | jq -c '
   [.invocations[]
    | select(
        (.tool == "git" and (.subcommand == "push" or .subcommand == "merge"))
-       or (.tool == "gh" and (.subcommand == "pr create" or .subcommand == "pr ready" or .subcommand == "pr merge"))
+       or (.tool == "gh" and (.subcommand == "pr create" or .subcommand == "pr ready"))
      )
   ] | .[0] // empty
 ' 2>/dev/null)
 [ -z "$INV" ] && exit 0
 
 CHOKE_POS=$(printf '%s' "$INV" | jq -r '.chain_position // 0')
+CHOKE_TOOL=$(printf '%s' "$INV" | jq -r '.tool // "?"')
+CHOKE_SUB=$(printf '%s' "$INV" | jq -r '.subcommand // "?"')
 
 deny() {
   local reason="$1"
@@ -77,7 +83,7 @@ deny() {
 # ---------- Chain policy ----------
 # Anything before the chokepoint -> deny (predecessor may mutate state).
 if [ "$CHOKE_POS" -gt 0 ]; then
-  log_event warn hook.auto-review kind=deny_predecessor cmd_preview="$CMD_PREVIEW"
+  log_event warn hook.auto-review kind=deny_predecessor tool="$CHOKE_TOOL" subcommand="$CHOKE_SUB" chain_position="$CHOKE_POS"
   deny "Codex auto-review: a command preceding the git/gh chokepoint may mutate HEAD, cwd, or index before review runs. Use 'git -C <path>' instead of 'cd <path> && git ...'. Run the chokepoint as its own Bash call. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies."
 fi
 
@@ -97,7 +103,7 @@ TAIL_VERDICT=$(printf '%s' "$PARSED" | jq -r --argjson pos "$CHOKE_POS" '
 ' 2>/dev/null)
 
 if [ "$TAIL_VERDICT" = "bad" ]; then
-  log_event warn hook.auto-review kind=deny_successor cmd_preview="$CMD_PREVIEW"
+  log_event warn hook.auto-review kind=deny_successor tool="$CHOKE_TOOL" subcommand="$CHOKE_SUB" chain_position="$CHOKE_POS"
   deny "Codex auto-review: only read-only output pipes (tail/head/grep/jq/sed/awk/...) allowed after a git/gh chokepoint. Other chained commands may run conditionally on push outcome. Capture output to a file then read separately: 'git push > /tmp/push.log 2>&1' on its own line. Bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 
