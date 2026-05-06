@@ -22,5 +22,16 @@ log_event() {
     esc="${esc//$'\n'/\\n}"
     kvs="$kvs $k=\"$esc\""
   done
-  printf '%s [%s] %s%s\n' "$ts" "$level" "$source" "$kvs" >> "$SSPOWER_LOG_FILE" 2>/dev/null || true
+  # Force private perms (0600) so the log can never leak via group/other
+  # read. Bridge's logEvent in codex-bridge.mjs uses the same mode.
+  local existed=0
+  [ -f "$SSPOWER_LOG_FILE" ] && existed=1
+  (
+    umask 077
+    mkdir -p "$(dirname "$SSPOWER_LOG_FILE")" 2>/dev/null || exit 0
+    printf '%s [%s] %s%s\n' "$ts" "$level" "$source" "$kvs" >> "$SSPOWER_LOG_FILE"
+  ) 2>/dev/null || true
+  if [ "$existed" = "0" ] && [ -f "$SSPOWER_LOG_FILE" ]; then
+    chmod 600 "$SSPOWER_LOG_FILE" 2>/dev/null || true
+  fi
 }

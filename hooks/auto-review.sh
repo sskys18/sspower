@@ -217,8 +217,9 @@ For each issue set severity:
   - "advisory" for style, naming, doc-only nits, minor refactors.
 
 For mechanical fixes (typos, missing imports, simple refactors), include
-'suggested_patch' as a unified diff against current HEAD. Omit for
-design/architecture issues that need human judgment.
+'suggested_patch' as a unified diff against current HEAD. For
+design/architecture issues that need human judgment, set
+'suggested_patch' to null. The schema requires the field on every issue.
 
 Verdicts:
   - "approve"                  : no issues, ship it.

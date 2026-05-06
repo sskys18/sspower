@@ -269,7 +269,9 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 - `bridge.die` — fatal bridge errors (missing flag, codex CLI not found, trust issues)
 - `bridge.<subcommand>` — runtime errors from implement/review/enrich/rescue/resume
 - `bridge.auto_commit` — worktree commit failures
-- `hook.enrich` — hook-side outcomes (`enriched` / `timeout` / `bridge_failed` / `passthrough_empty`)
+- `hook.enrich` — prompt-submit enrichment outcomes (`enriched` / `timeout` / `bridge_failed` / `passthrough_empty`)
+- `hook.auto-review` — push/PR/merge gate denials (`deny_predecessor` / `deny_successor` / `deny_rounds_cap` / `deny_verdict` / `codex_timeout_allow`)
+- `hook.auto-spec-gate` — plan-commit gate denials (`deny_predecessor` / `deny_successor` / `deny_plan_review` / `codex_failed_allow`)
 
 **Live event stream** (during runs, stderr):
 - `[codex:session]` / `[codex:agent]` / `[codex:think]` / `[codex:tool]` / `[codex:result]` / `[codex:exec]` / `[codex:edit]` / `[codex:token]` / `[codex:error]` / `[codex:alive]` (30s heartbeat) / `[codex:done]` / `[codex:event]` (unknown/schema-drift)

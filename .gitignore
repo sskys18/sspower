@@ -8,3 +8,4 @@ triage/
 sspower-workspace/
 *-workspace/
 .sspower-skip-auto-review
+.sspower/
