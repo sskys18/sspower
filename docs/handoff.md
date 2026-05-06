@@ -1,89 +1,126 @@
 # Session Handoff
-> Generated: 2026-04-25 00:40 KST
+> Generated: 2026-05-04 KST
 
 ## Task
-Port caveman plugin (token-compression) + session_archive (rich session logger) into sspower under new names. Drop rtk entirely. Branch: `feat/diet-and-wiki`.
-
-Renamed concepts:
-- `caveman` → `diet` (token-terseness mode)
-- `session_archive` → `project-wiki` (per-project `<cwd>/.claude/wiki/sessions/`)
+Real enforcement for the 3 SKILL.md HARD-GATEs that previously relied
+on the model to honor codex-review prose. Replaced with PreToolUse:Bash
+hooks that gate `git commit` (plan files), `git push`, `git merge`,
+`gh pr create|ready` via Codex `review` and block on verdict.
 
 ## Status
 
-### Completed (Phases 1-3 + codex review fixes)
-
-**Phase 1 — Diet mode core:**
-- `hooks/_diet-config.js` — shared flag r/w (symlink-safe, O_NOFOLLOW, size-capped)
-- `hooks/diet-activate.js` — SessionStart, reads `skills/diet/SKILL.md`, filters to active intensity
-- `hooks/diet-track.js` — UserPromptSubmit, parses `/diet [lite|full|ultra|off]`, per-turn reinforcement
-- `hooks/package.json` — `{"type":"commonjs"}` (sspower root is ESM, hooks need CJS)
-- `skills/diet/SKILL.md` — source of truth ruleset (intensity table, rules, examples)
-- `hooks/hooks.json` — diet handlers appended to SessionStart + UserPromptSubmit arrays
-
-**Phase 2 — Diet sub-skills:**
-- `skills/diet-commit/SKILL.md`, `skills/diet-review/SKILL.md`, `skills/compress-memory/SKILL.md`
-- `commands/diet.toml`, `diet-commit.toml`, `diet-review.toml`
-- Compress is skill-instructions only — dropped upstream's 24KB Python CLI, Claude does it inline
-
-**Phase 3 — Project wiki:**
-- `hooks/wiki-archive.py` — port of `~/.claude/hooks/session_archive.py` (~430 LoC)
-  - `resolve_out_dir(cwd)` → `<cwd>/.claude/wiki/sessions/` with writability probe
-  - Fallback: `~/.claude/wiki/<basename>-<sha256[:8]>/sessions/`
-  - Adds markdown summary writer (top files, git ops, user prompts, errors)
-- `hooks/wiki-archive.sh` — `${CLAUDE_PLUGIN_ROOT}`-based, no `$HOME` hardcode
-- `hooks.json` — `PreCompact` + `SessionEnd` handlers (async)
-
-**Codex review (pass 1) — 6 fixes applied:**
-1. `hooks.json` matcher: `startup|clear|compact` → `startup|resume|clear|compact`
-2. `diet-activate.js` mode=off → silent exit (no `OK` stdout)
-3. `diet-track.js` one-shot commands (`/diet-commit|review|compress`) no longer clobber flag
-4. `diet-track.js` removed INDEPENDENT_MODES gate on reinforcement (not needed now)
-5. `wiki-archive.py` `replace("~", home, 1)` → `Path(transcript_path).expanduser()`
-6. `wiki-archive.py` dropped hardcoded KST → `datetime.now().astimezone()`; also threshold `<3 tool uses` → `not events` (archive short real sessions)
-
-All functional tests pass: `/diet ultra` writes flag, `/diet-commit` leaves flag alone, mode=off silent, 1-tool session archives.
+### Completed (13 commits, all on origin/main)
+- `hooks/auto-spec-gate.sh` — PreToolUse:Bash. Detects `git commit`,
+  uses `git commit --dry-run --porcelain --no-verify` as the oracle for
+  "what files will this commit record", filters to `docs/plans/*.md`,
+  runs Codex `review`, denies on non-approve verdict. Worktree symlinks
+  + index symlinks (mode 120000) BLOCK with deny payload (not silent
+  skip). Honours `git -C` / `--git-dir` / `--work-tree`. Refuses chains
+  (segments_count > 1).
+- `hooks/auto-review.sh` — PreToolUse:Bash. Same chain refusal. Detects
+  `git push|merge` and `gh pr create|ready`. Octopus-merge safe
+  (iterates `git diff HEAD...$src` per source). Reads from `-C` repo.
+- `hooks/_parse-git-cmd.py` — Python `shlex(punctuation_chars=True)`
+  tokenizer. Splits on shell operators. Per-segment: strips env
+  prefixes (`env [-i] [VAR=val]`, `command`, `exec`, bare assignments,
+  `\git`, `/usr/bin/git`), parses git-level flags, returns
+  `{invocations: [...], segments_count}`. Emits `commit_uses_worktree`
+  for the gate's index-vs-worktree source decision.
+- `hooks/hooks.json` — both hooks registered under PreToolUse:Bash
+  (auto-spec-gate before auto-review).
+- `tests/hooks/auto-review-detect.sh` — 94 parser/detection assertions.
+- `tests/hooks/auto-spec-gate-e2e.sh` — 21 end-to-end assertions with
+  a stub bridge (`scripts/codex-bridge.mjs` mock that records calls
+  and replays a configurable verdict).
+- 3 SKILL.md HARD-GATE blocks softened to point at the now-automated
+  hooks: `writing-plans`, `subagent-driven-development`,
+  `finishing-a-development-branch`.
+- `.sspower-skip-auto-review` per-repo bypass file (touch to disable
+  one push window). In `.gitignore`. Used to break the 12-round
+  review-its-own-design loop.
+- `docs/auto-review-followups.md` — documents the architecture pivot
+  (git-as-oracle), 3 known gaps (`commit -i` mixed source,
+  `--git-dir`/`--work-tree` split, `gh pr merge`), and Path B
+  (per-repo `.git/hooks` installer) as the structural follow-up.
 
 ### In Progress
-- **Phase 4 not started** — wiki index.md auto-append + seed `decisions.md` / `gotchas.md` templates
-
-### Not Started
-- Phase 5: wire existing sspower skills (`brainstorming`, `writing-plans`, `systematic-debugging`) to read `<cwd>/.claude/wiki/{decisions,gotchas}.md` + last N sessions
-- Phase 6: migrate `~/.claude/settings.json` — remove `PreCompact`/`SessionEnd` (old session_archive) + `PreToolUse:Bash` (rtk-rewrite); disable `caveman@caveman` in enabledPlugins
-- Phase 7: README/CLAUDE.md docs + bump `plugin.json` 1.0.0 → 1.1.0 + push
+None. All shipped to `origin/main`.
 
 ## Resume Here
+1. **Path B implementation** — write `scripts/install-git-hooks.sh`
+   that drops three executable hooks into `.git/hooks/` of the
+   current repo:
+   - `pre-commit`: stage check → spec-review on plan files → block
+     non-zero exit if verdict ≠ approve.
+   - `pre-merge-commit`: same pattern on incoming diff.
+   - `pre-push`: stdin gives `<local-ref> <local-sha> <remote-ref>
+     <remote-sha>` per pushed ref → run `review` on each diff.
+   Each hook reuses `scripts/codex-bridge.mjs` directly. Plus an
+   uninstaller and a README section. See
+   `docs/auto-review-followups.md` "Path B" for the rationale.
+2. **Decide fate of the bash-parser hooks** after Path B lands. Either
+   keep as defense-in-depth (catches bash invocations from sessions
+   where git-hooks weren't installed) or remove the bash hooks +
+   `_parse-git-cmd.py` + 115 tests entirely.
+3. **Squash the 13 fix commits on main**? They're ahead of `b400dd1`
+   (PR #1 merge) by a long arc that's mostly "fix codex finding from
+   previous push". A future reader might prefer one commit per major
+   feature (chokepoint hook, dry-run pivot, chain block, parser, e2e
+   tests, gaps doc). Optional; not blocking anything.
 
-1. **Phase 4 — wiki index.md:** Extend `hooks/wiki-archive.py` `main()` to append a line to `<out_dir>/../index.md` after each session: timestamp, duration, tool count, cost, top-3 files. Seed empty `<out_dir>/../decisions.md` and `../gotchas.md` with heading templates if missing. Verify with same test harness as Phase 3.
-
-2. **Phase 5 — skill wiring:** Edit 3 SKILL.md files:
-   - `skills/brainstorming/SKILL.md` — prepend "Before proposing, read `<cwd>/.claude/wiki/decisions.md` + last 3 session `.md` files."
-   - `skills/writing-plans/SKILL.md` — same.
-   - `skills/systematic-debugging/SKILL.md` — prepend "Read `<cwd>/.claude/wiki/gotchas.md` first. Match current bug to known gotcha before new investigation."
-
-3. **Phase 6 — migration:** Use `update-config` skill or edit `~/.claude/settings.json` directly to remove old hooks + disable caveman plugin. Confirm no duplicate SessionEnd fires.
-
-4. **Phase 7 — release:** Update `README.md`, `CLAUDE.md`, bump `.claude-plugin/plugin.json` to 1.1.0, commit in logical groups, push to origin.
-
-## Decisions
-
-- **Name = `diet`** (not `caveman`/`lean`/`terse`). User picked.
-- **Drop rtk entirely** — user said "erase rtk, only diet". Bash command-rewriter not ported.
-- **Wiki layout = A (per-project)** — `<cwd>/.claude/wiki/sessions/`, not `~/.claude/wiki/<slug>/`. User requested "without env things".
-- **Diet default mode = `full`** — always-on, matches caveman default. Override via `SSPOWER_DIET_DEFAULT=off` or `/diet off`.
-- **Compress skill has no Python backend** — simpler than caveman; Claude applies rules inline.
-- **Flag path `~/.claude/.sspower-diet`** — deliberately different from `.caveman-active` to avoid collision during migration.
-- **One-shot commands don't mutate flag** — codex finding #2. `/diet-commit` runs its skill without touching intensity level.
+## Decisions (do NOT revisit)
+- **Bash parser via shlex+segments**: chosen over regex (broke on
+  quotes) and over invoking bash itself (security risk). Limit
+  acknowledged; Path B is the structural exit.
+- **Git-as-oracle for commit semantics**: `git commit --dry-run
+  --porcelain --no-verify` instead of predicting `-a` / `-i` / `-o` /
+  pathspec / glob / dir behaviour. Pivoted at round 7 after each
+  prediction-based fix invited a new bypass.
+- **Chain refusal (segments_count > 1 → DENY)**: pre-execution hooks
+  cannot see state changes from earlier segments. Chosen over a
+  heuristic ("if previous segment is harmless, allow") because the
+  heuristic surface is unbounded too. Restrictive but correct.
+- **Symlink refusals BLOCK, not skip**: silent skip on a refused
+  plan symlink let unreviewed commits through (the loop ended with
+  `ANY_FAIL=0`). Refusals now append to the deny payload.
+- **`spec-review` (compliant/non-compliant) NOT used for plan
+  critique**: schema is built for spec-vs-impl comparison. Use
+  `review` (approve/needs-attention) for standalone plan reviews.
+- **`.sspower-skip-auto-review` file bypass**: env-var bypass
+  (`SSPOWER_AUTO_REVIEW=off`) only works when set in Claude Code's
+  session env, not as a command prefix (the prefix is parsed away
+  as a wrapper). File-based switch is unambiguous.
 
 ## Gotchas
-
-- **sspower root `package.json` has `"type": "module"`** — all `.js` default to ESM. `hooks/package.json` `{"type":"commonjs"}` scopes hook files back to CJS. Don't delete it.
-- **Both old + new wiki archivers fire until Phase 6 migration** — `~/.claude/settings.json` still has `PreCompact`/`SessionEnd` for old `session_archive.sh`. Sessions will be written to BOTH `~/.claude/sessions/` (flat) AND `<cwd>/.claude/wiki/sessions/`. Acceptable transition state.
-- **Caveman plugin still enabled** in `~/.claude/settings.json` `enabledPlugins`. Its SessionStart/UserPromptSubmit hooks fire alongside sspower's diet hooks. Diet uses `.sspower-diet` flag so no state collision, but SessionStart context is emitted twice. Disable in Phase 6.
-- **`hooks/__pycache__/`** currently untracked. Ignore before committing.
-- **Codex review was standard (not adversarial)** — security-critical symlink logic was ported verbatim from caveman, hardened upstream. Codex spot-checked + passed.
+- **Bash 3.2 + `set -u` + empty array**: `"${ARR[@]}"` on an empty
+  array is "unbound variable". `git_in_repo` in both hooks guards
+  with `[ ${#GIT_OPTS[@]} -gt 0 ]` before expanding. macOS default
+  bash is still 3.2 — don't assume bash 4+ syntax.
+- **jq `// empty` swallows `false`**: `commit_uses_worktree // empty`
+  yields "" for the boolean false. Use explicit `if . == null then
+  "" else . end` when reading possibly-null booleans.
+- **shlex without `punctuation_chars`**: glues `(git` and `commit)`
+  into single tokens, hiding chained commands. The parser sets
+  `punctuation_chars=True` for shell-operator splitting.
+- **`git commit --dry-run` runs pre-commit hooks unless
+  `--no-verify`**: the hook always passes `--no-verify` to keep the
+  oracle side-effect-free.
+- **The hooks were the subject of their own enforcement.** 12 rounds
+  of codex review found real bugs each round, with the auto-review
+  hook itself blocking pushes of fixes to the auto-review hook.
+  Future deep changes to `_parse-git-cmd.py` will likely retrigger
+  this; use `.sspower-skip-auto-review` to break the loop deliberately
+  (don't forget to remove it after).
 
 ## Context
-- **Branch:** `feat/diet-and-wiki` (local only, not pushed)
-- **Diff:** 14 files, +1251 lines vs main
-- **Tests:** Manual functional tests passed (syntax + flag-state + archive roundtrip). No CI yet.
-- **Codex session id:** `019dc01b-5abc-7620-9d36-b3ac56008f02` (Phase 1-3 review, 6 fixes applied)
+- **Branch**: `main` at `8111437` (origin in sync).
+- **Tests**: 115/115 passing — `bash tests/hooks/auto-review-detect.sh`
+  (94) and `bash tests/hooks/auto-spec-gate-e2e.sh` (21). No CI yet.
+- **Bridge model**: `gpt-5.5` + `xhigh` reasoning (default in
+  `scripts/codex-bridge.mjs`). Codex CLI must be installed +
+  authenticated locally for the hooks to do real reviews.
+- **Unknowns** (verify before acting):
+  - `gh pr diff <num>` exact output format if Path B wants to gate
+    `gh pr merge`.
+  - Whether other devs/projects rely on the env-var bypass; if so,
+    keep it documented when shipping the file-bypass.
