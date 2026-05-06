@@ -204,7 +204,7 @@ assert_eq "env wrapped: bridge fired" "1" "$(call_count)"
 out=$(run_gate 'echo hi && git commit -m foo' approve 2>&1); rc=$?
 assert_eq "chain: no bridge call"    "0" "$(call_count)"
 assert_eq "chain: deny payload"      "1" "$(printf '%s' "$out" | grep -c '"permissionDecision":' || true)"
-assert_eq "chain: deny mentions"     "1" "$(printf '%s' "$out" | grep -c 'chained shell command' || true)"
+assert_eq "chain: deny mentions"     "1" "$(printf '%s' "$out" | grep -c "preceding 'git commit'" || true)"
 
 # Redirection counts as redirect, not as a separate segment, so plain
 # `git commit -m foo > log.txt` should still reach the bridge.

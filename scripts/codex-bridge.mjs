@@ -540,9 +540,19 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
     };
 
     const promptStream = fs.createReadStream(promptFile);
+    // Re-entry guard: tag the child process so the auto-review /
+    // auto-spec-gate hooks short-circuit if codex itself runs git
+    // push / commit during the review. Depth counter is the backstop
+    // when SSPOWER_REVIEW_IN_FLIGHT is unset (e.g. wrapper that
+    // strips env vars).
+    const childEnv = { ...process.env };
+    childEnv.SSPOWER_REVIEW_IN_FLIGHT = "1";
+    childEnv.SSPOWER_REVIEW_DEPTH = String(
+      parseInt(process.env.SSPOWER_REVIEW_DEPTH || "0", 10) + 1
+    );
     const spawnOpts = {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      env: childEnv,
     };
     if (cwd) spawnOpts.cwd = cwd;
     const child = spawn(bin, args, spawnOpts);

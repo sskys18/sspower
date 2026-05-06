@@ -59,9 +59,17 @@ This change specifically:
 Every issue must reference a specific file and line range.
 Do not flag hypothetical problems — only real issues visible in the diff.
 Severity guide:
-- critical: blocks merge, breaks correctness or security
-- important: should fix before proceeding, tech debt or bug risk
-- minor: suggestion, style, could be better
+- blocking: correctness, security, data-loss — must fix before merge
+- advisory: style, naming, doc-only nits, minor refactors — ship and follow up
+
+Verdict guide:
+- approve: no issues, ship as-is
+- approve-with-followups: only advisory issues, ship and queue followups
+- needs-attention: at least one blocking issue
+
+For mechanical fixes (typos, missing imports, simple refactors), include
+'suggested_patch' as a unified diff against current HEAD. Omit for
+design/architecture issues that need human judgment.
 </grounding_rules>
 ````
 
@@ -70,11 +78,11 @@ Severity guide:
 | Codex verdict | SDD action |
 |---|---|
 | `approve` | Mark task complete, proceed to next task |
-| `needs-attention` | Check severity of issues |
+| `approve-with-followups` | Mark complete, append advisory issues to `.sspower/followups.md`, proceed |
+| `needs-attention` | At least one blocking issue — must fix before proceeding |
 
 Issue handling:
-- **critical**: Must fix before proceeding. Resume Codex implementer with fix instructions
-- **important**: Should fix. Resume Codex implementer
-- **minor**: Note for later, can proceed
+- **blocking**: Must fix before proceeding. Resume Codex implementer with fix instructions. Auto-review hook applies `suggested_patch` automatically when present.
+- **advisory**: Note for later, can proceed. Written to `.sspower/followups.md` automatically by the auto-review hook on `approve-with-followups`.
 
-After fixes, re-run quality review to confirm resolution.
+After fixes, re-run quality review to confirm resolution. Auto-review hook caps at 3 rounds per branch (`SSPOWER_REVIEW_MAX_ROUNDS`); if hit, the hook denies and surfaces the unresolved findings.

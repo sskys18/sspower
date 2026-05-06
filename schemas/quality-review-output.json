@@ -6,8 +6,8 @@
   "properties": {
     "verdict": {
       "type": "string",
-      "enum": ["approve", "needs-attention"],
-      "description": "Overall review verdict"
+      "enum": ["approve", "approve-with-followups", "needs-attention"],
+      "description": "approve = no issues; approve-with-followups = only advisory issues, ship anyway; needs-attention = at least one blocking issue"
     },
     "strengths": {
       "type": "array",
@@ -23,14 +23,19 @@
         "properties": {
           "severity": {
             "type": "string",
-            "enum": ["critical", "important", "minor"]
+            "enum": ["blocking", "advisory"],
+            "description": "blocking = correctness, security, or data-loss; advisory = style, naming, doc-only nits, minor refactors"
           },
           "title": { "type": "string", "description": "Brief issue title" },
           "body": { "type": "string", "description": "Detailed explanation" },
           "file": { "type": "string", "description": "File path" },
           "line_start": { "type": "integer", "description": "Start line" },
           "line_end": { "type": "integer", "description": "End line" },
-          "recommendation": { "type": "string", "description": "How to fix" }
+          "recommendation": { "type": "string", "description": "How to fix" },
+          "suggested_patch": {
+            "type": "string",
+            "description": "Optional unified diff against current HEAD for mechanical fixes (typos, missing imports, simple refactors). Omit for design/architecture issues that need human judgment."
+          }
         }
       }
     },

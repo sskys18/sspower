@@ -89,6 +89,20 @@ _GH_FLAGS_WITH_VALUE = {"-R", "--repo", "--hostname"}
 # Wrappers we strip before looking for `git`.
 _PASSTHROUGH_WRAPPERS = {"command", "exec", "builtin", "nice", "nohup", "stdbuf", "ionice", "time"}
 
+# Read-only stdout consumers safe to follow a chokepoint via `|`.
+# These cannot mutate the predecessor's HEAD/cwd/remote/index — they
+# consume stdout and emit text. Anything not in this set, when piped
+# from a chokepoint, must be denied.
+_PIPE_READONLY_CONSUMERS = {
+    "tail", "head", "cat", "less", "more",
+    "grep", "egrep", "fgrep", "rg", "ag",
+    "sed", "awk", "wc", "sort", "uniq",
+    "jq", "yq", "xq", "column",
+    "tee", "tr", "cut", "fold", "rev", "nl", "bat", "fmt",
+    "pr", "expand", "unexpand", "paste", "comm", "diff",
+    "od", "xxd", "hexdump", "strings", "base64",
+}
+
 
 def _is_git_token(t: str) -> bool:
     if t in ("git", r"\git"):
@@ -141,19 +155,26 @@ def _strip_env_prefix(toks: list[str]) -> None:
         break
 
 
-def _segment(toks: list[str]) -> list[list[str]]:
+def _segment(toks: list[str]) -> list[dict]:
     """Split tokens on shell control operators. Discard redirection
     operators and their targets so files like `> log.txt` don't end up
-    parsed as positional pathspec args."""
-    out: list[list[str]] = []
+    parsed as positional pathspec args.
+
+    Returns [{'op': preceding_operator_or_None, 'tokens': [...]}, ...].
+    First segment has op=None. Operators preserved so callers can tell
+    a pipe (read-only fanout) from a mutating chain (`&&`, `;`, etc).
+    """
+    out: list[dict] = []
     cur: list[str] = []
+    cur_op: str | None = None
     i = 0
     while i < len(toks):
         t = toks[i]
         if t in _OPERATORS:
             if cur:
-                out.append(cur)
+                out.append({"op": cur_op, "tokens": cur})
                 cur = []
+            cur_op = t
             i += 1
             continue
         if t in _REDIRECT_OPS:
@@ -168,8 +189,18 @@ def _segment(toks: list[str]) -> list[list[str]]:
         cur.append(t)
         i += 1
     if cur:
-        out.append(cur)
+        out.append({"op": cur_op, "tokens": cur})
     return out
+
+
+def _classify_consumer(tokens: list[str]) -> str:
+    """Classify a non-git/non-gh segment as 'readonly' or 'unknown'."""
+    if not tokens:
+        return "unknown"
+    head = tokens[0]
+    # Strip path so /usr/bin/tail, /opt/homebrew/bin/jq, etc. classify.
+    head = head.split("/")[-1]
+    return "readonly" if head in _PIPE_READONLY_CONSUMERS else "unknown"
 
 
 def _parse_git_segment(toks: list[str]) -> dict | None:
@@ -342,21 +373,36 @@ def parse(cmd: str) -> dict:
 
     segments = _segment(toks)
     invocations = []
-    for seg in segments:
-        inv = _parse_git_segment(seg)
+    seg_summary = []
+    for idx, seg in enumerate(segments):
+        raw = seg["tokens"]
+        inv = _parse_git_segment(raw)
         if inv is None:
-            inv = _parse_gh_segment(seg)
+            inv = _parse_gh_segment(raw)
         if inv is not None and inv["subcommand"]:
+            inv["chain_position"] = idx
+            inv["preceding_op"] = seg["op"]
             invocations.append(inv)
+            seg_summary.append({
+                "op": seg["op"],
+                "kind": "git_or_gh",
+                "consumer_class": "git_or_gh",
+            })
+        else:
+            seg_summary.append({
+                "op": seg["op"],
+                "kind": "other",
+                "consumer_class": _classify_consumer(raw),
+            })
 
     return {
         "invocations": invocations,
-        # Number of non-empty command segments. > 1 means chained
-        # (e.g. `cd dir && git commit`, `git diff && git push`,
-        # `echo > foo && git commit`). The hooks block when a
-        # chokepoint is found in a chain because pre-execution gates
-        # can't see state changes from earlier commands.
+        # Number of non-empty command segments. > 1 means chained.
+        # Hook policy reads `segments` (per-segment op + consumer class)
+        # to allow read-only output pipes (`git push | tail`) while
+        # denying mutating chains (`cd dir && git push`).
         "segments_count": len(segments),
+        "segments": seg_summary,
     }
 
 

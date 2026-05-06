@@ -22,6 +22,9 @@ set -u
 if [ "${SSPOWER_AUTO_REVIEW:-on}" = "off" ]; then
   exit 0
 fi
+# Re-entry guards: codex-bridge sets these before spawning, prevents recursion.
+[ "${SSPOWER_REVIEW_IN_FLIGHT:-0}" = "1" ] && exit 0
+[ "${SSPOWER_REVIEW_DEPTH:-0}" -ge 1 ] && exit 0
 command -v jq >/dev/null 2>&1 || exit 0
 command -v node >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
@@ -40,16 +43,15 @@ if [ -z "$INV" ]; then
   exit 0
 fi
 
-# CHAIN BLOCK. If the user wrote `echo > docs/plans/x.md && git commit`
-# or `git add docs/plans/x.md && git commit`, the file content / index
-# state at the time WE run is NOT what `git commit` will see -- the
-# preceding commands haven't executed yet (we're a PreToolUse hook).
-# Reviewing now would gate on stale bytes. Refuse and ask the user to
-# split the chain.
-SEG_COUNT=$(printf '%s' "$PARSED" | jq -r '.segments_count // 0')
-if [ "$SEG_COUNT" -gt 1 ]; then
-  REASON='Codex auto plan-review cannot gate `git commit` inside a chained shell command -- previous segments may modify worktree or index after this hook runs, leaving the review blind. Run the commit on its own line so the gate sees the final state. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies.'
-  jq -n --arg reason "$REASON" '{
+# CHAIN POLICY. Predecessors may modify worktree/index after this
+# PreToolUse hook runs, leaving the review blind. Successors may also
+# run conditionally on commit outcome. Allow only read-only output
+# pipes after the chokepoint (`git commit ... 2>&1 | tee log`).
+CHOKE_POS=$(printf '%s' "$INV" | jq -r '.chain_position // 0')
+
+deny_chain() {
+  local reason="$1"
+  jq -n --arg reason "$reason" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
@@ -57,6 +59,28 @@ if [ "$SEG_COUNT" -gt 1 ]; then
     }
   }'
   exit 0
+}
+
+if [ "$CHOKE_POS" -gt 0 ]; then
+  deny_chain "Codex auto plan-review: a command preceding 'git commit' may modify worktree or index between this gate and the commit. Use 'git -C <path>' instead of 'cd <path> && git commit'. Run the commit as its own Bash call. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies."
+fi
+
+TAIL_VERDICT=$(printf '%s' "$PARSED" | jq -r --argjson pos "$CHOKE_POS" '
+  ([.segments | to_entries[] | select(.key > $pos) | .value]) as $tail
+  | if ($tail | length) == 0 then "ok"
+    else
+      ($tail
+       | map(
+           if (.op == "|" or .op == "|&") and .consumer_class == "readonly" then "ok"
+           else "bad"
+           end
+         )
+       | if any(. == "bad") then "bad" else "ok" end)
+    end
+' 2>/dev/null)
+
+if [ "$TAIL_VERDICT" = "bad" ]; then
+  deny_chain "Codex auto plan-review: only read-only output pipes (tail/head/grep/jq/...) allowed after 'git commit'. Conditional/sequential operators (&&, ||, ;, &) leave the gate blind to outcome. Run the commit on its own line. Bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 
 WORK_DIR=$(printf '%s' "$INV" | jq -r '.work_dir' 2>/dev/null)

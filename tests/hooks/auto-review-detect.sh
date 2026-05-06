@@ -339,6 +339,10 @@ STUB
     git branch --set-upstream-to=main feat 2>/dev/null
   )
   REPO_REAL=$(cd "$REPO_OUT" && pwd -P)
+  # SSPOWER_REVIEW_CACHE_TTL=0 disables verdict cache so each invocation
+  # runs the (stub) bridge instead of reusing a cached verdict from a
+  # prior test case (same repo + same diff = same cache key).
+  export SSPOWER_REVIEW_CACHE_TTL=0
   out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
     CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
     bash "$REVIEW" <<HOOKIN
@@ -438,7 +442,106 @@ HOOKIN
   assert_eq "skip in target repo: bridge skipped" "0" \
     "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
 
+  # ---------- Chain policy: read-only output pipes ALLOWED ----------
+  # `git push 2>&1 | tail -40` — only readonly consumer after chokepoint.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push 2>&1 | tail -40"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push | tail: exit" "0" "$rc"
+  assert_eq "push | tail: no deny" "0" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+  assert_eq "push | tail: bridge ran" "1" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
+  # `git push | head -20` — same.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push | head -20"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push | head: exit" "0" "$rc"
+  assert_eq "push | head: no deny" "0" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+
+  # Chained read-only pipes: `git push 2>&1 | tail -40 | grep -i error`.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push 2>&1 | tail -40 | grep -i error"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push | tail | grep: exit" "0" "$rc"
+  assert_eq "push | tail | grep: no deny" "0" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+
+  # ---------- Chain policy: non-readonly pipe DENIED ----------
+  # `git push | xargs rm` — xargs not in readonly whitelist.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push | xargs rm"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push | xargs rm: exit" "0" "$rc"
+  assert_eq "push | xargs rm: deny" "1" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+  assert_eq "push | xargs rm: bridge skipped" "0" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
+  # ---------- Chain policy: non-pipe successor DENIED ----------
+  # `git push && echo done` — successor with && deny.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push && echo done"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push && echo: exit" "0" "$rc"
+  assert_eq "push && echo: deny" "1" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+
+  # `git push; echo done` — `;` separator denies.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push; echo done"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "push; echo: exit" "0" "$rc"
+  assert_eq "push; echo: deny" "1" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+
+  # ---------- Re-entry guards ----------
+  # SSPOWER_REVIEW_IN_FLIGHT=1 set by codex-bridge: hook short-circuits.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_REVIEW_IN_FLIGHT=1 SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "in_flight=1: exit" "0" "$rc"
+  assert_eq "in_flight=1: bridge skipped" "0" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
+  # SSPOWER_REVIEW_DEPTH=1 backstop.
+  : > "$ARGS_FILE"
+  out=$(cd "$REPO_OUT" && SSPOWER_REVIEW_DEPTH=1 SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_ROOT" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "depth>=1: exit" "0" "$rc"
+  assert_eq "depth>=1: bridge skipped" "0" \
+    "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
+
   rm -rf "$STUB_ROOT" "$REPO_OUT" "$ARGS_FILE"
+  unset SSPOWER_REVIEW_CACHE_TTL
 else
   echo "  skip stub-bridge --cd test (node not installed)"
 fi
