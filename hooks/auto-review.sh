@@ -30,6 +30,10 @@
 
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_log.sh
+. "$SCRIPT_DIR/_log.sh"
+
 # ---------- Bypasses + re-entry guards ----------
 [ "${SSPOWER_AUTO_REVIEW:-on}" = "off" ] && exit 0
 [ "${SSPOWER_REVIEW_IN_FLIGHT:-0}" = "1" ] && exit 0
@@ -41,8 +45,8 @@ command -v python3 &>/dev/null || exit 0
 
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+CMD_PREVIEW=$(printf '%s' "$CMD" | head -c 200 | tr '\n' ' ')
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PARSED=$(printf '%s' "$CMD" | python3 "$SCRIPT_DIR/_parse-git-cmd.py" 2>/dev/null)
 
 # ---------- Chokepoint detection ----------
@@ -73,6 +77,7 @@ deny() {
 # ---------- Chain policy ----------
 # Anything before the chokepoint -> deny (predecessor may mutate state).
 if [ "$CHOKE_POS" -gt 0 ]; then
+  log_event warn hook.auto-review kind=deny_predecessor cmd_preview="$CMD_PREVIEW"
   deny "Codex auto-review: a command preceding the git/gh chokepoint may mutate HEAD, cwd, or index before review runs. Use 'git -C <path>' instead of 'cd <path> && git ...'. Run the chokepoint as its own Bash call. Bypass: SSPOWER_AUTO_REVIEW=off only for emergencies."
 fi
 
@@ -92,6 +97,7 @@ TAIL_VERDICT=$(printf '%s' "$PARSED" | jq -r --argjson pos "$CHOKE_POS" '
 ' 2>/dev/null)
 
 if [ "$TAIL_VERDICT" = "bad" ]; then
+  log_event warn hook.auto-review kind=deny_successor cmd_preview="$CMD_PREVIEW"
   deny "Codex auto-review: only read-only output pipes (tail/head/grep/jq/sed/awk/...) allowed after a git/gh chokepoint. Other chained commands may run conditionally on push outcome. Capture output to a file then read separately: 'git push > /tmp/push.log 2>&1' on its own line. Bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 
@@ -169,6 +175,7 @@ if [ -n "$ROUNDS_FILE" ] && [ -f "$ROUNDS_FILE" ]; then
 fi
 ROUNDS_CAP="${SSPOWER_REVIEW_MAX_ROUNDS:-3}"
 if [ "$ROUNDS" -ge "$ROUNDS_CAP" ]; then
+  log_event warn hook.auto-review kind=deny_rounds_cap branch="$BRANCH" rounds="$ROUNDS/$ROUNDS_CAP"
   deny "Codex auto-review: ${ROUNDS_CAP} rounds did not converge for branch '$BRANCH'. Review manually, fix locally, then 'rm $ROUNDS_FILE' to retry. Or bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 
@@ -233,6 +240,7 @@ EOF
   rm -f "$PROMPT_FILE"
 
   if [ -z "$RESULT" ]; then
+    log_event warn hook.auto-review kind=codex_timeout_allow timeout="${REVIEW_TIMEOUT}s" branch="$BRANCH"
     echo "[auto-review] WARNING: codex review failed/timed out (${REVIEW_TIMEOUT}s); allowing push without review." >&2
     exit 0
   fi
@@ -309,6 +317,7 @@ else
   REASON=$(printf 'Codex auto-review blocked (round %s/%s).\n%s\n\nFix the issues, commit, and push again. Bypass: SSPOWER_AUTO_REVIEW=off.' "$NEW_ROUNDS" "$ROUNDS_CAP" "$SUMMARY")
 fi
 
+log_event warn hook.auto-review kind=deny_verdict verdict="${VERDICT:-unknown}" branch="$BRANCH" round="$NEW_ROUNDS/$ROUNDS_CAP" applied="$APPLIED"
 jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
