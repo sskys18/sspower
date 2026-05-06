@@ -313,7 +313,6 @@ function runCodexResume(prompt, options = {}) {
     args.push("--last");
   }
 
-  args.push("--full-auto");
   args.push("--json");
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
