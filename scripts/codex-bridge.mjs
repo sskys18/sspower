@@ -1108,17 +1108,33 @@ async function cmdKill(argv) {
     }, null, 2));
     return;
   }
-  let killed = false;
+  let signaled = false;
   try {
     process.kill(record.pid, "SIGTERM");
-    killed = true;
-    record.status = "killed";
-    record.updated_at = new Date().toISOString();
-    registry.writeState(record);
+    signaled = true;
   } catch {
     /* race: died between liveness check and signal */
   }
-  console.log(JSON.stringify({ killed, pid: record.pid, session_id: sessionId }, null, 2));
+  // Verify exit before reporting success. Escalate to SIGKILL if SIGTERM ignored.
+  let exited = signaled ? await waitForExit(record.pid, 5_000) : true;
+  if (!exited) {
+    process.stderr.write(`[codex:kill] pid=${record.pid} ignored SIGTERM, escalating to SIGKILL\n`);
+    try { process.kill(record.pid, "SIGKILL"); } catch { /* ok */ }
+    exited = await waitForExit(record.pid, 3_000);
+  }
+  if (exited) {
+    record.status = "killed";
+    record.updated_at = new Date().toISOString();
+    registry.writeState(record);
+  }
+  console.log(JSON.stringify({
+    killed: exited,
+    signaled,
+    pid: record.pid,
+    session_id: sessionId,
+    ...(exited ? {} : { error: "process survived SIGTERM+SIGKILL within 8s" }),
+  }, null, 2));
+  if (!exited) process.exit(2);
 }
 
 async function cmdSteer(argv) {

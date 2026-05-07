@@ -41,17 +41,21 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
    ```bash
    # Use mktemp + 0600 perms — Codex output may contain code, paths,
    # or repo internals. Predictable /tmp paths are world-readable.
+   # Capture stdout and stderr SEPARATELY so we can return Codex's
+   # stdout verbatim without bridge progress tags polluting it.
    TMPROOT=$(mktemp -d -t codex-rescue.XXXXXX)
    chmod 700 "$TMPROOT"
    STDOUT_FILE="$TMPROOT/stdout.log"
+   STDERR_FILE="$TMPROOT/stderr.log"
    PROGRESS_FILE="$TMPROOT/progress.log"
    : > "$STDOUT_FILE" && chmod 600 "$STDOUT_FILE"
+   : > "$STDERR_FILE" && chmod 600 "$STDERR_FILE"
    : > "$PROGRESS_FILE" && chmod 600 "$PROGRESS_FILE"
 
    node "$BRIDGE" {subcommand} \
      --prompt @"${PROMPT_FILE}" \
      [--cd {dir}] [--write] [--model {model}] \
-     > "$STDOUT_FILE" 2>&1 &
+     > "$STDOUT_FILE" 2> "$STDERR_FILE" &
    BRIDGE_PID=$!
 
    # Poll registry every 8s, max 75 polls (10min ceiling).
@@ -70,8 +74,12 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
 
    wait "$BRIDGE_PID"
    EXIT=$?
-   # Progress log location goes to stderr so stdout stays verbatim from Codex.
-   echo "[progress log] $PROGRESS_FILE" >&2
+   # Progress + bridge stderr go to stderr so stdout stays verbatim from Codex.
+   {
+     echo "[progress log] $PROGRESS_FILE"
+     echo "--- bridge stderr ---"
+     cat "$STDERR_FILE"
+   } >&2
    # Bridge stdout — verbatim, no commentary, no prepended headers.
    cat "$STDOUT_FILE"
    # Cleanup the secured temp dir; comment out if you want to inspect logs
