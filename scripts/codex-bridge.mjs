@@ -282,7 +282,9 @@ function runCodexExec(prompt, options = {}) {
   const promptFile = secureTmpFile("prompt", prompt);
   args.push("-");
 
-  return _spawnAndCapture(bin, args, promptFile, resultFile, schema);
+  // Pass cd through so registry records the actual Codex working dir,
+  // not bridge process cwd. Codex itself uses -C flag set above.
+  return _spawnAndCapture(bin, args, promptFile, resultFile, schema, cd);
 }
 
 /**
@@ -562,6 +564,7 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
       stateRecord = {
         session_id: sessionId,
         pid: child.pid,
+        bridge_pid: process.pid,
         subcommand: process.argv[2],
         cwd: cwd || process.cwd(),
         started_at: new Date(startedAt).toISOString(),
@@ -1018,6 +1021,29 @@ async function cmdStatus(argv) {
   console.log(JSON.stringify(registry.markStale(record), null, 2));
 }
 
+/**
+ * Validate that a record represents a still-live, running session before
+ * we send signals based on its pid. Defends against PID reuse on stale records.
+ */
+function isLiveRunning(record) {
+  if (!record || record.status !== "running") return false;
+  if (!Number.isInteger(record.pid) || record.pid <= 1) return false;
+  const fresh = registry.markStale(record); // checks pidAlive + 5min TTL
+  return fresh.status === "running";
+}
+
+/**
+ * SIGTERM pid then poll for exit up to timeoutMs. Returns true if exited cleanly.
+ */
+async function waitForExit(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!registry.pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
 async function cmdKill(argv) {
   const sessionId = argv[0];
   if (!sessionId) die("kill requires <session_id>");
@@ -1026,6 +1052,18 @@ async function cmdKill(argv) {
     console.error(JSON.stringify({ error: true, message: `no record for ${sessionId}` }));
     process.exit(1);
   }
+  if (!isLiveRunning(record)) {
+    // Don't signal stale/done/error/killed records — pid may belong to an unrelated process now.
+    const fresh = registry.markStale(record);
+    console.log(JSON.stringify({
+      killed: false,
+      reason: `record is ${fresh.status}, not running — refusing to signal pid ${record.pid}`,
+      pid: record.pid,
+      session_id: sessionId,
+      status: fresh.status,
+    }, null, 2));
+    return;
+  }
   let killed = false;
   try {
     process.kill(record.pid, "SIGTERM");
@@ -1033,8 +1071,8 @@ async function cmdKill(argv) {
     record.status = "killed";
     record.updated_at = new Date().toISOString();
     registry.writeState(record);
-  } catch (e) {
-    /* already dead */
+  } catch {
+    /* race: died between liveness check and signal */
   }
   console.log(JSON.stringify({ killed, pid: record.pid, session_id: sessionId }, null, 2));
 }
@@ -1044,11 +1082,22 @@ async function cmdSteer(argv) {
   if (!opts.sessionId) die("steer requires --session-id");
   const prompt = resolvePrompt(opts.prompt);
   const record = registry.readState(opts.sessionId);
-  if (record && record.status === "running") {
+  if (record && isLiveRunning(record)) {
     process.stderr.write(`[codex:steer] killing pid=${record.pid} before resume\n`);
+    // Mark killed BEFORE signal so the dying bridge's close handler skips its own write (race guard)
+    record.status = "killed";
+    record.updated_at = new Date().toISOString();
+    registry.writeState(record);
     try { process.kill(record.pid, "SIGTERM"); } catch { /* already dead */ }
-    // Give it 2s to die so its close handler doesn't race the resume's initState
-    await new Promise((r) => setTimeout(r, 2000));
+    // Bounded poll instead of fixed sleep — abort if process won't exit
+    const exited = await waitForExit(record.pid, 10_000);
+    if (!exited) {
+      process.stderr.write(`[codex:steer] pid=${record.pid} did not exit after 10s, escalating to SIGKILL\n`);
+      try { process.kill(record.pid, "SIGKILL"); } catch { /* ok */ }
+      await waitForExit(record.pid, 3_000);
+    }
+  } else if (record && record.status !== "running") {
+    process.stderr.write(`[codex:steer] record is ${record.status}, resuming directly without kill\n`);
   }
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,

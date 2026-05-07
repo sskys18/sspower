@@ -22,7 +22,8 @@ The bridge writes per-session state to `~/.claude/state/sspower/codex/` so Claud
 | Field | Type | Meaning |
 |---|---|---|
 | `session_id` | string | Codex session UUID, also resume key |
-| `pid` | int | Codex child process pid (NOT the node wrapper) |
+| `pid` | int | Codex child process pid (used by `kill`/`steer`) |
+| `bridge_pid` | int | Node bridge wrapper pid (use this to correlate dispatch ↔ session under concurrent runs) |
 | `subcommand` | string | `implement` / `rescue` / `review` / etc. |
 | `cwd` | string | Working directory bridge ran in |
 | `started_at` | ISO8601 | Bridge spawn time |
@@ -71,15 +72,14 @@ EOF
 # Background dispatch
 node "$BRIDGE" rescue --prompt @"$PROMPT_FILE" > /tmp/cx.out 2>&1 &
 WRAPPER_PID=$!
-START_TS=$(date -u +"%Y-%m-%dT%H:%M:%S")
 
 # Poll loop (max 5 polls, 8s each).
-# NOTE: registry stores codex's child pid, not WRAPPER_PID — match by
-# subcommand + started_at window instead.
+# Match on bridge_pid — uniquely identifies this dispatch even under
+# concurrent runs. Do NOT match on .pid (that's codex's child).
 for i in 1 2 3 4 5; do
   sleep 8
-  SID=$(node "$BRIDGE" ps | jq -r --arg t "$START_TS" \
-    '[.[] | select(.subcommand=="rescue" and .started_at >= $t)] | .[0].session_id // empty')
+  SID=$(node "$BRIDGE" ps | jq -r --arg p "$WRAPPER_PID" \
+    '[.[] | select(.bridge_pid==($p|tonumber))] | .[0].session_id // empty')
   if [ -n "$SID" ]; then
     node "$BRIDGE" status "$SID" | jq '{phase,last_event,duration_ms,trace}'
   fi
@@ -112,4 +112,6 @@ This SIGTERMs the running bridge, waits 2s, then resumes the same Codex session 
 
 - **Codex trust gate**: `--cd <dir>` requires the dir to be a trusted git repository (Codex CLI behavior). The bridge does not pass `--skip-git-repo-check`. If you need to run Codex against a fresh dir, `git init` it first.
 - **Rollout flush timing**: short-lived sessions (where Codex completes in <2s) may not produce a rollout artifact, which means `steer` cannot resume them. Use a longer-running prompt or rely on `kill` instead.
-- **Registry pid is Codex's child pid**, not the node wrapper. When matching sessions to a known process, use `subcommand` + `started_at` window, not the wrapper pid.
+- **Two pids per record**: `pid` is Codex's child (signal target for `kill`/`steer`); `bridge_pid` is the node wrapper (use this to correlate "I just dispatched bridge — which session is mine?"). Always match dispatches by `bridge_pid`, not by `pid`.
+- **`kill` and `steer` refuse to signal stale records**: if `markStale` flips the status to `stale`/`done`/`error`/`killed`, the bridge will not SIGTERM the recorded pid (PID may have been reused by another OS process). For stale records, manually verify with `ps -p <pid>` then `kill <pid>` directly if needed.
+- **`steer` polls for child exit** up to 10s after SIGTERM, escalating to SIGKILL if the codex child ignores the term signal. The resume only starts after the child is confirmed gone.

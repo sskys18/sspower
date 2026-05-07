@@ -41,23 +41,21 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
    ```bash
    STDOUT_FILE="/tmp/codex-rescue-$$-$(date +%s).out"
    PROGRESS_FILE="/tmp/codex-rescue-$$-$(date +%s).progress"
-   START_TS=$(date -u +"%Y-%m-%dT%H:%M:%S")
-   SUBCMD={subcommand}   # e.g. rescue / implement / resume
 
-   node "$BRIDGE" "$SUBCMD" \
+   node "$BRIDGE" {subcommand} \
      --prompt @"${PROMPT_FILE}" \
      [--cd {dir}] [--write] [--model {model}] \
      > "$STDOUT_FILE" 2>&1 &
    BRIDGE_PID=$!
 
    # Poll registry every 8s, max 75 polls (10min ceiling).
-   # IMPORTANT: registry stores codex child PID, not the node wrapper PID.
-   # Match by subcommand + started_at window instead of pid.
+   # Match on bridge_pid (node wrapper pid) — uniquely identifies THIS dispatch.
+   # Do NOT match on .pid (that's the codex child pid, races with other runs).
    for i in $(seq 1 75); do
      sleep 8
      if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then break; fi
-     SID=$(node "$BRIDGE" ps 2>/dev/null | jq -r --arg s "$SUBCMD" --arg t "$START_TS" \
-       '[.[] | select(.subcommand==$s and .started_at >= $t)] | .[0].session_id // empty')
+     SID=$(node "$BRIDGE" ps 2>/dev/null | jq -r --arg p "$BRIDGE_PID" \
+       '[.[] | select(.bridge_pid==($p|tonumber))] | .[0].session_id // empty')
      if [ -n "$SID" ]; then
        node "$BRIDGE" status "$SID" | jq '{phase,last_event,duration_ms,trace}' >> "$PROGRESS_FILE"
        echo "---" >> "$PROGRESS_FILE"

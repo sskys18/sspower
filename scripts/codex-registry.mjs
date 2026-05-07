@@ -8,15 +8,28 @@ const MAX_RECORDS = 50;
 const STALE_AFTER_MS = 5 * 60 * 1000;
 const SWEEP_AFTER_MS = 24 * 60 * 60 * 1000;
 
+// Codex session IDs are UUIDs (e.g. 019e0066-6508-7fe0-89e8-e6bf6eb84b4f).
+// Allow conservative subset to defeat path traversal: alphanumeric + dash, 8-128 chars.
+const SESSION_ID_RE = /^[A-Za-z0-9-]{8,128}$/;
+
+export function validateSessionId(id) {
+  if (typeof id !== "string" || !SESSION_ID_RE.test(id)) {
+    throw new Error(`invalid session id: ${JSON.stringify(id)}`);
+  }
+  return id;
+}
+
 export function ensureDir() {
   fs.mkdirSync(REGISTRY_DIR, { recursive: true, mode: 0o700 });
 }
 
 export function statePath(sessionId) {
+  validateSessionId(sessionId);
   return path.join(REGISTRY_DIR, `${sessionId}.json`);
 }
 
 export function eventsPath(sessionId) {
+  validateSessionId(sessionId);
   return path.join(REGISTRY_DIR, `${sessionId}.events.jsonl`);
 }
 
