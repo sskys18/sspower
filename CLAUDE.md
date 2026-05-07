@@ -8,9 +8,9 @@ Fork of [Superpowers](https://github.com/obra/superpowers) v5.0.5 — customized
 skills/          — one dir per skill, each with SKILL.md + references/
 hooks/           — SessionStart (diet-activate), UserPromptSubmit (diet-track), PreToolUse:Bash (cmd-rewrite + auto-review), PreCompact + SessionEnd (wiki-archive)
 agents/          — subagent prompts (code-reviewer, codex-rescue)
-scripts/         — codex-bridge.mjs (native Codex CLI integration)
+scripts/         — codex-bridge.mjs (native Codex CLI integration), codex-registry.mjs (session state for tracking)
 schemas/         — structured output contracts for Codex (implementation, spec-review, quality-review)
-commands/        — slash command entrypoints (diet, diet-commit, diet-review)
+commands/        — slash command entrypoints (diet, diet-commit, diet-review, codex-track)
 docs/            — customization docs, plans, specs
 tests/           — skill and brainstorm-server tests
 ```
@@ -27,3 +27,4 @@ tests/           — skill and brainstorm-server tests
 - Auto-review chain policy: chokepoints (`git commit` / `git push` / `git merge` / `gh pr ...`) must run as standalone Bash invocations. Read-only output pipes (`| tail`, `| grep`, `| jq`, etc.) ARE allowed after the chokepoint. Use `git -C <path>` not `cd <path> && git ...`. The hook deny message names the rule that fired
 - Auto-review loop guards: re-entry env (`SSPOWER_REVIEW_IN_FLIGHT`), depth counter (`SSPOWER_REVIEW_DEPTH`), verdict cache (`~/.cache/sspower/verdicts/<hash>.json`, 10min TTL), bridge timeout (90s), iteration cap (3 rounds per branch, tracked at `<repo>/.git/sspower-review-rounds-<branch>`). Tunables: `SSPOWER_REVIEW_CACHE_TTL`, `SSPOWER_REVIEW_TIMEOUT`, `SSPOWER_REVIEW_MAX_ROUNDS`, `SSPOWER_REVIEW_AUTO_APPLY`
 - Per-repo state at `<repo>/.sspower/`: `followups.md` (advisory issues from `approve-with-followups` verdicts) and `proposed-fixes/round-N.patch` (codex-suggested patches auto-applied via `git apply --3way`). Add `.sspower/` to the consuming repo's `.gitignore` if you don't want this state versioned
+- Codex session tracking: bridge writes per-session state to `~/.claude/state/sspower/codex/<id>.json` and event log to `<id>.events.jsonl`. Surface via `codex-bridge.mjs ps|status|kill|steer|tail`, the `codex-tracking` skill, or `/codex-track` slash command. See `docs/codex-tracking.md` for parity table, schema, and caveats. Registry writes are best-effort — failures disable registry for the run but do NOT crash the bridge

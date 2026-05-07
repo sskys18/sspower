@@ -26,6 +26,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import * as registry from "./codex-registry.mjs";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(BRIDGE_DIR, "..");
@@ -276,12 +277,17 @@ function runCodexExec(prompt, options = {}) {
   if (schema) args.push("--output-schema", schema);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `reasoning.effort="${effort}"`);
-  if (cd) args.push("-C", cd);
+  // Normalize --cd to absolute path. Otherwise -C and spawnOpts.cwd both
+  // apply, resolving as "<cd>/<cd>" when the caller passes a relative path.
+  const cdAbs = cd ? path.resolve(cd) : null;
+  if (cdAbs) args.push("-C", cdAbs);
 
   const promptFile = secureTmpFile("prompt", prompt);
   args.push("-");
 
-  return _spawnAndCapture(bin, args, promptFile, resultFile, schema);
+  // Pass cd through so registry records the actual Codex working dir,
+  // not bridge process cwd. Codex itself uses -C flag set above.
+  return _spawnAndCapture(bin, args, promptFile, resultFile, schema, cdAbs);
 }
 
 /**
@@ -328,8 +334,11 @@ function runCodexResume(prompt, options = {}) {
   const promptFile = secureTmpFile("prompt", finalPrompt);
   args.push("-");
 
+  // Codex `exec resume` doesn't accept -C, so spawn cwd is the only
+  // mechanism. Normalize to absolute path for the same reason runCodexExec does.
+  const cdAbs = cd ? path.resolve(cd) : null;
   // Pass schemaName so parser knows to attempt structured extraction
-  return _spawnAndCapture(bin, args, promptFile, resultFile, schemaName ? schemaPath(schemaName) : null, cd);
+  return _spawnAndCapture(bin, args, promptFile, resultFile, schemaName ? schemaPath(schemaName) : null, cdAbs);
 }
 
 /**
@@ -348,14 +357,12 @@ function renderEvent(event) {
 
   // v0.124+ shape: thread.started carries thread_id (session identifier)
   if (t === "thread.started" && event.thread_id) {
-    process.stderr.write(`[codex:session] ${event.thread_id}\n`);
-    return "session";
+    return { kind: "session", line: `[codex:session] ${event.thread_id}` };
   }
 
   if (event.session_id || event.conversation?.id) {
     const id = event.session_id || event.conversation.id;
-    process.stderr.write(`[codex:session] ${id}\n`);
-    return "session";
+    return { kind: "session", line: `[codex:session] ${id}` };
   }
 
   // v0.124+ shape: item.started / item.completed wrap the real payload in event.item
@@ -364,36 +371,33 @@ function renderEvent(event) {
     const itype = it.type || "";
     if (itype === "agent_message") {
       if (t === "item.completed" && it.text) {
-        process.stderr.write(`[codex:agent] ${trunc(it.text)}\n`);
+        return { kind: "agent", line: `[codex:agent] ${trunc(it.text)}` };
       }
-      return "agent";
+      return { kind: "agent", line: null };
     }
     if (itype === "reasoning") {
       const text = it.text || it.content || "";
-      if (text && t === "item.completed") process.stderr.write(`[codex:think] ${trunc(text)}\n`);
-      return "think";
+      if (text && t === "item.completed") {
+        return { kind: "think", line: `[codex:think] ${trunc(text)}` };
+      }
+      return { kind: "think", line: null };
     }
     if (itype === "command_execution") {
       if (t === "item.started") {
-        process.stderr.write(`[codex:exec] ${trunc(it.command, 100)}\n`);
-        return "exec";
+        return { kind: "exec", line: `[codex:exec] ${trunc(it.command, 100)}` };
       }
       const code = it.exit_code ?? "?";
       const out = trunc(it.aggregated_output || "", 80);
-      process.stderr.write(`[codex:result] exit=${code} ${out}\n`);
-      return "result";
+      return { kind: "result", line: `[codex:result] exit=${code} ${out}` };
     }
     if (itype === "file_change" || itype === "patch_apply" || itype === "edit") {
       const p = it.path || it.file || "?";
-      process.stderr.write(`[codex:edit] ${p}\n`);
-      return "edit";
+      return { kind: "edit", line: `[codex:edit] ${p}` };
     }
     if (itype === "error") {
-      process.stderr.write(`[codex:error] ${trunc(it.message || JSON.stringify(it), 200)}\n`);
-      return "error";
+      return { kind: "error", line: `[codex:error] ${trunc(it.message || JSON.stringify(it), 200)}` };
     }
-    process.stderr.write(`[codex:event] item.${itype}\n`);
-    return itype;
+    return { kind: itype, line: `[codex:event] item.${itype}` };
   }
 
   // v0.124+ shape: turn.completed carries usage at top level
@@ -403,32 +407,30 @@ function renderEvent(event) {
     const outTok = u.output_tokens ?? u.output ?? u.completion_tokens;
     const cached = u.cached_input_tokens;
     const total = (inTok != null && outTok != null) ? inTok + outTok : (u.total ?? u.total_tokens);
-    process.stderr.write(`[codex:token] in=${inTok ?? "?"} out=${outTok ?? "?"} total=${total ?? "?"}${cached != null ? ` cached=${cached}` : ""}\n`);
-    return "token";
+    return {
+      kind: "token",
+      line: `[codex:token] in=${inTok ?? "?"} out=${outTok ?? "?"} total=${total ?? "?"}${cached != null ? ` cached=${cached}` : ""}`,
+    };
   }
 
-  if (t === "turn.started") return "turn";
-  if (t === "turn.completed") return "done";
+  if (t === "turn.started") return { kind: "turn", line: null };
+  if (t === "turn.completed") return { kind: "done", line: null };
   if (t === "turn_aborted") {
-    process.stderr.write(`[codex:error] turn aborted${event.reason ? `: ${event.reason}` : ""}\n`);
-    return "error";
+    return { kind: "error", line: `[codex:error] turn aborted${event.reason ? `: ${event.reason}` : ""}` };
   }
   if (t === "stream_error") {
-    process.stderr.write(`[codex:error] stream_error ${trunc(event.message || event.error || JSON.stringify(event), 200)}\n`);
-    return "error";
+    return { kind: "error", line: `[codex:error] stream_error ${trunc(event.message || event.error || JSON.stringify(event), 200)}` };
   }
 
   // v0.124 top-level command_execution events (not always wrapped in item.*)
   if (t === "exec_command_begin") {
-    process.stderr.write(`[codex:exec] ${trunc(event.command || event.cmd || "", 100)}\n`);
-    return "exec";
+    return { kind: "exec", line: `[codex:exec] ${trunc(event.command || event.cmd || "", 100)}` };
   }
-  // Output deltas stream many times per command — render but don't count as a new exec
-  if (t === "exec_command_output_delta") return "stream";
+  // Output deltas stream many times per command — classify but emit nothing
+  if (t === "exec_command_output_delta") return { kind: "stream", line: null };
   if (t === "exec_command_end") {
     const code = event.exit_code ?? "?";
-    process.stderr.write(`[codex:result] exit=${code} ${trunc(event.aggregated_output || event.output || "", 80)}\n`);
-    return "result";
+    return { kind: "result", line: `[codex:result] exit=${code} ${trunc(event.aggregated_output || event.output || "", 80)}` };
   }
 
   // v0.124 top-level patch_apply events. Render each lifecycle phase for
@@ -446,78 +448,71 @@ function renderEvent(event) {
     const suffix = t === "patch_apply_end"
       ? (failed ? " (failed)" : " (done)")
       : (t === "patch_apply_begin" ? " (begin)" : "");
-    process.stderr.write(`[codex:edit] ${p}${suffix}\n`);
+    const line = `[codex:edit] ${p}${suffix}`;
     // Only count a successful _end as an applied edit; failures and interim
     // phases render for visibility but don't inflate trace.edits.
-    if (t === "patch_apply_end" && !failed) return "edit";
-    return "patch_phase";
+    if (t === "patch_apply_end" && !failed) return { kind: "edit", line };
+    return { kind: "patch_phase", line };
   }
 
   // v0.124 top-level MCP tool events
   if (t === "mcp_tool_call_begin") {
     const name = event.name || event.tool || "?";
     const argsPreview = trunc(JSON.stringify(event.arguments || event.args || {}), 80);
-    process.stderr.write(`[codex:tool] ${name}(${argsPreview})\n`);
-    return "tool";
+    return { kind: "tool", line: `[codex:tool] ${name}(${argsPreview})` };
   }
   if (t === "mcp_tool_call_end") {
-    process.stderr.write(`[codex:result] ${trunc(event.result || event.output || "", 80)}\n`);
-    return "result";
+    return { kind: "result", line: `[codex:result] ${trunc(event.result || event.output || "", 80)}` };
   }
 
   if (t === "agent" && event.agent?.content) {
-    process.stderr.write(`[codex:agent] ${trunc(event.agent.content)}\n`);
-    return "agent";
+    return { kind: "agent", line: `[codex:agent] ${trunc(event.agent.content)}` };
   }
   if (t === "reasoning" || t === "reasoning.delta" || event.reasoning) {
     const text = event.reasoning?.content || event.delta || event.text || "";
-    if (text) process.stderr.write(`[codex:think] ${trunc(text)}\n`);
-    return "think";
+    if (text) return { kind: "think", line: `[codex:think] ${trunc(text)}` };
+    return { kind: "think", line: null };
   }
   if (t === "tool_call" || t === "tool.call" || event.tool_call) {
     const tc = event.tool_call || event;
     const name = tc.name || tc.tool || "?";
     const argsPreview = trunc(JSON.stringify(tc.arguments || tc.args || {}), 80);
-    process.stderr.write(`[codex:tool] ${name}(${argsPreview})\n`);
-    return "tool";
+    return { kind: "tool", line: `[codex:tool] ${name}(${argsPreview})` };
   }
   if (t === "tool_result" || t === "tool.result") {
     const r = event.result || event.output || "";
-    process.stderr.write(`[codex:result] ${trunc(r, 80)}\n`);
-    return "result";
+    return { kind: "result", line: `[codex:result] ${trunc(r, 80)}` };
   }
   if (t === "file_change" || t === "patch" || event.file_change) {
     const fc = event.file_change || event;
-    const path = fc.path || fc.file || "?";
+    const p = fc.path || fc.file || "?";
     const add = fc.added ?? fc.additions ?? "";
     const del = fc.removed ?? fc.deletions ?? "";
-    process.stderr.write(`[codex:edit] ${path} +${add} -${del}\n`);
-    return "edit";
+    return { kind: "edit", line: `[codex:edit] ${p} +${add} -${del}` };
   }
   if (t === "exec" || t === "shell" || event.command) {
     const cmd = event.command || event.cmd || "";
-    process.stderr.write(`[codex:exec] ${trunc(cmd, 100)}\n`);
-    return "exec";
+    return { kind: "exec", line: `[codex:exec] ${trunc(cmd, 100)}` };
   }
   if (t === "token_count" || t === "usage" || event.usage || event.tokens) {
     const u = event.usage || event.tokens || {};
-    process.stderr.write(`[codex:token] in=${u.input ?? u.prompt_tokens ?? "?"} out=${u.output ?? u.completion_tokens ?? "?"} total=${u.total ?? u.total_tokens ?? "?"}\n`);
-    return "token";
+    return {
+      kind: "token",
+      line: `[codex:token] in=${u.input ?? u.prompt_tokens ?? "?"} out=${u.output ?? u.completion_tokens ?? "?"} total=${u.total ?? u.total_tokens ?? "?"}`,
+    };
   }
   if (t === "error" || event.error) {
     const msg = event.error?.message || event.message || JSON.stringify(event.error || {});
-    process.stderr.write(`[codex:error] ${trunc(msg, 200)}\n`);
-    return "error";
+    return { kind: "error", line: `[codex:error] ${trunc(msg, 200)}` };
   }
   if (t === "turn_complete" || t === "done") {
-    return "done";
+    return { kind: "done", line: null };
   }
   // Unknown event — surface compact so schema drift is visible
   if (t) {
-    process.stderr.write(`[codex:event] ${t}\n`);
-    return t;
+    return { kind: t, line: `[codex:event] ${t}` };
   }
-  return "unknown";
+  return { kind: "unknown", line: null };
 }
 
 /**
@@ -568,6 +563,53 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
       }
     }, 30_000);
 
+    // Registry: write initial state when session ID first emitted.
+    // Registry is observability — failures must NEVER crash the bridge.
+    let stateRecord = null;
+    let registryDisabled = false;
+    const safeRegistryCall = (fn, kind) => {
+      if (registryDisabled) return;
+      try { fn(); } catch (e) {
+        registryDisabled = true; // disable further attempts this run
+        logEvent("warn", `registry.${kind}`, { msg: e.message?.slice(0, 200) });
+        process.stderr.write(`[codex:registry] disabled after ${kind} error: ${e.message}\n`);
+      }
+    };
+    const initState = (sessionId) => {
+      if (stateRecord || registryDisabled) return;
+      stateRecord = {
+        session_id: sessionId,
+        pid: child.pid,
+        bridge_pid: process.pid,
+        subcommand: process.argv[2],
+        cwd: cwd || process.cwd(),
+        started_at: new Date(startedAt).toISOString(),
+        updated_at: new Date().toISOString(),
+        status: "running",
+        phase: "start",
+        last_kind: "start",
+        last_event: null,
+        trace: { ...trace },
+        duration_ms: 0,
+        exit_code: null,
+      };
+      safeRegistryCall(() => registry.writeState(stateRecord), "init");
+    };
+
+    const updateState = (kind, line, event) => {
+      if (!stateRecord || registryDisabled) return;
+      stateRecord.updated_at = new Date().toISOString();
+      stateRecord.phase = kind;
+      stateRecord.last_kind = kind;
+      if (line) stateRecord.last_event = line;
+      stateRecord.trace = { ...trace };
+      stateRecord.duration_ms = Date.now() - startedAt;
+      safeRegistryCall(() => {
+        registry.writeState(stateRecord);
+        registry.appendEvent(stateRecord.session_id, event);
+      }, "update");
+    };
+
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
@@ -588,9 +630,11 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
         const id = event.session_id || event.conversation?.id || event.thread_id;
         if (id && !sessionIdEmitted) {
           sessionIdEmitted = id;
+          initState(id);
         }
 
-        const kind = renderEvent(event);
+        const { kind, line: renderedLine } = renderEvent(event);
+        if (renderedLine) process.stderr.write(renderedLine + "\n");
         lastEventAt = Date.now();
         lastEventKind = kind;
         if (kind === "tool") trace.tool_calls++;
@@ -606,6 +650,8 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
           const total = u.total ?? u.total_tokens ?? ((inTok != null && outTok != null) ? inTok + outTok : null);
           if (total != null) trace.tokens.total = total;
         }
+
+        if (sessionIdEmitted) updateState(kind, renderedLine, event);
       }
     });
 
@@ -632,6 +678,24 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
 
       const duration_ms = Date.now() - startedAt;
       process.stderr.write(`[codex:done] exit=${code} dur=${(duration_ms / 1000).toFixed(1)}s tools=${trace.tool_calls} edits=${trace.edits} errors=${trace.errors}\n`);
+
+      if (stateRecord) {
+        // Race guard: if another process (steer) re-initialized this session,
+        // or already marked it killed, do not clobber.
+        // Wrap in safeRegistryCall — disk failures here must not crash close handler.
+        safeRegistryCall(() => {
+          const current = registry.readState(stateRecord.session_id);
+          const safeToWrite = !current || (current.pid === stateRecord.pid && current.status !== "killed");
+          if (safeToWrite) {
+            stateRecord.status = code === 0 ? "done" : "error";
+            stateRecord.exit_code = code;
+            stateRecord.updated_at = new Date().toISOString();
+            stateRecord.duration_ms = Date.now() - startedAt;
+            registry.writeState(stateRecord);
+          }
+          registry.sweep();
+        }, "close");
+      }
 
       resolve({
         exitCode: code,
@@ -962,6 +1026,177 @@ async function cmdResume(argv) {
   output(result, { expectStructured: !!schemaName });
 }
 
+async function cmdPs() {
+  const sessions = registry.listSessions();
+  console.log(JSON.stringify(sessions, null, 2));
+}
+
+async function cmdStatus(argv) {
+  const sessionId = argv[0];
+  if (!sessionId) die("status requires <session_id>");
+  const record = registry.readState(sessionId);
+  if (!record) {
+    console.error(JSON.stringify({ error: true, message: `no record for ${sessionId}` }));
+    process.exit(1);
+  }
+  console.log(JSON.stringify(registry.markStale(record), null, 2));
+}
+
+/**
+ * Validate that a record represents a still-live, running session before
+ * we send signals based on its pid. Defends against PID reuse on stale records.
+ *
+ * Three cases by record completeness:
+ *   A. bridge_pid recorded + alive: trust child pid liveness directly.
+ *      Bridge wrapper supervises Codex; while wrapper is alive, the
+ *      recorded child pid is still ours (no OS reuse possible because
+ *      the parent hasn't released it). Long silent sessions (no events
+ *      for >5min) are correctly identified as live.
+ *   B. bridge_pid recorded + dead: refuse. Codex child is orphaned or
+ *      its pid was reused.
+ *   C. bridge_pid not recorded (legacy records pre-bridge_pid): fall
+ *      back to age window + pid liveness. Less strict but best we can
+ *      do without supervision metadata.
+ */
+function isLiveRunning(record) {
+  if (!record || record.status !== "running") return false;
+  if (!Number.isInteger(record.pid) || record.pid <= 1) return false;
+
+  if (Number.isInteger(record.bridge_pid) && record.bridge_pid > 1) {
+    // Case A/B: supervised record. Wrapper liveness is authoritative.
+    if (!registry.pidAlive(record.bridge_pid)) return false;
+    return registry.pidAlive(record.pid);
+  }
+
+  // Case C: legacy unsupervised record. Use age window as proxy for
+  // pid-reuse defense, then check pid liveness.
+  const STALE_WINDOW_MS = 5 * 60 * 1000;
+  const ageMs = Date.now() - new Date(record.updated_at).getTime();
+  if (ageMs > STALE_WINDOW_MS) return false;
+  return registry.pidAlive(record.pid);
+}
+
+/**
+ * SIGTERM pid then poll for exit up to timeoutMs. Returns true if exited cleanly.
+ */
+async function waitForExit(pid, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!registry.pidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+async function cmdKill(argv) {
+  const sessionId = argv[0];
+  if (!sessionId) die("kill requires <session_id>");
+  const record = registry.readState(sessionId);
+  if (!record) {
+    console.error(JSON.stringify({ error: true, message: `no record for ${sessionId}` }));
+    process.exit(1);
+  }
+  if (!isLiveRunning(record)) {
+    // Don't signal stale/done/error/killed records — pid may belong to an unrelated process now.
+    const fresh = registry.markStale(record);
+    console.log(JSON.stringify({
+      killed: false,
+      reason: `record is ${fresh.status}, not running — refusing to signal pid ${record.pid}`,
+      pid: record.pid,
+      session_id: sessionId,
+      status: fresh.status,
+    }, null, 2));
+    return;
+  }
+  let signaled = false;
+  try {
+    process.kill(record.pid, "SIGTERM");
+    signaled = true;
+  } catch {
+    /* race: died between liveness check and signal */
+  }
+  // Verify exit before reporting success. Escalate to SIGKILL if SIGTERM ignored.
+  let exited = signaled ? await waitForExit(record.pid, 5_000) : true;
+  if (!exited) {
+    process.stderr.write(`[codex:kill] pid=${record.pid} ignored SIGTERM, escalating to SIGKILL\n`);
+    try { process.kill(record.pid, "SIGKILL"); } catch { /* ok */ }
+    exited = await waitForExit(record.pid, 3_000);
+  }
+  if (exited) {
+    record.status = "killed";
+    record.updated_at = new Date().toISOString();
+    registry.writeState(record);
+  }
+  console.log(JSON.stringify({
+    killed: exited,
+    signaled,
+    pid: record.pid,
+    session_id: sessionId,
+    ...(exited ? {} : { error: "process survived SIGTERM+SIGKILL within 8s" }),
+  }, null, 2));
+  if (!exited) process.exit(2);
+}
+
+async function cmdSteer(argv) {
+  const opts = parseOpts(argv);
+  if (!opts.sessionId) die("steer requires --session-id");
+  const prompt = resolvePrompt(opts.prompt);
+  const record = registry.readState(opts.sessionId);
+
+  // Refuse to resume a record that claims running but fails liveness checks.
+  // Without verified termination, a parallel resume could collide with the
+  // surviving original process or signal a reused PID.
+  if (record && record.status === "running" && !isLiveRunning(record)) {
+    die(`steer aborted: record session=${opts.sessionId} status=running but liveness check failed (bridge_pid or child pid unreachable). PID may be reused or wrapper crashed. Run "kill <id>" to clear, then retry.`);
+  }
+
+  if (record && isLiveRunning(record)) {
+    process.stderr.write(`[codex:steer] killing pid=${record.pid} before resume\n`);
+    // Mark killed BEFORE signal so the dying bridge's close handler skips its own write (race guard)
+    record.status = "killed";
+    record.updated_at = new Date().toISOString();
+    registry.writeState(record);
+    try { process.kill(record.pid, "SIGTERM"); } catch { /* already dead */ }
+    // Bounded poll instead of fixed sleep — abort if process won't exit
+    let exited = await waitForExit(record.pid, 10_000);
+    if (!exited) {
+      process.stderr.write(`[codex:steer] pid=${record.pid} did not exit after 10s, escalating to SIGKILL\n`);
+      try { process.kill(record.pid, "SIGKILL"); } catch { /* ok */ }
+      exited = await waitForExit(record.pid, 3_000);
+    }
+    if (!exited) {
+      // Refuse to start resume — the old bridge may still be writing state
+      // or holding the codex session, and starting a parallel resume would
+      // collide with whatever the surviving process is doing.
+      die(`steer aborted: pid=${record.pid} survived SIGTERM+SIGKILL within 13s. Investigate manually.`);
+    }
+  } else if (record && record.status !== "running") {
+    process.stderr.write(`[codex:steer] record is ${record.status}, resuming directly without kill\n`);
+  }
+
+  // Inherit cwd from the original session record so resume runs in the same
+  // working directory context. Caller can override with --cd.
+  const resumeCwd = opts.cd || record?.cwd || null;
+  const result = await runCodexResume(prompt, {
+    sessionId: opts.sessionId,
+    model: resolveModel(opts.model),
+    schemaName: null,
+    cd: resumeCwd,
+  });
+  output(result);
+}
+
+async function cmdTail(argv) {
+  const sessionId = argv[0];
+  if (!sessionId) die("tail requires <session_id>");
+  const eventsFile = registry.eventsPath(sessionId);
+  if (!fs.existsSync(eventsFile)) die(`no events for ${sessionId}`);
+  const tail = spawn("tail", ["-f", "-n", "+1", eventsFile], { stdio: "inherit" });
+  process.on("SIGINT", () => tail.kill("SIGTERM"));
+  // Wait for tail to exit (only happens on SIGINT or file deletion)
+  await new Promise((resolve) => tail.on("close", resolve));
+}
+
 // ── Argument parsing ─────────────────────────────────────────────────
 
 function parseOpts(argv) {
@@ -1045,6 +1280,11 @@ async function main() {
       "  codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]",
       "  codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--no-schema]",
       "  codex-bridge.mjs enrich     --prompt <text|@file> [--model <m>] [--effort <e>] [--cd <dir>]",
+      "  codex-bridge.mjs ps",
+      "  codex-bridge.mjs status     <session_id>",
+      "  codex-bridge.mjs kill       <session_id>",
+      "  codex-bridge.mjs steer      --session-id <id> --prompt <text|@file>",
+      "  codex-bridge.mjs tail       <session_id>",
       "",
       "Prompt: literal text or @/path/to/file.md to read from file",
       "",
@@ -1057,6 +1297,14 @@ async function main() {
       "Worktree + auto-commit (implement only):",
       "  --worktree <branch>     Create git worktree, Codex works in isolation",
       "  --auto-commit [msg]     Auto-commit after successful DONE status",
+      "",
+      "Session tracking:",
+      "  ps                      List active and recent bridge sessions (JSON)",
+      "  status <session_id>     Inspect one session's state record",
+      "  kill <session_id>       SIGTERM the bridge process; marks status=killed",
+      "  steer --session-id <id> --prompt <p>   SIGTERM running bridge, resume with new prompt",
+      "  tail <session_id>                       Stream JSONL events live (Ctrl-C to stop)",
+      "  State at: ~/.claude/state/sspower/codex/",
     ].join("\n"));
     process.exit(0);
   }
@@ -1082,6 +1330,21 @@ async function main() {
       break;
     case "enrich":
       await cmdEnrich(argv);
+      break;
+    case "ps":
+      await cmdPs();
+      break;
+    case "status":
+      await cmdStatus(argv);
+      break;
+    case "kill":
+      await cmdKill(argv);
+      break;
+    case "steer":
+      await cmdSteer(argv);
+      break;
+    case "tail":
+      await cmdTail(argv);
       break;
     default:
       die(`unknown subcommand: ${subcommand}. Run with --help for usage.`);
