@@ -39,8 +39,14 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
 4. **Single-shell dispatch + poll + wait** (one Bash call — variables persist within this script only):
 
    ```bash
-   STDOUT_FILE="/tmp/codex-rescue-$$-$(date +%s).out"
-   PROGRESS_FILE="/tmp/codex-rescue-$$-$(date +%s).progress"
+   # Use mktemp + 0600 perms — Codex output may contain code, paths,
+   # or repo internals. Predictable /tmp paths are world-readable.
+   TMPROOT=$(mktemp -d -t codex-rescue.XXXXXX)
+   chmod 700 "$TMPROOT"
+   STDOUT_FILE="$TMPROOT/stdout.log"
+   PROGRESS_FILE="$TMPROOT/progress.log"
+   : > "$STDOUT_FILE" && chmod 600 "$STDOUT_FILE"
+   : > "$PROGRESS_FILE" && chmod 600 "$PROGRESS_FILE"
 
    node "$BRIDGE" {subcommand} \
      --prompt @"${PROMPT_FILE}" \
@@ -66,6 +72,8 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
    EXIT=$?
    echo "[progress log] $PROGRESS_FILE"
    cat "$STDOUT_FILE"
+   # Cleanup the secured temp dir; comment out if you want to inspect logs
+   rm -rf "$TMPROOT"
    exit $EXIT
    ```
 

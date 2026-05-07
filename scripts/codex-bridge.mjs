@@ -560,10 +560,20 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
       }
     }, 30_000);
 
-    // Registry: write initial state when session ID first emitted
+    // Registry: write initial state when session ID first emitted.
+    // Registry is observability — failures must NEVER crash the bridge.
     let stateRecord = null;
+    let registryDisabled = false;
+    const safeRegistryCall = (fn, kind) => {
+      if (registryDisabled) return;
+      try { fn(); } catch (e) {
+        registryDisabled = true; // disable further attempts this run
+        logEvent("warn", `registry.${kind}`, { msg: e.message?.slice(0, 200) });
+        process.stderr.write(`[codex:registry] disabled after ${kind} error: ${e.message}\n`);
+      }
+    };
     const initState = (sessionId) => {
-      if (stateRecord) return;
+      if (stateRecord || registryDisabled) return;
       stateRecord = {
         session_id: sessionId,
         pid: child.pid,
@@ -580,19 +590,21 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
         duration_ms: 0,
         exit_code: null,
       };
-      registry.writeState(stateRecord);
+      safeRegistryCall(() => registry.writeState(stateRecord), "init");
     };
 
     const updateState = (kind, line, event) => {
-      if (!stateRecord) return;
+      if (!stateRecord || registryDisabled) return;
       stateRecord.updated_at = new Date().toISOString();
       stateRecord.phase = kind;
       stateRecord.last_kind = kind;
       if (line) stateRecord.last_event = line;
       stateRecord.trace = { ...trace };
       stateRecord.duration_ms = Date.now() - startedAt;
-      registry.writeState(stateRecord);
-      registry.appendEvent(stateRecord.session_id, event);
+      safeRegistryCall(() => {
+        registry.writeState(stateRecord);
+        registry.appendEvent(stateRecord.session_id, event);
+      }, "update");
     };
 
     child.stderr.on("data", (chunk) => {
@@ -667,16 +679,19 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
       if (stateRecord) {
         // Race guard: if another process (steer) re-initialized this session,
         // or already marked it killed, do not clobber.
-        const current = registry.readState(stateRecord.session_id);
-        const safeToWrite = !current || (current.pid === stateRecord.pid && current.status !== "killed");
-        if (safeToWrite) {
-          stateRecord.status = code === 0 ? "done" : "error";
-          stateRecord.exit_code = code;
-          stateRecord.updated_at = new Date().toISOString();
-          stateRecord.duration_ms = Date.now() - startedAt;
-          registry.writeState(stateRecord);
-        }
-        registry.sweep();
+        // Wrap in safeRegistryCall — disk failures here must not crash close handler.
+        safeRegistryCall(() => {
+          const current = registry.readState(stateRecord.session_id);
+          const safeToWrite = !current || (current.pid === stateRecord.pid && current.status !== "killed");
+          if (safeToWrite) {
+            stateRecord.status = code === 0 ? "done" : "error";
+            stateRecord.exit_code = code;
+            stateRecord.updated_at = new Date().toISOString();
+            stateRecord.duration_ms = Date.now() - startedAt;
+            registry.writeState(stateRecord);
+          }
+          registry.sweep();
+        }, "close");
       }
 
       resolve({

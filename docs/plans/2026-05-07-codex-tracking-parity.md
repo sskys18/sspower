@@ -4,6 +4,8 @@
 **Owner:** sspower
 **Goal:** ~80% parity between Codex bridge dispatch and Claude Code's native subagent tracking. Surface live progress, fake a TaskList registry, enable mid-flight steering via existing `resume` plumbing.
 
+**Implementation status:** Shipped. The bridge_pid field, `isLiveRunning` defense-in-depth, SIGKILL escalation on steer, secure tempdirs in agent recipe, registry-failure isolation (`safeRegistryCall`), and absolute `--cd` normalization were all added during iterative Codex review (3 rounds). Original task bodies below describe the pre-review design; see Risks + Deferred sections for evolution notes.
+
 ## Context
 
 - Bridge: `scripts/codex-bridge.mjs` (1095 LOC, calls `codex exec --json`)

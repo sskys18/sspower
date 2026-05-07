@@ -63,14 +63,18 @@ Each session ID is unique to one bridge process. Multiple bridges can run concur
 
 ```bash
 BRIDGE=$(find ~/.claude/plugins -name codex-bridge.mjs -path "*/sspower/*" | head -1)
-PROMPT_FILE=$(mktemp -d)/p.md
-chmod 600 "$PROMPT_FILE"
+TMPROOT=$(mktemp -d -t codex-track.XXXXXX)
+chmod 700 "$TMPROOT"
+PROMPT_FILE="$TMPROOT/p.md"
+STDOUT_FILE="$TMPROOT/cx.out"
+: > "$PROMPT_FILE" && chmod 600 "$PROMPT_FILE"
+: > "$STDOUT_FILE" && chmod 600 "$STDOUT_FILE"
 cat > "$PROMPT_FILE" <<'EOF'
 ... your prompt ...
 EOF
 
-# Background dispatch
-node "$BRIDGE" rescue --prompt @"$PROMPT_FILE" > /tmp/cx.out 2>&1 &
+# Background dispatch — STDOUT_FILE is 0600 in a 0700 dir; cleaned up at end
+node "$BRIDGE" rescue --prompt @"$PROMPT_FILE" > "$STDOUT_FILE" 2>&1 &
 WRAPPER_PID=$!
 
 # Poll loop (max 5 polls, 8s each).
@@ -87,7 +91,8 @@ for i in 1 2 3 4 5; do
 done
 
 wait "$WRAPPER_PID"
-cat /tmp/cx.out
+cat "$STDOUT_FILE"
+rm -rf "$TMPROOT"
 ```
 
 ## Steer mid-flight
