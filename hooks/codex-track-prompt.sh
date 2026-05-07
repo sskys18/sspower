@@ -38,9 +38,11 @@ for file in "$STATE_DIR"/*.json; do
   # One jq call per file. Schema: status, subcommand, session_id, phase,
   # started_at, updated_at, trace.{tool_calls,edits,execs,errors,tokens}, pid, bridge_pid.
   # Emits tab-separated fields including pid/bridge_pid for liveness check below.
+  # Bridge writes ISO timestamps with millisecond precision (e.g. "...T03:14:55.000Z").
+  # jq's fromdateiso8601 only accepts seconds precision, so strip milliseconds first.
   RAW=$(jq -r --argjson cutoff "$CUTOFF_EPOCH" '
     . as $r
-    | (try ($r.updated_at | fromdateiso8601) catch 0) as $updated
+    | (try ($r.updated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) catch 0) as $updated
     | if ($r.status == "running") or ($r.status as $s | ["done","error","killed"] | index($s) and $updated >= $cutoff) then
         [
           ($r.status // "?"),
@@ -77,10 +79,13 @@ for file in "$STATE_DIR"/*.json; do
     if [ "$BRIDGE_PID" -gt 1 ]; then
       kill -0 "$BRIDGE_PID" 2>/dev/null || LIVE=0
     else
-      # Legacy record: age window proxy + child pid liveness
+      # Legacy record: age window proxy + child pid liveness.
+      # Use grouping (no subshell) so LIVE=0 propagates to outer scope.
       AGE=$((NOW_EPOCH - UPDATED))
       [ "$AGE" -gt 300 ] && LIVE=0
-      [ "$LIVE" = "1" ] && [ "$PID" -gt 1 ] && (kill -0 "$PID" 2>/dev/null || LIVE=0)
+      if [ "$LIVE" = "1" ] && [ "$PID" -gt 1 ]; then
+        kill -0 "$PID" 2>/dev/null || LIVE=0
+      fi
     fi
     if [ "$LIVE" = "0" ]; then
       # Old zombies clutter — only surface stale if recently updated (likely just crashed).
