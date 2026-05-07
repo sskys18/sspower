@@ -98,7 +98,7 @@ When you want to redirect a running session:
 node "$BRIDGE" steer --session-id <id> --prompt "new instruction"
 ```
 
-This SIGTERMs the running bridge, waits 2s, then resumes the same Codex session with the new prompt. The session ID stays valid because Codex persists it (when the original run was non-ephemeral — `implement` and `rescue --write`). For ephemeral runs (`rescue` without `--write`, `review`, `spec-review`), Codex does not persist a rollout and steer will fail with "no rollout found for thread id".
+This SIGTERMs the Codex child process recorded in `pid` (NOT the node bridge wrapper), polls for exit up to 10 seconds, escalates to SIGKILL if needed and waits another 3 seconds. If the child still survives, `steer` aborts via `die()` rather than risking a parallel resume. Once the old child is verified gone, the same Codex session is resumed with the new prompt. The session ID stays valid because Codex persists it (when the original run was non-ephemeral — `implement` and `rescue --write`). For ephemeral runs (`rescue` without `--write`, `review`, `spec-review`), Codex does not persist a rollout and steer will fail with "no rollout found for thread id".
 
 ## When to use which command
 
@@ -114,4 +114,5 @@ This SIGTERMs the running bridge, waits 2s, then resumes the same Codex session 
 - **Rollout flush timing**: short-lived sessions (where Codex completes in <2s) may not produce a rollout artifact, which means `steer` cannot resume them. Use a longer-running prompt or rely on `kill` instead.
 - **Two pids per record**: `pid` is Codex's child (signal target for `kill`/`steer`); `bridge_pid` is the node wrapper (use this to correlate "I just dispatched bridge — which session is mine?"). Always match dispatches by `bridge_pid`, not by `pid`.
 - **`kill` and `steer` refuse to signal stale records**: if `markStale` flips the status to `stale`/`done`/`error`/`killed`, the bridge will not SIGTERM the recorded pid (PID may have been reused by another OS process). For stale records, manually verify with `ps -p <pid>` then `kill <pid>` directly if needed.
-- **`steer` polls for child exit** up to 10s after SIGTERM, escalating to SIGKILL if the codex child ignores the term signal. The resume only starts after the child is confirmed gone.
+- **`steer` polls for child exit** up to 10s after SIGTERM, escalating to SIGKILL with another 3s wait if the codex child ignores the term signal. If the process survives both signals (13s total), steer aborts rather than starting a parallel resume.
+- **`ps`/`status` use weaker liveness check** than `kill`/`steer`. The signal paths apply defense-in-depth (record age <5min, bridge_pid alive, child pid alive); the listing paths only check age + child pid. Result: a stale record where the OS has reused the codex child pid may show `running` in `ps`, but `kill`/`steer` will refuse to signal it. (Followup: align `markStale` with `isLiveRunning`.)

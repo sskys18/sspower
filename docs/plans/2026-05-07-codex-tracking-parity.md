@@ -885,3 +885,5 @@ This SIGTERMs the running bridge and resumes the same Codex session with the new
 - Web UI for session inspection
 - Auto-restart on crash
 - Per-event JSONL rotation (only needed for very long sessions)
+- Align `markStale` with `isLiveRunning` (codex review round-3 advisory) — `ps`/`status` may show `running` for records where child pid was reused; signal paths already refuse correctly. Either tighten `markStale` or add separate `signalable` field
+- More integration tests covering kill/steer/tail/stale/concurrent (codex review round-1 advisory) — needs fake codex binary harness for deterministic timing
