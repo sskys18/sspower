@@ -243,16 +243,33 @@ fi
 
 # ---------- Run codex on cache miss ----------
 if [ -z "$RESULT" ]; then
-  PROMPT_FILE=$(mktemp -t sspower-autoreview-prompt-XXXXXX)
-  cat > "$PROMPT_FILE" <<EOF
+  # ---------- Round-aware effort tier (main review) ----------
+  if [ -n "${SSPOWER_REVIEW_EFFORT:-}" ]; then
+    ROUND_EFFORT="$SSPOWER_REVIEW_EFFORT"
+  elif [ "$BRANCH_TIER" = "strict" ]; then
+    ROUND_EFFORT="xhigh"
+  else
+    case "$ROUNDS" in
+      0) ROUND_EFFORT="low" ;;
+      1) ROUND_EFFORT="high" ;;
+      *) ROUND_EFFORT="xhigh" ;;
+    esac
+  fi
+  log_event info hook.auto-review kind=tier_chosen branch="$BRANCH" tier="$BRANCH_TIER" round="$((ROUNDS+1))/$ROUNDS_CAP" effort="$ROUND_EFFORT"
+
+  # Main review prompt (general bugs/regressions/docs drift)
+  MAIN_PROMPT_FILE=$(mktemp -t sspower-autoreview-main-XXXXXX)
+  cat > "$MAIN_PROMPT_FILE" <<EOF
 Review the branch diff at $DIFF_FILE before push. Flag bugs, regressions,
-missing tests, and security issues. Also flag docs drift: code changes
-that contradict CLAUDE.md, README, or docs/ in the repo root (${REPO_ROOT:-cwd})
-without updating those files. Read the repo to verify; do not rely on the
-diff alone.
+missing tests. Also flag docs drift: code changes that contradict CLAUDE.md,
+README, or docs/ in the repo root (${REPO_ROOT:-cwd}) without updating those
+files. Read the repo to verify; do not rely on the diff alone.
+
+Do NOT focus on security here — a separate security pass runs in parallel.
+Avoid duplicating security findings.
 
 For each issue set severity:
-  - "blocking" only if correctness, security, or data-loss.
+  - "blocking" only if correctness or data-loss.
   - "advisory" for style, naming, doc-only nits, minor refactors.
 
 For mechanical fixes (typos, missing imports, simple refactors), include
@@ -268,50 +285,134 @@ Verdicts:
 Do NOT propose stylistic refactors or unrequested features beyond what's
 necessary to fix the diff.
 EOF
-  # ---------- Round-aware effort tier ----------
-  # tiered branches: round 1=low, 2=high, 3=xhigh
-  # strict branches (main/etc): always xhigh
-  # Override entirely via SSPOWER_REVIEW_EFFORT
-  if [ -n "${SSPOWER_REVIEW_EFFORT:-}" ]; then
-    ROUND_EFFORT="$SSPOWER_REVIEW_EFFORT"
-  elif [ "$BRANCH_TIER" = "strict" ]; then
-    ROUND_EFFORT="xhigh"
-  else
-    case "$ROUNDS" in
-      0) ROUND_EFFORT="low" ;;
-      1) ROUND_EFFORT="high" ;;
-      *) ROUND_EFFORT="xhigh" ;;
-    esac
+
+  # Security review prompt (senior security engineer perspective)
+  SEC_PROMPT_FILE=$(mktemp -t sspower-autoreview-sec-XXXXXX)
+  cat > "$SEC_PROMPT_FILE" <<EOF
+Act as a senior security engineer. Review the branch diff at $DIFF_FILE for
+security vulnerabilities and defensive gaps. Read the repo at
+${REPO_ROOT:-cwd} to verify; do not rely on the diff alone.
+
+Specifically look for:
+  - Authentication/authorization bugs (missing checks, broken access control,
+    IDOR, privilege escalation, session/token mishandling)
+  - Input validation: injection (SQL, NoSQL, command, LDAP, XPath), XSS,
+    CSRF, SSRF, path traversal, open redirect, HTTP header injection
+  - Secrets exposure: hardcoded credentials, tokens in logs/errors/git,
+    insecure storage, env var leaks
+  - Crypto misuse: weak algorithms, hardcoded keys/IVs, insecure random,
+    bad signature verification, padding oracles, missing HMAC
+  - Race conditions, TOCTOU, insecure deserialization
+  - Insecure defaults (open ports, debug enabled, permissive CORS, weak TLS)
+  - Dependency risks: known-vulnerable libs introduced/upgraded
+  - Logging/monitoring gaps for security events
+  - Insufficient rate limiting, DoS amplification
+
+For each issue set severity:
+  - "blocking" for any exploitable vuln, data exposure, or auth bypass.
+  - "advisory" for hardening recommendations and defense-in-depth.
+
+For mechanical fixes (input sanitization stub, missing auth check, secret
+removal), include 'suggested_patch' as unified diff. For design issues set
+'suggested_patch' to null.
+
+Verdicts:
+  - "approve"                  : no security issues found.
+  - "approve-with-followups"   : only advisory hardening notes; ship + follow up.
+  - "needs-attention"          : at least one blocking security issue.
+
+Be precise. Cite file:line. Avoid speculative threats not realized in this diff.
+EOF
+
+  MAIN_BRIDGE_ARGS=(review --prompt "@$MAIN_PROMPT_FILE" --effort "$ROUND_EFFORT")
+  [ -n "$REPO_ROOT" ] && MAIN_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
+
+  SEC_EFFORT="${SSPOWER_SECURITY_EFFORT:-xhigh}"
+  SECURITY_ENABLED=1
+  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-on}" = "off" ]; then
+    SECURITY_ENABLED=0
   fi
-  log_event info hook.auto-review kind=tier_chosen branch="$BRANCH" tier="$BRANCH_TIER" round="$((ROUNDS+1))/$ROUNDS_CAP" effort="$ROUND_EFFORT"
+  SEC_BRIDGE_ARGS=(review --prompt "@$SEC_PROMPT_FILE" --effort "$SEC_EFFORT")
+  [ -n "$REPO_ROOT" ] && SEC_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
-  BRIDGE_ARGS=(review --prompt "@$PROMPT_FILE" --effort "$ROUND_EFFORT")
-  [ -n "$REPO_ROOT" ] && BRIDGE_ARGS+=(--cd "$REPO_ROOT")
-
-  # Tier-aware timeout: low effort = fast, xhigh = patient
+  # Tier-aware timeout: max(main, security) since they run in parallel
   if [ -n "${SSPOWER_REVIEW_TIMEOUT:-}" ]; then
     REVIEW_TIMEOUT="$SSPOWER_REVIEW_TIMEOUT"
   else
     case "$ROUND_EFFORT" in
-      low|minimal) REVIEW_TIMEOUT=60 ;;
-      medium)      REVIEW_TIMEOUT=90 ;;
-      high)        REVIEW_TIMEOUT=120 ;;
-      xhigh)       REVIEW_TIMEOUT=180 ;;
-      *)           REVIEW_TIMEOUT=90 ;;
+      low|minimal) MAIN_TIMEOUT=60 ;;
+      medium)      MAIN_TIMEOUT=90 ;;
+      high)        MAIN_TIMEOUT=120 ;;
+      xhigh)       MAIN_TIMEOUT=180 ;;
+      *)           MAIN_TIMEOUT=90 ;;
     esac
+    case "$SEC_EFFORT" in
+      low|minimal) SEC_TIMEOUT=60 ;;
+      medium)      SEC_TIMEOUT=90 ;;
+      high)        SEC_TIMEOUT=120 ;;
+      xhigh)       SEC_TIMEOUT=180 ;;
+      *)           SEC_TIMEOUT=180 ;;
+    esac
+    REVIEW_TIMEOUT=$(( MAIN_TIMEOUT > SEC_TIMEOUT ? MAIN_TIMEOUT : SEC_TIMEOUT ))
   fi
-  if command -v timeout &>/dev/null; then
-    RESULT=$(timeout "$REVIEW_TIMEOUT" node "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>/dev/null || true)
-  else
-    RESULT=$(node "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>/dev/null || true)
-  fi
-  rm -f "$PROMPT_FILE"
 
-  if [ -z "$RESULT" ]; then
-    log_event warn hook.auto-review kind=codex_timeout_allow timeout="${REVIEW_TIMEOUT}s" branch="$BRANCH"
-    echo "[auto-review] WARNING: codex review failed/timed out (${REVIEW_TIMEOUT}s); allowing push without review." >&2
+  # ---------- Spawn both reviews in parallel ----------
+  MAIN_RESULT_FILE=$(mktemp -t sspower-autoreview-mainresult-XXXXXX)
+  SEC_RESULT_FILE=$(mktemp -t sspower-autoreview-secresult-XXXXXX)
+
+  log_event info hook.auto-review kind=parallel_review_start branch="$BRANCH" main_effort="$ROUND_EFFORT" sec_effort="$SEC_EFFORT" timeout="${REVIEW_TIMEOUT}s"
+
+  if command -v timeout &>/dev/null; then
+    timeout "$MAIN_TIMEOUT" node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null &
+    MAIN_PID=$!
+    if [ "$SECURITY_ENABLED" = "1" ]; then
+      timeout "$SEC_TIMEOUT" node "$BRIDGE" "${SEC_BRIDGE_ARGS[@]}" > "$SEC_RESULT_FILE" 2>/dev/null &
+      SEC_PID=$!
+    fi
+  else
+    node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null &
+    MAIN_PID=$!
+    if [ "$SECURITY_ENABLED" = "1" ]; then
+      node "$BRIDGE" "${SEC_BRIDGE_ARGS[@]}" > "$SEC_RESULT_FILE" 2>/dev/null &
+      SEC_PID=$!
+    fi
+  fi
+
+  wait "$MAIN_PID" 2>/dev/null || true
+  [ "$SECURITY_ENABLED" = "1" ] && wait "$SEC_PID" 2>/dev/null || true
+
+  MAIN_RAW=$(cat "$MAIN_RESULT_FILE" 2>/dev/null)
+  SEC_RAW=$(cat "$SEC_RESULT_FILE" 2>/dev/null)
+  rm -f "$MAIN_PROMPT_FILE" "$SEC_PROMPT_FILE" "$MAIN_RESULT_FILE" "$SEC_RESULT_FILE"
+
+  if [ -z "$MAIN_RAW" ] && [ -z "$SEC_RAW" ]; then
+    log_event warn hook.auto-review kind=codex_timeout_allow timeout="${REVIEW_TIMEOUT}s" branch="$BRANCH" reason="both_failed"
+    echo "[auto-review] WARNING: both reviews failed/timed out (${REVIEW_TIMEOUT}s); allowing push without review." >&2
     exit 0
   fi
+
+  # If one failed, treat that side as approve to not block on infra error
+  MAIN_VERDICT=$(echo "$MAIN_RAW" | jq -r '.verdict // "approve"' 2>/dev/null || echo "approve")
+  SEC_VERDICT=$(echo "$SEC_RAW"  | jq -r '.verdict // "approve"' 2>/dev/null || echo "approve")
+
+  # Combined verdict: needs-attention if either; approve-with-followups if either has followups; approve only if both clean
+  if [ "$MAIN_VERDICT" = "needs-attention" ] || [ "$SEC_VERDICT" = "needs-attention" ]; then
+    COMBINED_VERDICT="needs-attention"
+  elif [ "$MAIN_VERDICT" = "approve-with-followups" ] || [ "$SEC_VERDICT" = "approve-with-followups" ]; then
+    COMBINED_VERDICT="approve-with-followups"
+  else
+    COMBINED_VERDICT="approve"
+  fi
+
+  # Merge issue lists; tag each by source
+  MAIN_ISSUES=$(echo "$MAIN_RAW" | jq -c '[(.issues // [])[] | . + {_source:"main"}]' 2>/dev/null || echo "[]")
+  SEC_ISSUES=$(echo "$SEC_RAW"  | jq -c '[(.issues // [])[] | . + {_source:"security"}]' 2>/dev/null || echo "[]")
+  COMBINED_ISSUES=$(echo "${MAIN_ISSUES:-[]} ${SEC_ISSUES:-[]}" | jq -s 'add // []' 2>/dev/null || echo "[]")
+
+  RESULT=$(jq -n --arg v "$COMBINED_VERDICT" --argjson i "$COMBINED_ISSUES" --argjson m "${MAIN_RAW:-{}}" --argjson s "${SEC_RAW:-{}}" '{verdict:$v, issues:$i, _main:$m, _security:$s}' 2>/dev/null)
+
+  log_event info hook.auto-review kind=parallel_review_done branch="$BRANCH" main_verdict="$MAIN_VERDICT" sec_verdict="$SEC_VERDICT" combined="$COMBINED_VERDICT"
+
   echo "$RESULT" > "$CACHE_FILE"
 fi
 
