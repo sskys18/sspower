@@ -334,8 +334,11 @@ function runCodexResume(prompt, options = {}) {
   const promptFile = secureTmpFile("prompt", finalPrompt);
   args.push("-");
 
+  // Codex `exec resume` doesn't accept -C, so spawn cwd is the only
+  // mechanism. Normalize to absolute path for the same reason runCodexExec does.
+  const cdAbs = cd ? path.resolve(cd) : null;
   // Pass schemaName so parser knows to attempt structured extraction
-  return _spawnAndCapture(bin, args, promptFile, resultFile, schemaName ? schemaPath(schemaName) : null, cd);
+  return _spawnAndCapture(bin, args, promptFile, resultFile, schemaName ? schemaPath(schemaName) : null, cdAbs);
 }
 
 /**
@@ -1043,34 +1046,33 @@ async function cmdStatus(argv) {
  * Validate that a record represents a still-live, running session before
  * we send signals based on its pid. Defends against PID reuse on stale records.
  *
- * The pid in record.pid belongs to the codex child process. Codex is
- * supervised by the node bridge wrapper (record.bridge_pid). If the wrapper
- * is dead, the recorded codex pid is unreliable — the OS may have reused it
- * for an unrelated process. We require BOTH:
- *   1. record.bridge_pid alive (if recorded — older records may lack it)
- *   2. record.updated_at recent (within stale window) — staleness alone
- *      indicates the process probably exited and the pid was reused
- *   3. record.pid alive (kill -0 succeeds)
+ * Three cases by record completeness:
+ *   A. bridge_pid recorded + alive: trust child pid liveness directly.
+ *      Bridge wrapper supervises Codex; while wrapper is alive, the
+ *      recorded child pid is still ours (no OS reuse possible because
+ *      the parent hasn't released it). Long silent sessions (no events
+ *      for >5min) are correctly identified as live.
+ *   B. bridge_pid recorded + dead: refuse. Codex child is orphaned or
+ *      its pid was reused.
+ *   C. bridge_pid not recorded (legacy records pre-bridge_pid): fall
+ *      back to age window + pid liveness. Less strict but best we can
+ *      do without supervision metadata.
  */
 function isLiveRunning(record) {
   if (!record || record.status !== "running") return false;
   if (!Number.isInteger(record.pid) || record.pid <= 1) return false;
 
-  // Stale-by-age check: if updated_at is older than the stale window,
-  // the process likely exited unnoticed (e.g. kill -9, host crash).
-  // Any pid that survives this window is almost certainly reused.
+  if (Number.isInteger(record.bridge_pid) && record.bridge_pid > 1) {
+    // Case A/B: supervised record. Wrapper liveness is authoritative.
+    if (!registry.pidAlive(record.bridge_pid)) return false;
+    return registry.pidAlive(record.pid);
+  }
+
+  // Case C: legacy unsupervised record. Use age window as proxy for
+  // pid-reuse defense, then check pid liveness.
   const STALE_WINDOW_MS = 5 * 60 * 1000;
   const ageMs = Date.now() - new Date(record.updated_at).getTime();
   if (ageMs > STALE_WINDOW_MS) return false;
-
-  // Bridge wrapper liveness: if recorded and dead, codex child is orphaned
-  // or the recorded child pid was reused. Older records (pre bridge_pid
-  // field) skip this check — they only get the age + child-pid liveness gate.
-  if (Number.isInteger(record.bridge_pid) && record.bridge_pid > 1) {
-    if (!registry.pidAlive(record.bridge_pid)) return false;
-  }
-
-  // Final liveness: the recorded codex pid must still exist.
   return registry.pidAlive(record.pid);
 }
 
@@ -1124,6 +1126,14 @@ async function cmdSteer(argv) {
   if (!opts.sessionId) die("steer requires --session-id");
   const prompt = resolvePrompt(opts.prompt);
   const record = registry.readState(opts.sessionId);
+
+  // Refuse to resume a record that claims running but fails liveness checks.
+  // Without verified termination, a parallel resume could collide with the
+  // surviving original process or signal a reused PID.
+  if (record && record.status === "running" && !isLiveRunning(record)) {
+    die(`steer aborted: record session=${opts.sessionId} status=running but liveness check failed (bridge_pid or child pid unreachable). PID may be reused or wrapper crashed. Run "kill <id>" to clear, then retry.`);
+  }
+
   if (record && isLiveRunning(record)) {
     process.stderr.write(`[codex:steer] killing pid=${record.pid} before resume\n`);
     // Mark killed BEFORE signal so the dying bridge's close handler skips its own write (race guard)
@@ -1147,11 +1157,15 @@ async function cmdSteer(argv) {
   } else if (record && record.status !== "running") {
     process.stderr.write(`[codex:steer] record is ${record.status}, resuming directly without kill\n`);
   }
+
+  // Inherit cwd from the original session record so resume runs in the same
+  // working directory context. Caller can override with --cd.
+  const resumeCwd = opts.cd || record?.cwd || null;
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,
     model: resolveModel(opts.model),
     schemaName: null,
-    cd: opts.cd,
+    cd: resumeCwd,
   });
   output(result);
 }

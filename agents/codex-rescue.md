@@ -70,7 +70,9 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
 
    wait "$BRIDGE_PID"
    EXIT=$?
-   echo "[progress log] $PROGRESS_FILE"
+   # Progress log location goes to stderr so stdout stays verbatim from Codex.
+   echo "[progress log] $PROGRESS_FILE" >&2
+   # Bridge stdout — verbatim, no commentary, no prepended headers.
    cat "$STDOUT_FILE"
    # Cleanup the secured temp dir; comment out if you want to inspect logs
    rm -rf "$TMPROOT"
