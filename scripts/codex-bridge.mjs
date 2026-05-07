@@ -266,8 +266,50 @@ function createWorktree(repoDir, branch) {
  * Auto-commit all changes in a directory after successful Codex work.
  * Returns the commit SHA or null if nothing to commit.
  */
-function autoCommit(dir, message) {
+function autoCommit(dir, message, opts = {}) {
   try {
+    const { baseHead = null } = opts;
+
+    // If a pre-codex HEAD snapshot was supplied, refuse to commit when it
+    // changed: codex (running with workspace-write + writable_roots on the
+    // worktree-private gitdir) could have rewritten HEAD/ORIG_HEAD to point
+    // at an attacker-controlled commit. A subsequent host-side commit would
+    // then attach to that tainted parent. Force human review instead.
+    if (baseHead) {
+      const currHead = execFileSync("git", ["-C", dir, "rev-parse", "HEAD"], {
+        encoding: "utf8",
+      }).trim();
+      if (currHead !== baseHead) {
+        logEvent("warn", "bridge.auto_commit", {
+          kind: "head_changed", dir, baseHead, currHead,
+        });
+        process.stderr.write(`[codex:auto-commit] Refused: HEAD changed during codex run (${baseHead.slice(0,8)} -> ${currHead.slice(0,8)}). Inspect manually.\n`);
+        return null;
+      }
+
+      // Reject planted commit-state files. Codex with writable_roots on the
+      // worktree-private gitdir could create MERGE_HEAD / CHERRY_PICK_HEAD
+      // / REVERT_HEAD / REBASE_HEAD pointing at an attacker-controlled
+      // commit; the next `git commit` would attach as a merge/cherry-pick
+      // with that tainted parent. None of these should exist for a clean
+      // single-parent autoCommit.
+      for (const ref of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "REBASE_HEAD"]) {
+        try {
+          execFileSync("git", ["-C", dir, "rev-parse", "--verify", "-q", ref], {
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          // Did not throw → file exists → abort.
+          logEvent("warn", "bridge.auto_commit", {
+            kind: "state_file_planted", dir, ref,
+          });
+          process.stderr.write(`[codex:auto-commit] Refused: ${ref} present (would create unintended merge/cherry-pick parent). Inspect manually.\n`);
+          return null;
+        } catch {
+          // Throws when ref doesn't exist — desired state.
+        }
+      }
+    }
+
     // Stage all changes
     execFileSync("git", ["-C", dir, "add", "-A"], { stdio: "ignore" });
 
@@ -329,6 +371,7 @@ function runCodexExec(prompt, options = {}) {
   // apply, resolving as "<cd>/<cd>" when the caller passes a relative path.
   const cdAbs = cd ? path.resolve(cd) : null;
   if (cdAbs) args.push("-C", cdAbs);
+
 
   const promptFile = secureTmpFile("prompt", prompt);
   args.push("-");
@@ -918,6 +961,17 @@ async function cmdImplement(argv) {
     process.stderr.write(`[codex:worktree] Created ${worktree.worktreePath} on branch ${worktree.branch}\n`);
   }
 
+  // Snapshot HEAD before codex runs. autoCommit refuses if HEAD changed
+  // during the run, blocking taint via writable_roots → worktree gitdir.
+  let baseHead = null;
+  try {
+    baseHead = execFileSync("git", ["-C", workDir || ".", "rev-parse", "HEAD"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // not a git repo or no commits yet — skip snapshot, autoCommit acts as before
+  }
+
   const result = await runCodexExec(prompt, {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
@@ -932,7 +986,7 @@ async function cmdImplement(argv) {
     const commitMsg = opts.autoCommit === true
       ? `codex: ${result.structured?.summary?.slice(0, 72) || "implement task"}`
       : opts.autoCommit;
-    const sha = autoCommit(workDir || ".", commitMsg);
+    const sha = autoCommit(workDir || ".", commitMsg, { baseHead });
     if (sha) {
       process.stderr.write(`[codex:auto-commit] ${sha.slice(0, 8)} ${commitMsg}\n`);
       if (result.structured) {

@@ -392,11 +392,31 @@ EOF
   fi
 
   # If one failed, treat that side as approve to not block on infra error
-  MAIN_VERDICT=$(echo "$MAIN_RAW" | jq -r '.verdict // "approve"' 2>/dev/null || echo "approve")
-  SEC_VERDICT=$(echo "$SEC_RAW"  | jq -r '.verdict // "approve"' 2>/dev/null || echo "approve")
+  # Default the MAIN verdict to "unknown" (denies) on parse failure: a
+  # garbled main response must NOT slip through as approve. The SECURITY
+  # verdict, in contrast, defaults to "approve" when the reviewer was
+  # disabled (SEC_RAW empty by design); only treat empty as "unknown" if
+  # the security reviewer was supposed to run.
+  MAIN_VERDICT=$(echo "$MAIN_RAW" | jq -r '.verdict // "unknown"' 2>/dev/null || echo "unknown")
+  if [ "$SECURITY_ENABLED" = "1" ]; then
+    SEC_VERDICT=$(echo "$SEC_RAW" | jq -r '.verdict // "unknown"' 2>/dev/null || echo "unknown")
+  else
+    SEC_VERDICT="approve"
+  fi
 
-  # Combined verdict: needs-attention if either; approve-with-followups if either has followups; approve only if both clean
-  if [ "$MAIN_VERDICT" = "needs-attention" ] || [ "$SEC_VERDICT" = "needs-attention" ]; then
+  case "$MAIN_VERDICT" in
+    approve|approve-with-followups|needs-attention) ;;
+    *) MAIN_VERDICT="unknown" ;;
+  esac
+  case "$SEC_VERDICT" in
+    approve|approve-with-followups|needs-attention) ;;
+    *) SEC_VERDICT="unknown" ;;
+  esac
+
+  # Combined verdict: any unknown denies; otherwise needs-attention > followups > approve.
+  if [ "$MAIN_VERDICT" = "unknown" ] || [ "$SEC_VERDICT" = "unknown" ]; then
+    COMBINED_VERDICT="unknown"
+  elif [ "$MAIN_VERDICT" = "needs-attention" ] || [ "$SEC_VERDICT" = "needs-attention" ]; then
     COMBINED_VERDICT="needs-attention"
   elif [ "$MAIN_VERDICT" = "approve-with-followups" ] || [ "$SEC_VERDICT" = "approve-with-followups" ]; then
     COMBINED_VERDICT="approve-with-followups"
@@ -409,7 +429,16 @@ EOF
   SEC_ISSUES=$(echo "$SEC_RAW"  | jq -c '[(.issues // [])[] | . + {_source:"security"}]' 2>/dev/null || echo "[]")
   COMBINED_ISSUES=$(echo "${MAIN_ISSUES:-[]} ${SEC_ISSUES:-[]}" | jq -s 'add // []' 2>/dev/null || echo "[]")
 
-  RESULT=$(jq -n --arg v "$COMBINED_VERDICT" --argjson i "$COMBINED_ISSUES" --argjson m "${MAIN_RAW:-{}}" --argjson s "${SEC_RAW:-{}}" '{verdict:$v, issues:$i, _main:$m, _security:$s}' 2>/dev/null)
+  # Drop _main/_security fields — they were unused downstream and including
+  # them via --argjson breaks the entire jq call when raw responses contain
+  # extra text or invalid JSON, leaving RESULT="" and VERDICT="unknown"
+  # despite COMBINED_VERDICT being correct (caused spurious deny loops).
+  # Fallback to unknown (denies) if jq still fails — never pass-through a
+  # verdict assembled from data we couldn't parse.
+  RESULT=$(jq -n --arg v "$COMBINED_VERDICT" --argjson i "$COMBINED_ISSUES" '{verdict:$v, issues:$i}' 2>/dev/null)
+  if [ -z "$RESULT" ]; then
+    RESULT='{"verdict":"unknown","issues":[{"severity":"blocking","summary":"verdict assembly failed"}]}'
+  fi
 
   log_event info hook.auto-review kind=parallel_review_done branch="$BRANCH" main_verdict="$MAIN_VERDICT" sec_verdict="$SEC_VERDICT" combined="$COMBINED_VERDICT"
 
