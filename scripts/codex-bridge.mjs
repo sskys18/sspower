@@ -35,10 +35,23 @@ const SCHEMAS_DIR = path.join(PLUGIN_ROOT, "schemas");
 const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
 const DEFAULT_MODEL = "gpt-5.5";
-const DEFAULT_EFFORT = "xhigh";
-// Enrich is a fast prompt-rewrite. xhigh reasoning would multiply latency
-// for no real quality win. Override to "minimal" so enrich stays snappy.
-const ENRICH_EFFORT = "minimal";
+const DEFAULT_EFFORT = "high";
+// Per-command effort tiers. service_tier=fast applies globally via ~/.codex/config.toml.
+// Lower effort = faster, less reasoning. Override per-call with --effort.
+const COMMAND_EFFORT = {
+  enrich: "minimal",     // prompt rewrite — no deliberation needed
+  review: "high",        // review — solid analysis without xhigh stalls
+  "spec-review": "high",
+  rescue: "high",        // targeted fix
+  resume: "high",        // session continuation
+  implement: "xhigh",    // keep deep for code generation
+};
+const ENRICH_EFFORT = "minimal";  // back-compat alias
+
+// Failure log (structured JSONL, ring-buffered)
+const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-failures.jsonl");
+const FAILURE_LOG_MAX = 2000;
+const FAILURE_LOG_KEEP = 1000;
 
 // ── Diagnostics log ──────────────────────────────────────────────────
 // Single append-only file at ~/.claude/sspower-codex.log, rotated at 1000 lines.
@@ -115,8 +128,43 @@ function resolveModel(raw) {
   return MODEL_ALIASES.get(raw) ?? raw;
 }
 
-function resolveEffort(raw) {
-  return raw || DEFAULT_EFFORT;
+function resolveEffort(raw, command) {
+  if (raw) return raw;
+  if (command && COMMAND_EFFORT[command]) return COMMAND_EFFORT[command];
+  return DEFAULT_EFFORT;
+}
+
+function classifyError(stderr = "", exitCode, durationMs) {
+  const s = stderr.toLowerCase();
+  if (s.includes("timed out") || durationMs > 540000) return "timeout";
+  if (s.includes("trusted directory") || s.includes("sandbox")) return "sandbox";
+  if (s.includes("rate limit") || /\b(429|503|502|504)\b/.test(s)) return "api";
+  if (s.includes("prompt file not found")) return "prompt_missing";
+  if (s.includes("returned no output")) return "no_output";
+  if (s.includes("no rollout found")) return "stale_session";
+  if (s.includes("network") || s.includes("dns")) return "network";
+  if (exitCode === 124 || exitCode === 137) return "timeout";
+  return "unknown";
+}
+
+function appendFailure(entry) {
+  try {
+    fs.mkdirSync(path.dirname(FAILURE_LOG), { recursive: true });
+    fs.appendFileSync(FAILURE_LOG, JSON.stringify(entry) + "\n");
+    // Ring-buffer rotation
+    const lines = fs.readFileSync(FAILURE_LOG, "utf8").trim().split("\n");
+    if (lines.length > FAILURE_LOG_MAX) {
+      const kept = lines.slice(-FAILURE_LOG_KEEP).join("\n") + "\n";
+      fs.writeFileSync(FAILURE_LOG, kept);
+    }
+  } catch { /* best-effort, never crash */ }
+}
+
+function redactSecrets(text = "") {
+  return String(text)
+    .replace(/(sk-[A-Za-z0-9_-]{20,})/g, "sk-***REDACTED***")
+    .replace(/(gh[ps]_[A-Za-z0-9]{20,})/g, "gh*_***REDACTED***")
+    .replace(/(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/gi, "$1=***REDACTED***");
 }
 
 function resolvePrompt(raw) {
@@ -697,6 +745,25 @@ function _spawnAndCapture(bin, args, promptFile, resultFile, schema, cwd = null)
         }, "close");
       }
 
+      // Persist failure to JSONL log (best-effort)
+      if (code !== 0) {
+        appendFailure({
+          ts: new Date().toISOString(),
+          command: process.argv[2] || "unknown",
+          exit_code: code,
+          duration_ms,
+          model: args.includes("-m") ? args[args.indexOf("-m") + 1] : null,
+          effort: (() => {
+            const idx = args.indexOf("-c");
+            return idx >= 0 ? (args[idx + 1].match(/effort="([^"]+)"/)?.[1] || null) : null;
+          })(),
+          cwd: cwd || process.cwd(),
+          session_id: sessionId,
+          error_kind: classifyError(stderr, code, duration_ms),
+          stderr_snippet: redactSecrets(cleanStderr(stderr).slice(-500)),
+        });
+      }
+
       resolve({
         exitCode: code,
         lastMessage,
@@ -855,7 +922,7 @@ async function cmdImplement(argv) {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
     model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort),
+    effort: resolveEffort(opts.effort, "implement"),
     cd: workDir,
     ephemeral: false, // persist session for resume-based fix loops
   });
@@ -897,7 +964,7 @@ async function cmdSpecReview(argv) {
     schema: schemaPath("spec-review-output"),
     sandbox: "read-only",
     model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort),
+    effort: resolveEffort(opts.effort, "spec-review"),
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
   });
@@ -911,7 +978,7 @@ async function cmdReview(argv) {
     schema: schemaPath("quality-review-output"),
     sandbox: "read-only",
     model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort),
+    effort: resolveEffort(opts.effort, "review"),
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
   });
@@ -925,7 +992,7 @@ async function cmdRescue(argv) {
     schema: null,
     sandbox: opts.write ? "workspace-write" : "read-only",
     model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort),
+    effort: resolveEffort(opts.effort, "rescue"),
     cd: opts.cd,
     ephemeral: !opts.write, // persist write sessions for potential resume
   });

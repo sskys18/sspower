@@ -169,6 +169,21 @@ REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
 # ---------- Iteration cap (per branch) ----------
 BRANCH=$(git_in_repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "_detached_")
 SAFE_BRANCH=$(printf '%s' "$BRANCH" | tr '/' '_')
+
+# ---------- Branch-pattern tier classification ----------
+# Patterns can be overridden via SSPOWER_REVIEW_SKIP_PATTERN / SSPOWER_REVIEW_STRICT_PATTERN.
+# Defaults: wip/tmp/draft skip review; main/master/prod/release/* always strict (xhigh).
+SKIP_PATTERN="${SSPOWER_REVIEW_SKIP_PATTERN:-wip/*|tmp/*|draft/*|scratch/*}"
+STRICT_PATTERN="${SSPOWER_REVIEW_STRICT_PATTERN:-main|master|prod|production|release/*}"
+
+case "$BRANCH" in
+  $SKIP_PATTERN)
+    log_event info hook.auto-review kind=branch_skip branch="$BRANCH" pattern="$SKIP_PATTERN"
+    exit 0
+    ;;
+  $STRICT_PATTERN) BRANCH_TIER="strict" ;;
+  *)               BRANCH_TIER="tiered" ;;
+esac
 if [ -n "$REPO_ROOT" ]; then
   ROUNDS_FILE="$REPO_ROOT/.git/sspower-review-rounds-$SAFE_BRANCH"
 else
@@ -185,6 +200,12 @@ if [ "$ROUNDS" -ge "$ROUNDS_CAP" ]; then
   deny "Codex auto-review: ${ROUNDS_CAP} rounds did not converge for branch '$BRANCH'. Review manually, fix locally, then 'rm $ROUNDS_FILE' to retry. Or bypass: SSPOWER_AUTO_REVIEW=off."
 fi
 
+# ---------- Diff-stability bypass setup (checked after DIFF_HASH computed) ----------
+LAST_DENY_FILE=""
+if [ -n "$REPO_ROOT" ]; then
+  LAST_DENY_FILE="$REPO_ROOT/.git/sspower-review-last-deny-$SAFE_BRANCH"
+fi
+
 # ---------- Verdict cache ----------
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/sspower/verdicts"
 mkdir -p "$CACHE_DIR"
@@ -196,6 +217,18 @@ DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_HASH" ] && DIFF_HASH=$(printf '%s' "$HASH_INPUT" | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$DIFF_HASH.json"
 CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-600}"
+
+# ---------- Diff-stability bypass ----------
+# Same diff hash denied 2x consecutively → user pushing same changes, codex stuck.
+# Bypass review (let push through) so user can break the loop. Manual fix needed.
+if [ -n "$LAST_DENY_FILE" ] && [ -f "$LAST_DENY_FILE" ] && [ "$ROUNDS" -ge 1 ]; then
+  LAST_DENIED_HASH=$(cat "$LAST_DENY_FILE" 2>/dev/null || true)
+  if [ -n "$LAST_DENIED_HASH" ] && [ "$LAST_DENIED_HASH" = "$DIFF_HASH" ]; then
+    log_event warn hook.auto-review kind=diff_stable_bypass branch="$BRANCH" hash="${DIFF_HASH:0:12}" rounds="$ROUNDS"
+    echo "[auto-review] WARNING: identical diff denied previously (round $ROUNDS). Bypassing review to break loop. Fix locally before pushing again." >&2
+    exit 0
+  fi
+fi
 
 RESULT=""
 CACHE_HIT=0
@@ -235,10 +268,38 @@ Verdicts:
 Do NOT propose stylistic refactors or unrequested features beyond what's
 necessary to fix the diff.
 EOF
-  BRIDGE_ARGS=(review --prompt "@$PROMPT_FILE")
+  # ---------- Round-aware effort tier ----------
+  # tiered branches: round 1=low, 2=high, 3=xhigh
+  # strict branches (main/etc): always xhigh
+  # Override entirely via SSPOWER_REVIEW_EFFORT
+  if [ -n "${SSPOWER_REVIEW_EFFORT:-}" ]; then
+    ROUND_EFFORT="$SSPOWER_REVIEW_EFFORT"
+  elif [ "$BRANCH_TIER" = "strict" ]; then
+    ROUND_EFFORT="xhigh"
+  else
+    case "$ROUNDS" in
+      0) ROUND_EFFORT="low" ;;
+      1) ROUND_EFFORT="high" ;;
+      *) ROUND_EFFORT="xhigh" ;;
+    esac
+  fi
+  log_event info hook.auto-review kind=tier_chosen branch="$BRANCH" tier="$BRANCH_TIER" round="$((ROUNDS+1))/$ROUNDS_CAP" effort="$ROUND_EFFORT"
+
+  BRIDGE_ARGS=(review --prompt "@$PROMPT_FILE" --effort "$ROUND_EFFORT")
   [ -n "$REPO_ROOT" ] && BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
-  REVIEW_TIMEOUT="${SSPOWER_REVIEW_TIMEOUT:-90}"
+  # Tier-aware timeout: low effort = fast, xhigh = patient
+  if [ -n "${SSPOWER_REVIEW_TIMEOUT:-}" ]; then
+    REVIEW_TIMEOUT="$SSPOWER_REVIEW_TIMEOUT"
+  else
+    case "$ROUND_EFFORT" in
+      low|minimal) REVIEW_TIMEOUT=60 ;;
+      medium)      REVIEW_TIMEOUT=90 ;;
+      high)        REVIEW_TIMEOUT=120 ;;
+      xhigh)       REVIEW_TIMEOUT=180 ;;
+      *)           REVIEW_TIMEOUT=90 ;;
+    esac
+  fi
   if command -v timeout &>/dev/null; then
     RESULT=$(timeout "$REVIEW_TIMEOUT" node "$BRIDGE" "${BRIDGE_ARGS[@]}" 2>/dev/null || true)
   else
@@ -277,6 +338,7 @@ case "$VERDICT" in
       fi
     fi
     [ -n "$ROUNDS_FILE" ] && rm -f "$ROUNDS_FILE"  # reset on convergence
+[ -n "$LAST_DENY_FILE" ] && rm -f "$LAST_DENY_FILE"  # clear stability tracker
     exit 0
     ;;
 esac
@@ -324,7 +386,10 @@ else
   REASON=$(printf 'Codex auto-review blocked (round %s/%s).\n%s\n\nFix the issues, commit, and push again. Bypass: SSPOWER_AUTO_REVIEW=off.' "$NEW_ROUNDS" "$ROUNDS_CAP" "$SUMMARY")
 fi
 
-log_event warn hook.auto-review kind=deny_verdict verdict="${VERDICT:-unknown}" branch="$BRANCH" round="$NEW_ROUNDS/$ROUNDS_CAP" applied="$APPLIED"
+# Persist denied diff hash for next-run stability bypass detection.
+[ -n "$LAST_DENY_FILE" ] && echo "$DIFF_HASH" > "$LAST_DENY_FILE"
+
+log_event warn hook.auto-review kind=deny_verdict verdict="${VERDICT:-unknown}" branch="$BRANCH" round="$NEW_ROUNDS/$ROUNDS_CAP" applied="$APPLIED" effort="${ROUND_EFFORT:-default}"
 jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
