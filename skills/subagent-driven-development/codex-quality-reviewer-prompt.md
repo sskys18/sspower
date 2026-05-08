@@ -79,11 +79,11 @@ design/architecture issues that need human judgment, set
 | Codex verdict | SDD action |
 |---|---|
 | `approve` | Mark task complete, proceed to next task |
-| `approve-with-followups` | Mark complete, append advisory issues to `.sspower/followups.md`, proceed |
+| `approve-with-followups` | Mark complete, append advisory issues to `.claude/sspower/followups.md`, proceed |
 | `needs-attention` | At least one blocking issue — must fix before proceeding |
 
 Issue handling:
 - **blocking**: Must fix before proceeding. Resume Codex implementer with fix instructions. Auto-review hook applies `suggested_patch` automatically when present.
-- **advisory**: Note for later, can proceed. Written to `.sspower/followups.md` automatically by the auto-review hook on `approve-with-followups`.
+- **advisory**: Note for later, can proceed. Written to `.claude/sspower/followups.md` automatically by the auto-review hook on `approve-with-followups`.
 
 After fixes, re-run quality review to confirm resolution. Auto-review hook caps at 3 rounds per branch (`SSPOWER_REVIEW_MAX_ROUNDS`); if hit, the hook denies and surfaces the unresolved findings.

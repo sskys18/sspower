@@ -458,8 +458,8 @@ case "$VERDICT" in
     if [ "$VERDICT" = "approve-with-followups" ] && [ -n "$REPO_ROOT" ]; then
       ADV_COUNT=$(echo "$RESULT" | jq -r '[.issues // [] | .[] | select(.severity == "advisory")] | length' 2>/dev/null)
       if [ "${ADV_COUNT:-0}" -gt 0 ]; then
-        mkdir -p "$REPO_ROOT/.sspower"
-        FOLLOWUPS_FILE="$REPO_ROOT/.sspower/followups.md"
+        mkdir -p "$REPO_ROOT/.claude/sspower"
+        FOLLOWUPS_FILE="$REPO_ROOT/.claude/sspower/followups.md"
         {
           echo
           echo "## Round $((ROUNDS + 1)) — $(date +%Y-%m-%d) advisory followups"
@@ -477,7 +477,7 @@ esac
 APPLIED=0
 APPLIED_COUNT=0
 if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" != "off" ] && [ -n "$REPO_ROOT" ]; then
-  PATCH_DIR="$REPO_ROOT/.sspower/proposed-fixes"
+  PATCH_DIR="$REPO_ROOT/.claude/sspower/proposed-fixes"
   mkdir -p "$PATCH_DIR"
   PATCH_FILE="$PATCH_DIR/round-$((ROUNDS + 1)).patch"
   echo "$RESULT" | jq -r '

@@ -28,7 +28,7 @@ sspower/
 ├── schemas/                     # Structured-output JSON schemas for Codex
 ├── docs/                        # This doc, plans, specs, customization notes
 ├── tests/                       # Skill & brainstorm-server tests
-└── .sspower/                    # Per-repo runtime state (followups, proposed-fixes)
+└── .claude/sspower/             # Per-repo runtime state (followups, proposed-fixes)
 ```
 
 Per-cwd artifacts written by hooks live outside the plugin:
@@ -36,8 +36,8 @@ Per-cwd artifacts written by hooks live outside the plugin:
 ```
 <cwd>/.claude/wiki/sessions/<id>.{json,md}    # Project wiki, archived per session
 <cwd>/.git/sspower-review-rounds-<branch>     # Auto-review iteration counter
-<cwd>/.sspower/followups.md                   # Advisory issues from approve-with-followups
-<cwd>/.sspower/proposed-fixes/round-N.patch   # Codex-suggested patches (auto-applied)
+<cwd>/.claude/sspower/followups.md            # Advisory issues from approve-with-followups
+<cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
 ~/.claude/state/sspower/codex/<id>.json       # Codex session registry
 ~/.claude/state/sspower/codex/<id>.events.jsonl
 ~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
@@ -300,14 +300,14 @@ SessionStart hook activates `full` by default. Per-turn `diet-track.js` reinforc
 
 Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end or change.
 
-## Per-repo state (`<cwd>/.sspower/`)
+## Per-repo state (`<cwd>/.claude/sspower/`)
 
 | File | Source | Purpose |
 |------|--------|---------|
 | `followups.md` | `approve-with-followups` verdicts | Advisory issues to address later |
 | `proposed-fixes/round-N.patch` | Codex's suggested patches | Auto-applied via `git apply --3way` when `SSPOWER_REVIEW_AUTO_APPLY=on` (default) |
 
-Add `.sspower/` to consuming-repo `.gitignore` to keep this state local.
+`.claude/` is typically already gitignored; if not, add `.claude/` (or `.claude/sspower/`) to the consuming-repo `.gitignore`.
 
 ## Configuration cheat sheet
 
