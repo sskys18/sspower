@@ -174,6 +174,33 @@ def test_cli_add_content_file_reads_path(monkeypatch, tmp_path):
     assert hits[0]["content"] == "content read from file"
 
 
+def test_cli_add_content_file_refuses_symlinked_input(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    target = tmp_path / "outside.txt"
+    target.write_text("symlink target content must not be ingested", encoding="utf-8")
+    content_link = tmp_path / "memory-link.txt"
+    os.symlink(target, content_link)
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content-file",
+        str(content_link),
+    )
+
+    assert rc == 20
+    assert out == ""
+    assert "content file read failed" in err
+    assert "symlink target content" not in out
+    assert not (tmp_path / "home" / ".claude" / "sspower" / "digest.md").exists()
+
+
 def test_cli_add_requires_exactly_one_content_source(monkeypatch, tmp_path):
     content_file = tmp_path / "memory.txt"
     content_file.write_text("content read from file", encoding="utf-8")
@@ -518,6 +545,34 @@ def test_cli_add_project_fresh_repo_creates_trust_root(monkeypatch, tmp_path):
     assert (fresh_repo / ".claude" / "wiki" / "digest.md").exists()
     body = json.loads(out)
     assert body["new"] is True
+
+
+def test_cli_add_unwritable_project_digest_exits_20(monkeypatch, tmp_path):
+    _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    project = tmp_path / "project"
+    project.mkdir()
+    project.chmod(0o500)
+    try:
+        rc, out, err = _run(
+            monkeypatch,
+            tmp_path,
+            "add",
+            "--scope",
+            "project",
+            "--layer",
+            "episodic",
+            "--content",
+            "x",
+            "--cwd",
+            str(project),
+        )
+    finally:
+        project.chmod(0o700)
+
+    assert rc == 20
+    assert out == ""
+    assert "digest write failed" in err
+    assert not (project / ".claude" / "wiki" / "digest.md").exists()
 
 
 def test_cli_search_project_user_does_not_leak_spoofed_user_global(monkeypatch, tmp_path):

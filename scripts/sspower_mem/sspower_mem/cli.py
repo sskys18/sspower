@@ -22,7 +22,7 @@ from sspower_mem.digest import (
     recent,
 )
 from sspower_mem.doctor import bootstrap, health
-from sspower_mem.io import safe_read_strict
+from sspower_mem.io import _assert_regular_private_file, safe_read_strict
 from sspower_mem.lock import acquire_lock
 from sspower_mem.scope import (
     canonicalize_cwd,
@@ -57,7 +57,25 @@ def _parse_meta(meta_args: list[str]) -> dict:
 
 
 def _read_content_file(path: str) -> str:
-    return pathlib.Path(path).read_text(encoding="utf-8")
+    abs_path = pathlib.Path(os.path.abspath(path))
+    file_flags = os.O_RDONLY
+    if hasattr(os, "O_NONBLOCK"):
+        file_flags |= os.O_NONBLOCK
+    if hasattr(os, "O_NOFOLLOW"):
+        file_flags |= os.O_NOFOLLOW
+
+    file_fd = os.open(abs_path, file_flags)
+    try:
+        _assert_regular_private_file(file_fd, abs_path)
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8")
+    finally:
+        os.close(file_fd)
 
 
 def _validate_layer_for_scope(scope: str, layer: str) -> str | None:
@@ -88,7 +106,11 @@ def cmd_add(args: argparse.Namespace) -> int:
     troot = trust_root(args.scope, cwd)
     panchor = parent_anchor(args.scope, cwd)
     dpath = digest_path(args.scope, cwd)
-    content = args.content if args.content is not None else _read_content_file(args.content_file)
+    try:
+        content = args.content if args.content is not None else _read_content_file(args.content_file)
+    except OSError as e:
+        print(f"sspower-mem: content file read failed: {e}", file=sys.stderr)
+        return 20
     meta = _parse_meta(args.meta)
     if args.no_llm:
         meta = {**meta, "no_llm": True}
@@ -297,7 +319,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_group.add_argument("--mode", choices=["recent"])
     search.add_argument("--top-k", type=int, default=8)
     search.add_argument("--json", action="store_true")
-    search.add_argument("--idx-only", action="store_true")
+    search.add_argument("--idx-only", action="store_true")  # Phase A: rejected with rc=30 (Phase C requires backend)
     search.set_defaults(func=cmd_search)
 
     digest = sub.add_parser("digest", help="Print digest summary or rebuild index")
