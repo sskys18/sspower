@@ -584,16 +584,18 @@ Platform note: `O_NOFOLLOW` + `dir_fd=` are POSIX (macOS + Linux, both targets).
 
 D12 amended: the digest path uses **`safe_append_strict`** (new), not the existing `_safe_append_text`. The legacy helper is retained for legacy `sessions/*.md` belt writes only.
 
-Block format (unchanged from v2; id width tightened in v4 per §6.1):
+Block format (v2 with v4 id-width tightening; v9 metadata encoding fix below):
 
 ```
 ## <ISO-8601-timestamp> · <scope> · <layer> · <id>
-[meta] key=value, key=value
+[meta] {"key": "value", "key": "value"}
 <content>
 
 ---
 
 ```
+
+**Metadata encoding (v9 amendment, resolves Phase A round-2 auto-review docs-drift finding):** the `[meta] ` line is followed by a **compact JSON object** — NOT `key=value, key=value`. The earlier `key=value` format was lossy for values containing commas or equals signs (e.g., path strings). Phase A implementation uses JSON; the spec is amended to match. `[meta] {}` is the empty case.
 
 - `id` = first 16 chars of SHA-1 over `(scope|layer|content)` (v4 bump from 8 chars; see §6.1 for collision-handling).
 - `<scope>` = `project:<hash>` or `user:global`.

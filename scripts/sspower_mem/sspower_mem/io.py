@@ -6,10 +6,19 @@ from __future__ import annotations
 
 import os
 import pathlib
+import stat
 
 
 def _open_dir(path_or_fd, flags_dir: int, *, dir_fd: int | None = None) -> int:
     return os.open(path_or_fd, flags_dir, dir_fd=dir_fd) if dir_fd is not None else os.open(path_or_fd, flags_dir)
+
+
+def _assert_regular_private_file(fd: int, path: pathlib.Path) -> None:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        raise OSError(f"path {path} is not a regular file")
+    if st.st_nlink != 1:
+        raise OSError(f"path {path} has multiple hard links")
 
 
 def safe_append_strict(path: pathlib.Path, content: str, trust_root: pathlib.Path) -> None:
@@ -39,10 +48,13 @@ def safe_append_strict(path: pathlib.Path, content: str, trust_root: pathlib.Pat
 
         # Open final file relative to last dir fd, O_NOFOLLOW.
         file_flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        if hasattr(os, "O_NONBLOCK"):
+            file_flags |= os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):
             file_flags |= os.O_NOFOLLOW
         file_fd = os.open(rel.parts[-1], file_flags, mode=0o600, dir_fd=cur_fd)
         try:
+            _assert_regular_private_file(file_fd, path)
             os.fchmod(file_fd, 0o600)
             data = content.encode("utf-8")
             written = 0
@@ -114,10 +126,13 @@ def safe_read_strict(path: pathlib.Path, trust_root: pathlib.Path) -> str:
             cur_fd = next_fd
 
         file_flags = os.O_RDONLY
+        if hasattr(os, "O_NONBLOCK"):
+            file_flags |= os.O_NONBLOCK
         if hasattr(os, "O_NOFOLLOW"):
             file_flags |= os.O_NOFOLLOW
         file_fd = os.open(rel.parts[-1], file_flags, dir_fd=cur_fd)
         try:
+            _assert_regular_private_file(file_fd, path)
             chunks: list[bytes] = []
             while True:
                 chunk = os.read(file_fd, 1024 * 1024)

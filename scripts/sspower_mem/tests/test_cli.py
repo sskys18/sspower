@@ -144,6 +144,28 @@ def test_cli_add_project_with_missing_cwd_exits_20(monkeypatch, tmp_path):
     assert "does not exist" in err
 
 
+def test_cli_search_user_ignores_irrelevant_missing_cwd(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "user",
+        "--cwd",
+        str(tmp_path / "missing-project"),
+        "--mode",
+        "recent",
+        "--json",
+    )
+
+    assert rc == 0
+    assert out.strip() == "[]"
+    assert err == ""
+
+
 def test_cli_search_symlinked_project_digest_exits_20(monkeypatch, tmp_path):
     rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
     assert rc == 0
@@ -190,6 +212,31 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     rc, _, err = _run(monkeypatch, tmp_path, "search", "--scope", "user")
     assert rc in (2, 30)
     assert "required" in err or "requires --query or --mode recent" in err
+
+
+def test_cli_add_rejects_user_global_layer_for_project(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    project = tmp_path / "project"
+    project.mkdir()
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "project",
+        "--layer",
+        "user-global",
+        "--content",
+        "bad project layer",
+        "--cwd",
+        str(project),
+    )
+
+    assert rc == 30
+    assert out == ""
+    assert "layer user-global is only valid with --scope user" in err
 
 
 def test_cli_digest_summary(monkeypatch, tmp_path):

@@ -234,12 +234,16 @@ def recent(
         blocks = [b for b in blocks if b["layer"] in layer_filter]
     if not blocks:
         return []
-    blocks.sort(key=lambda b: (-_ts_key(b["ts"]), b["id"]))
+    blocks.sort(key=lambda b: (-_ts_key(b["ts"]), _scope_priority(b["scope"]), b["id"]))
     chosen = blocks[:top_k]
     n = len(chosen)
+    scores = (
+        [1.0] * n
+        if n > 0 and len({b["ts"] for b in chosen}) == 1
+        else [1.0 if n == 1 else 1.0 - (i / (n - 1)) for i in range(n)]
+    )
     out: list[dict] = []
-    for i, b in enumerate(chosen):
-        score = 1.0 if n == 1 else 1.0 - (i / (n - 1))
+    for score, b in zip(scores, chosen):
         out.append({
             "id": b["id"],
             "source": "digest-recent",
@@ -262,3 +266,7 @@ def _ts_key(ts: str) -> int:
         )
     except ValueError:
         return 0
+
+
+def _scope_priority(scope: str) -> int:
+    return 0 if scope.startswith("project:") else 1

@@ -260,3 +260,38 @@ def test_recent_returns_newest_first(trust_root):
     assert [h["content"].strip() for h in hits] == ["new", "mid"]
     assert hits[0]["score"] == 1.0
     assert hits[0]["source"] == "digest-recent"
+
+
+def test_recent_tied_timestamps_prefer_project_and_score_all_one(trust_root):
+    ts = "2026-05-13T10:00:00Z"
+    user_root = trust_root / "user"
+    project_root = trust_root / "project"
+    user_root.mkdir()
+    project_root.mkdir()
+    user_digest = user_root / "digest.md"
+    project_digest = project_root / "digest.md"
+    user_digest.write_text(
+        format_block(ts, "user:global", "user-global", "auser00000000000", {}, "user"),
+        encoding="utf-8",
+    )
+    project_digest.write_text(
+        format_block(ts, "project:abc12345", "episodic", "zproject0000000", {}, "project z")
+        + format_block(
+            ts,
+            "project:abc12345",
+            "episodic",
+            "aproject0000000",
+            {},
+            "project a",
+        ),
+        encoding="utf-8",
+    )
+
+    hits = recent([user_digest, project_digest], top_k=3)
+
+    assert [h["id"] for h in hits] == [
+        "aproject0000000",
+        "zproject0000000",
+        "auser00000000000",
+    ]
+    assert [h["score"] for h in hits] == [1.0, 1.0, 1.0]

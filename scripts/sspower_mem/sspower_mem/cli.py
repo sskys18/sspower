@@ -54,6 +54,10 @@ def _read_content(arg: str) -> str:
 
 
 def cmd_add(args: argparse.Namespace) -> int:
+    if args.scope == "project" and args.layer == "user-global":
+        print("sspower-mem: layer user-global is only valid with --scope user", file=sys.stderr)
+        return 30
+
     try:
         cwd = _resolve_cwd(args) if args.scope == "project" else None
     except FileNotFoundError as e:
@@ -111,10 +115,11 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     scopes = args.scope.split(",")
+    needs_project = "project" in scopes
     paths: list[pathlib.Path] = []
 
     try:
-        cwd = canonicalize_cwd(args.cwd) if args.cwd else None
+        cwd = canonicalize_cwd(args.cwd) if args.cwd and needs_project else None
         for scope in scopes:
             if scope == "project":
                 if cwd is None:

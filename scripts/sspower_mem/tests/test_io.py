@@ -22,6 +22,18 @@ def test_safe_append_strict_refuses_symlinked_final_file(trust_root, tmp_path):
     assert target.read_text() == "attacker-controlled\n"
 
 
+def test_safe_append_strict_refuses_hardlink_to_outside_file(trust_root, tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text("attacker-controlled\n")
+    linked = trust_root / "digest.md"
+    os.link(outside, linked)
+
+    with pytest.raises(OSError):
+        safe_append_strict(linked, "should-not-write\n", trust_root)
+
+    assert outside.read_text() == "attacker-controlled\n"
+
+
 def test_safe_append_strict_writes_content(trust_root):
     path = trust_root / "digest.md"
     safe_append_strict(path, "hello\n", trust_root)
@@ -48,12 +60,32 @@ def test_safe_read_strict_refuses_symlinked_final_file(trust_root, tmp_path):
         safe_read_strict(path, trust_root)
 
 
+def test_safe_read_strict_refuses_hardlink_to_outside_file(trust_root, tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text("attacker-controlled\n")
+    linked = trust_root / "digest.md"
+    os.link(outside, linked)
+
+    with pytest.raises(OSError):
+        safe_read_strict(linked, trust_root)
+
+
 def test_safe_read_strict_round_trip(trust_root):
     path = trust_root / "digest.md"
     safe_append_strict(path, "hello\n", trust_root)
     safe_append_strict(path, "world\n", trust_root)
 
     assert safe_read_strict(path, trust_root) == "hello\nworld\n"
+
+
+def test_safe_append_strict_refuses_fifo(trust_root):
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("mkfifo is not available on this platform")
+    fifo = trust_root / "digest.md"
+    os.mkfifo(fifo)
+
+    with pytest.raises(OSError):
+        safe_append_strict(fifo, "should-not-write\n", trust_root)
 
 
 def test_safe_append_strict_rejects_traversal(trust_root):
