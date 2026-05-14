@@ -148,3 +148,103 @@ def append_block_or_skip(
     )
     safe_append_strict(digest_path, block, trust_root)
     return effective_id, True
+
+
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _tokenize(query: str) -> list[str]:
+    """Lowercase, split on word boundaries, drop tokens < 3 chars.
+    Falls back to the literal query as one token if zero remain.
+    """
+    toks = [t for t in _TOKEN_RE.findall(query.lower()) if len(t) >= 3]
+    return toks if toks else [query.lower()]
+
+
+def _load_all_blocks(digest_paths: list[pathlib.Path]) -> list[dict]:
+    blocks: list[dict] = []
+    for p in digest_paths:
+        if not p.exists():
+            continue
+        blocks.extend(parse_blocks(p.read_text(encoding="utf-8")))
+    return blocks
+
+
+def grep_search(
+    digest_paths: list[pathlib.Path],
+    query: str,
+    top_k: int = 8,
+    layer_filter: list[str] | None = None,
+) -> list[dict]:
+    """Deterministic grep scoring per spec §6.1 read path."""
+    tokens = _tokenize(query)
+    candidates: list[tuple[float, dict]] = []
+    for blk in _load_all_blocks(digest_paths):
+        if layer_filter and blk["layer"] not in layer_filter:
+            continue
+        text_lower = blk["content"].lower()
+        hits = sum(text_lower.count(t) for t in tokens)
+        if hits == 0:
+            continue
+        raw = hits / max(1, len(blk["content"]) / 1000)
+        candidates.append((raw, blk))
+    if not candidates:
+        return []
+    max_raw = max(r for r, _ in candidates)
+    if max_raw == 0:
+        return []
+    scored = [
+        {
+            "id": b["id"],
+            "source": "digest-grep",
+            "score": r / max_raw,
+            "content": b["content"],
+            "scope": b["scope"],
+            "layer": b["layer"],
+            "ts": b["ts"],
+        }
+        for r, b in candidates
+    ]
+    scored.sort(key=lambda h: (-h["score"], -_ts_key(h["ts"]), h["id"]))
+    return scored[:top_k]
+
+
+def recent(
+    digest_paths: list[pathlib.Path],
+    top_k: int = 8,
+    layer_filter: list[str] | None = None,
+) -> list[dict]:
+    """Top-k newest blocks by ts. Score = linear position normalized."""
+    blocks = _load_all_blocks(digest_paths)
+    if layer_filter:
+        blocks = [b for b in blocks if b["layer"] in layer_filter]
+    if not blocks:
+        return []
+    blocks.sort(key=lambda b: (-_ts_key(b["ts"]), b["id"]))
+    chosen = blocks[:top_k]
+    n = len(chosen)
+    out: list[dict] = []
+    for i, b in enumerate(chosen):
+        score = 1.0 if n == 1 else 1.0 - (i / (n - 1))
+        out.append({
+            "id": b["id"],
+            "source": "digest-recent",
+            "score": score,
+            "content": b["content"],
+            "scope": b["scope"],
+            "layer": b["layer"],
+            "ts": b["ts"],
+        })
+    return out
+
+
+def _ts_key(ts: str) -> int:
+    """Sortable int from an ISO timestamp (epoch seconds). Returns 0 on parse failure."""
+    try:
+        return int(
+            datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+            .replace(tzinfo=datetime.timezone.utc)
+            .timestamp()
+        )
+    except ValueError:
+        return 0
