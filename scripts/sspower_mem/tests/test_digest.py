@@ -3,7 +3,14 @@ import pathlib
 
 import pytest
 
-from sspower_mem.digest import append_block_or_skip, compute_id, format_block, parse_blocks
+from sspower_mem.digest import (
+    append_block_or_skip,
+    compute_id,
+    format_block,
+    grep_search,
+    parse_blocks,
+    recent,
+)
 
 
 def test_compute_id_is_stable_sha1_16():
@@ -109,3 +116,102 @@ def test_append_block_or_skip_handles_collision_with_dup_suffix(trust_root, monk
     assert b_id == "collision00000000_dup1"
     blocks = list(parse_blocks(digest.read_text()))
     assert {b["id"] for b in blocks} == {a_id, b_id}
+
+
+def test_grep_search_tokenizes_and_scores(trust_root):
+    digest = trust_root / "digest.md"
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "memory backend design decision about chroma",
+        {},
+    )
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "completely unrelated content about telegram",
+        {},
+    )
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "another chroma note",
+        {},
+    )
+    hits = grep_search([digest], "chroma backend", top_k=5)
+    assert len(hits) == 2
+    # The first block has both tokens; should rank above the chroma-only one.
+    assert "memory backend" in hits[0]["content"]
+    assert all(0.0 <= h["score"] <= 1.0 for h in hits)
+    assert hits[0]["source"] == "digest-grep"
+
+
+def test_grep_search_drops_short_tokens(trust_root):
+    digest = trust_root / "digest.md"
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "chromaDB note",
+        {},
+    )
+    hits = grep_search([digest], "is a db", top_k=5)
+    # All tokens < 3 chars; query becomes the literal string.
+    # "is a db" appears as substring? Not in the content. Should be empty.
+    assert hits == []
+
+
+def test_grep_search_max_zero_returns_empty(trust_root):
+    digest = trust_root / "digest.md"
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "hello world",
+        {},
+    )
+    hits = grep_search([digest], "absent_term_xyz", top_k=5)
+    assert hits == []
+
+
+def test_recent_returns_newest_first(trust_root):
+    digest = trust_root / "digest.md"
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "old",
+        {},
+        ts="2026-05-10T00:00:00Z",
+    )
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "mid",
+        {},
+        ts="2026-05-11T00:00:00Z",
+    )
+    append_block_or_skip(
+        digest,
+        trust_root,
+        "user:global",
+        "user-global",
+        "new",
+        {},
+        ts="2026-05-12T00:00:00Z",
+    )
+    hits = recent([digest], top_k=2)
+    assert [h["content"].strip() for h in hits] == ["new", "mid"]
+    assert hits[0]["score"] == 1.0
+    assert hits[0]["source"] == "digest-recent"
