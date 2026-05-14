@@ -45,6 +45,7 @@ const COMMAND_EFFORT = {
   rescue: "high",        // targeted fix
   resume: "high",        // session continuation
   implement: "xhigh",    // keep deep for code generation
+  complete: "minimal",   // single-turn extractor — no deliberation
 };
 const ENRICH_EFFORT = "minimal";  // back-compat alias
 
@@ -847,6 +848,272 @@ function parseStructuredOutput(text) {
   return null;
 }
 
+// ── complete: single-turn OpenAI-shape extractor ─────────────────────
+//
+// Thin wrapper over `codex exec` for non-agentic chat completions.
+// Tool-disable contract (spec §6.2 — achievable-contract baseline):
+//   1. --sandbox read-only            (no file writes, no spawns beyond read-only shell)
+//   2. Hard system directive prepended (single-turn extractor; do NOT call tools)
+//   3. reasoning.effort=minimal       (lowers chance of tool-use during reasoning)
+//   4. Wall-clock cap (default 60s)   (on timeout exit nonzero so caller degrades)
+//
+// Output (stdout, exit 0):  OpenAI chat.completion JSON
+// Output (stderr, exit !=0): {"error":{"type":"...","message":"..."}}
+//
+// Intentionally NOT wired through _spawnAndCapture: that path carries
+// registry writes, heartbeat, structured-output parsing, JSONL event
+// rendering — all overhead the index-extract step doesn't want.
+
+const COMPLETE_HARD_DIRECTIVE =
+  "You are a single-turn extractor. Do NOT call any tool. Respond with " +
+  "the answer directly. If you start to call a tool, stop and answer in text.";
+
+const COMPLETE_DEFAULT_TIMEOUT_MS = 60_000;
+
+function _emitCompleteError(type, message) {
+  // Spec error shape (stderr JSON). Distinct from existing output() shape.
+  process.stderr.write(
+    JSON.stringify({ error: { type, message } }) + "\n",
+  );
+}
+
+function _buildCompletePrompt(userPrompt, systemMessage) {
+  const parts = [COMPLETE_HARD_DIRECTIVE];
+  if (systemMessage && systemMessage.trim()) {
+    parts.push("", systemMessage.trim());
+  }
+  parts.push("", userPrompt);
+  return parts.join("\n");
+}
+
+/**
+ * Run `codex exec` for the single-turn complete path.
+ * Resolves with { exitCode, stdout, stderr, lastMessage, tokens, sessionId, durationMs, timedOut }.
+ * Wall-clock kill enforced: SIGTERM at deadline, SIGKILL 2s later. exitCode 124 on timeout.
+ */
+function _runCodexComplete(prompt, options) {
+  const { model, effort, timeoutMs } = options;
+  const bin = codexBin();
+  const resultFile = secureTmpFile("complete-result", "");
+  const promptFile = secureTmpFile("complete-prompt", prompt);
+
+  const args = [
+    "exec",
+    "--json",
+    "--ephemeral",
+    "--sandbox", "read-only",
+    "-o", resultFile,
+    "-m", model,
+    "-c", `reasoning.effort="${effort}"`,
+    "-",
+  ];
+
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
+    let stderr = "";
+    let stdoutBuf = "";
+    let tokens = { input: null, output: null, total: null };
+    let sessionId = null;
+    let timedOut = false;
+    let killed = false;
+
+    const promptStream = fs.createReadStream(promptFile);
+    // Inherit re-entry env guards so any nested git chokepoint short-circuits.
+    const childEnv = { ...process.env };
+    childEnv.SSPOWER_REVIEW_IN_FLIGHT = "1";
+    childEnv.SSPOWER_REVIEW_DEPTH = String(
+      parseInt(process.env.SSPOWER_REVIEW_DEPTH || "0", 10) + 1,
+    );
+
+    // detached:true puts the child in its own process group so a wall-clock
+    // kill can take down any grandchildren (e.g. nested sleep, codex spawning
+    // shell helpers) by signalling the negative PGID. Without this, a child
+    // that has spawned its own subprocesses can keep stdout pipes open after
+    // we kill the immediate child, and the bridge would never see 'close'.
+    const child = spawn(bin, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: childEnv,
+      detached: true,
+    });
+
+    promptStream.pipe(child.stdin);
+
+    child.stderr.on("data", (c) => { stderr += c.toString(); });
+
+    // Parse JSONL stdout incrementally to capture session_id + usage.
+    let lineBuf = "";
+    child.stdout.on("data", (chunk) => {
+      stdoutBuf += chunk.toString();
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split("\n");
+      lineBuf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line); } catch { continue; }
+        const id = ev.session_id || ev.conversation?.id || ev.thread_id;
+        if (id && !sessionId) sessionId = id;
+        if ((ev.type === "turn.completed" || ev.kind === "turn.completed") && ev.usage) {
+          const u = ev.usage;
+          const inTok = u.input_tokens ?? u.input ?? u.prompt_tokens;
+          const outTok = u.output_tokens ?? u.output ?? u.completion_tokens;
+          if (inTok != null) tokens.input = inTok;
+          if (outTok != null) tokens.output = outTok;
+          const total = u.total ?? u.total_tokens ?? (
+            inTok != null && outTok != null ? inTok + outTok : null
+          );
+          if (total != null) tokens.total = total;
+        }
+      }
+    });
+
+    // Wall-clock kill: SIGTERM the whole process group at deadline,
+    // SIGKILL the group 2s after if still alive. Killing by negative
+    // PGID ensures any grandchildren (shell helpers, sleeps) die too so
+    // stdout pipes close and 'close' fires.
+    const killGroup = (sig) => {
+      try { process.kill(-child.pid, sig); }
+      catch {
+        // PGID kill failed (race or unsupported); fall back to direct child kill.
+        try { child.kill(sig); } catch { /* gone */ }
+      }
+    };
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      killed = true;
+      killGroup("SIGTERM");
+      setTimeout(() => killGroup("SIGKILL"), 2_000);
+    }, timeoutMs);
+
+    child.on("close", (code, signal) => {
+      clearTimeout(killTimer);
+      let lastMessage = "";
+      try {
+        lastMessage = fs.readFileSync(resultFile, "utf8").trim();
+      } catch { /* ok */ }
+      try { fs.unlinkSync(resultFile); } catch { /* ok */ }
+      try { fs.unlinkSync(promptFile); } catch { /* ok */ }
+
+      const durationMs = Date.now() - startedAt;
+      // Synthesize a nonzero exit code on timeout for stable downstream classification.
+      const exitCode = timedOut ? 124 : (code ?? (signal ? 1 : 0));
+      resolve({
+        exitCode,
+        stdout: stdoutBuf,
+        stderr: cleanStderr(stderr),
+        lastMessage,
+        tokens,
+        sessionId,
+        durationMs,
+        timedOut,
+        killed,
+      });
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(killTimer);
+      try { fs.unlinkSync(resultFile); } catch { /* ok */ }
+      try { fs.unlinkSync(promptFile); } catch { /* ok */ }
+      reject(err);
+    });
+  });
+}
+
+async function cmdComplete(argv) {
+  const opts = parseOpts(argv);
+  if (!opts.prompt) {
+    _emitCompleteError("invalid_request", "--prompt is required");
+    cleanupTmpDir();
+    process.exit(1);
+  }
+  const userPrompt = resolvePrompt(opts.prompt);
+  const finalPrompt = _buildCompletePrompt(userPrompt, opts.system);
+
+  const model = resolveModel(opts.model);
+  const effort = opts.effort || COMMAND_EFFORT.complete;
+  const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+    ? opts.timeoutMs
+    : COMPLETE_DEFAULT_TIMEOUT_MS;
+
+  let result;
+  try {
+    result = await _runCodexComplete(finalPrompt, { model, effort, timeoutMs });
+  } catch (err) {
+    logEvent("error", "bridge.complete", {
+      kind: "spawn_error",
+      msg: err.message?.slice(0, 300),
+    });
+    _emitCompleteError("spawn_error", err.message || String(err));
+    cleanupTmpDir();
+    process.exit(1);
+  }
+
+  if (result.exitCode !== 0) {
+    const errorKind = result.timedOut
+      ? "timeout"
+      : classifyError(result.stderr, result.exitCode, result.durationMs);
+    const msg = result.timedOut
+      ? `codex complete timed out after ${timeoutMs}ms`
+      : (result.stderr || result.lastMessage || `codex exited with code ${result.exitCode}`);
+    appendFailure({
+      ts: new Date().toISOString(),
+      command: "complete",
+      exit_code: result.exitCode,
+      duration_ms: result.durationMs,
+      model,
+      effort,
+      cwd: process.cwd(),
+      session_id: result.sessionId,
+      error_kind: errorKind,
+      stderr_snippet: redactSecrets(result.stderr.slice(-500)),
+    });
+    logEvent("error", "bridge.complete", {
+      kind: errorKind,
+      exitCode: result.exitCode,
+      session: result.sessionId,
+      duration_ms: result.durationMs,
+    });
+    _emitCompleteError(errorKind, msg.slice(0, 1000));
+    cleanupTmpDir();
+    process.exit(1);
+  }
+
+  // Build OpenAI chat.completion shape.
+  // - id: prefer Codex session_id (consistent with bridge session identity);
+  //       fall back to a synthesized chatcmpl-* id if Codex never emitted one.
+  // - usage: spec example always shows numbers; if stream cut short and token
+  //       fields are null, emit zeros + stderr warning rather than dropping the field.
+  const id = result.sessionId
+    ? `chatcmpl-${result.sessionId}`
+    : `chatcmpl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+  let prompt_tokens = result.tokens.input;
+  let completion_tokens = result.tokens.output;
+  let total_tokens = result.tokens.total;
+  if (prompt_tokens == null || completion_tokens == null || total_tokens == null) {
+    process.stderr.write(
+      `[codex:complete] usage tokens missing (in=${prompt_tokens} out=${completion_tokens} total=${total_tokens}); emitting zeros\n`,
+    );
+    prompt_tokens = prompt_tokens ?? 0;
+    completion_tokens = completion_tokens ?? 0;
+    total_tokens = total_tokens ?? (prompt_tokens + completion_tokens);
+  }
+
+  const payload = {
+    id,
+    object: "chat.completion",
+    model,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: result.lastMessage || "" },
+      finish_reason: "stop",
+    }],
+    usage: { prompt_tokens, completion_tokens, total_tokens },
+  };
+  console.log(JSON.stringify(payload));
+  cleanupTmpDir();
+}
+
 // ── Output formatting ────────────────────────────────────────────────
 
 function output(result, options = {}) {
@@ -1332,6 +1599,8 @@ function parseOpts(argv) {
     noSchema: false,
     worktree: null,
     autoCommit: false,
+    system: null,
+    timeoutMs: null,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -1375,6 +1644,24 @@ function parseOpts(argv) {
           opts.autoCommit = true;
         }
         break;
+      case "--system":
+        opts.system = argv[++i];
+        break;
+      case "--timeout":
+        {
+          const v = parseInt(argv[++i], 10);
+          if (!Number.isFinite(v) || v <= 0) {
+            die(`invalid --timeout: must be positive integer ms`);
+          }
+          opts.timeoutMs = v;
+        }
+        break;
+      case "--json":
+        // Accepted as a no-op marker for the `complete` subcommand; the
+        // OpenAI-shape JSON output is the only output mode for `complete`,
+        // but accepting --json keeps the documented invocation explicit.
+        opts.json = true;
+        break;
       default:
         if (!opts.prompt) opts.prompt = arg;
         break;
@@ -1401,6 +1688,7 @@ async function main() {
       "  codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]",
       "  codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--no-schema]",
       "  codex-bridge.mjs enrich     --prompt <text|@file> [--model <m>] [--effort <e>] [--cd <dir>]",
+      "  codex-bridge.mjs complete   --json --prompt <text|@file> [--system <text>] [--model <m>] [--effort <e>] [--timeout <ms>]",
       "  codex-bridge.mjs ps",
       "  codex-bridge.mjs status     <session_id>",
       "  codex-bridge.mjs kill       <session_id>",
@@ -1451,6 +1739,9 @@ async function main() {
       break;
     case "enrich":
       await cmdEnrich(argv);
+      break;
+    case "complete":
+      await cmdComplete(argv);
       break;
     case "ps":
       await cmdPs();
