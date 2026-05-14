@@ -1,4 +1,5 @@
 import hashlib
+import os
 import pathlib
 
 import pytest
@@ -161,6 +162,42 @@ def test_append_block_or_skip_handles_collision_with_dup_suffix(trust_root, monk
     assert b_id == "collision00000000_dup1"
     blocks = list(parse_blocks(digest.read_text()))
     assert {b["id"] for b in blocks} == {a_id, b_id}
+
+
+def test_append_block_or_skip_resists_ancestor_symlink_swap(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    trust_root = project / ".claude" / "wiki"
+    digest = trust_root / "digest.md"
+    attacker_claude = tmp_path / "attacker-claude"
+    (attacker_claude / "wiki").mkdir(parents=True)
+
+    import sspower_mem.digest as digest_mod
+
+    real_safe_makedirs = digest_mod.safe_makedirs_strict
+
+    def swap_after_create(
+        path: pathlib.Path, parent_anchor: pathlib.Path, mode: int = 0o700
+    ) -> None:
+        real_safe_makedirs(path, parent_anchor, mode=mode)
+        (project / ".claude" / "wiki").rmdir()
+        (project / ".claude").rmdir()
+        os.symlink(attacker_claude, project / ".claude")
+
+    monkeypatch.setattr(digest_mod, "safe_makedirs_strict", swap_after_create)
+
+    with pytest.raises(OSError):
+        append_block_or_skip(
+            digest_path=digest,
+            trust_root=trust_root,
+            parent_anchor=project,
+            scope="project:abc",
+            layer="episodic",
+            content="must not redirect",
+            meta={},
+        )
+
+    assert not (attacker_claude / "wiki" / "digest.md").exists()
 
 
 def test_grep_search_tokenizes_and_scores(trust_root):

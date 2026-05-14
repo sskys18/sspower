@@ -18,7 +18,7 @@ import hashlib
 import json
 import pathlib
 import re
-from typing import Iterator
+from typing import Iterator, TypeAlias
 
 from sspower_mem.io import safe_append_strict, safe_makedirs_strict, safe_read_strict
 
@@ -32,6 +32,14 @@ _BLOCK_BOUNDARY_RE = re.compile(
     r"\n---\n\n(?=## \S+ · [^·]+? · [^·]+? · \S+\s*(?:\n|$)|\s*\Z)"
 )
 _RESERVED_BOUNDARY_RE = re.compile(r"(?:^|\n)---\n\n## ")
+
+DigestSource: TypeAlias = pathlib.Path | tuple[pathlib.Path, pathlib.Path]
+
+
+def _source_parts(source: DigestSource) -> tuple[pathlib.Path, pathlib.Path]:
+    if isinstance(source, tuple):
+        return source
+    return source, source.parent
 
 
 def compute_id(scope: str, layer: str, content: str) -> str:
@@ -100,10 +108,12 @@ def parse_blocks(text: str) -> Iterator[dict]:
         }
 
 
-def _existing_blocks_by_base(digest_path: pathlib.Path) -> dict[str, list[dict]]:
+def _existing_blocks_by_base(
+    digest_path: pathlib.Path, read_root: pathlib.Path
+) -> dict[str, list[dict]]:
     """Map base_id (with any _dup<N> stripped) to blocks already present."""
     try:
-        text = safe_read_strict(digest_path, digest_path.parent)
+        text = safe_read_strict(digest_path, read_root)
     except FileNotFoundError:
         return {}
     by_base: dict[str, list[dict]] = {}
@@ -132,9 +142,10 @@ def append_block_or_skip(
     """
     if parent_anchor is not None:
         safe_makedirs_strict(trust_root, parent_anchor)
+    io_root = parent_anchor if parent_anchor is not None else trust_root
 
     base_id = compute_id(scope, layer, content)
-    existing = _existing_blocks_by_base(digest_path)
+    existing = _existing_blocks_by_base(digest_path, io_root)
     for blk in existing.get(base_id, []):
         if blk["content"].rstrip("\n") == content.rstrip("\n"):
             return blk["id"], False
@@ -158,7 +169,7 @@ def append_block_or_skip(
         meta=meta,
         content=content,
     )
-    safe_append_strict(digest_path, block, trust_root)
+    safe_append_strict(digest_path, block, io_root)
     return effective_id, True
 
 
@@ -173,11 +184,12 @@ def _tokenize(query: str) -> list[str]:
     return toks if toks else [query.lower()]
 
 
-def _load_all_blocks(digest_paths: list[pathlib.Path]) -> list[dict]:
+def _load_all_blocks(digest_sources: list[DigestSource]) -> list[dict]:
     blocks: list[dict] = []
-    for p in digest_paths:
+    for source in digest_sources:
+        p, read_root = _source_parts(source)
         try:
-            text = safe_read_strict(p, p.parent)
+            text = safe_read_strict(p, read_root)
         except FileNotFoundError:
             continue
         blocks.extend(parse_blocks(text))
@@ -185,7 +197,7 @@ def _load_all_blocks(digest_paths: list[pathlib.Path]) -> list[dict]:
 
 
 def grep_search(
-    digest_paths: list[pathlib.Path],
+    digest_paths: list[DigestSource],
     query: str,
     top_k: int = 8,
     layer_filter: list[str] | None = None,
@@ -224,7 +236,7 @@ def grep_search(
 
 
 def recent(
-    digest_paths: list[pathlib.Path],
+    digest_paths: list[DigestSource],
     top_k: int = 8,
     layer_filter: list[str] | None = None,
 ) -> list[dict]:

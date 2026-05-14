@@ -4,6 +4,8 @@ import pathlib
 import subprocess
 import sys
 
+from sspower_mem.digest import format_block
+
 
 _PACKAGE_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -207,6 +209,44 @@ def test_cli_search_symlinked_project_digest_exits_20(monkeypatch, tmp_path):
     assert "digest read failed" in err
 
 
+def test_cli_search_symlinked_project_ancestor_exits_20(monkeypatch, tmp_path):
+    target = tmp_path / "target-project"
+    malicious = tmp_path / "malicious-project"
+    target_wiki = target / ".claude" / "wiki"
+    target_wiki.mkdir(parents=True)
+    malicious.mkdir()
+    secret = "target ancestor digest secret"
+    (target_wiki / "digest.md").write_text(
+        format_block(
+            "2026-05-13T10:00:00Z",
+            "project:target",
+            "episodic",
+            "target0000000000",
+            {},
+            secret,
+        ),
+        encoding="utf-8",
+    )
+    os.symlink(target / ".claude", malicious / ".claude")
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "project",
+        "--cwd",
+        str(malicious),
+        "--query",
+        "secret",
+        "--json",
+    )
+
+    assert rc == 20
+    assert secret not in out
+    assert "digest read failed" in err
+
+
 def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
     rc, _, err = _run(monkeypatch, tmp_path, "search", "--scope", "user")
@@ -276,6 +316,41 @@ def test_cli_digest_rebuild_chroma_reserved_phase_c(monkeypatch, tmp_path):
     )
     assert rc == 30
     assert "Phase C" in err or "reserved" in err
+
+
+def test_cli_digest_symlinked_project_ancestor_exits_20(monkeypatch, tmp_path):
+    target = tmp_path / "target-project"
+    malicious = tmp_path / "malicious-project"
+    target_wiki = target / ".claude" / "wiki"
+    target_wiki.mkdir(parents=True)
+    malicious.mkdir()
+    secret = "target digest summary secret"
+    (target_wiki / "digest.md").write_text(
+        format_block(
+            "2026-05-13T10:00:00Z",
+            "project:target",
+            "episodic",
+            "summary000000000",
+            {},
+            secret,
+        ),
+        encoding="utf-8",
+    )
+    os.symlink(target / ".claude", malicious / ".claude")
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "digest",
+        "--scope",
+        "project",
+        "--cwd",
+        str(malicious),
+    )
+
+    assert rc == 20
+    assert secret not in out
+    assert "digest read failed" in err
 
 
 def test_cli_add_project_fresh_repo_creates_trust_root(monkeypatch, tmp_path):

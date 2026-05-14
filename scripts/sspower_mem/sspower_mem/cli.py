@@ -116,7 +116,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 def cmd_search(args: argparse.Namespace) -> int:
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
-    paths: list[pathlib.Path] = []
+    sources: list[tuple[pathlib.Path, pathlib.Path]] = []
 
     try:
         cwd = canonicalize_cwd(args.cwd) if args.cwd and needs_project else None
@@ -124,9 +124,9 @@ def cmd_search(args: argparse.Namespace) -> int:
             if scope == "project":
                 if cwd is None:
                     cwd = canonicalize_cwd(os.getcwd())
-                paths.append(digest_path("project", cwd))
+                sources.append((digest_path("project", cwd), parent_anchor("project", cwd)))
             elif scope == "user":
-                paths.append(digest_path("user", None))
+                sources.append((digest_path("user", None), parent_anchor("user", None)))
             else:
                 print(f"sspower-mem: unknown scope: {scope}", file=sys.stderr)
                 return 30
@@ -138,9 +138,9 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     try:
         if args.mode == "recent":
-            hits = recent(paths, top_k=args.top_k, layer_filter=layer_filter)
+            hits = recent(sources, top_k=args.top_k, layer_filter=layer_filter)
         elif args.query:
-            hits = grep_search(paths, args.query, top_k=args.top_k, layer_filter=layer_filter)
+            hits = grep_search(sources, args.query, top_k=args.top_k, layer_filter=layer_filter)
         else:
             print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
             return 30
@@ -184,7 +184,7 @@ def cmd_digest(args: argparse.Namespace) -> int:
 
     dpath = digest_path(args.scope, cwd)
     try:
-        digest_text = safe_read_strict(dpath, dpath.parent)
+        digest_text = safe_read_strict(dpath, parent_anchor(args.scope, cwd))
     except FileNotFoundError:
         print(
             json.dumps(
