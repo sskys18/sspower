@@ -3,7 +3,7 @@ import pathlib
 
 import pytest
 
-from sspower_mem.digest import compute_id, format_block, parse_blocks
+from sspower_mem.digest import append_block_or_skip, compute_id, format_block, parse_blocks
 
 
 def test_compute_id_is_stable_sha1_16():
@@ -59,3 +59,53 @@ def test_meta_serialization_handles_commas_and_equals():
     )
     parsed = list(parse_blocks(block))
     assert parsed[0]["meta"]["migrated_from"] == "/path/with,comma=equals.md"
+
+
+def test_append_block_or_skip_returns_id_on_new(trust_root):
+    digest = trust_root / "digest.md"
+    eff_id, was_new = append_block_or_skip(
+        digest_path=digest,
+        trust_root=trust_root,
+        scope="user:global",
+        layer="user-global",
+        content="first",
+        meta={},
+    )
+    assert was_new is True
+    assert len(eff_id) == 16
+    assert digest.exists()
+
+
+def test_append_block_or_skip_dedups_identical_content(trust_root):
+    digest = trust_root / "digest.md"
+    a_id, a_new = append_block_or_skip(
+        digest, trust_root, "user:global", "user-global", "same", {}
+    )
+    b_id, b_new = append_block_or_skip(
+        digest, trust_root, "user:global", "user-global", "same", {}
+    )
+    assert a_id == b_id
+    assert a_new is True
+    assert b_new is False  # dedup'd
+    blocks = list(parse_blocks(digest.read_text()))
+    assert len(blocks) == 1
+
+
+def test_append_block_or_skip_handles_collision_with_dup_suffix(trust_root, monkeypatch):
+    """If two distinct contents hash to the same base_id, the second gets `_dup1`."""
+    digest = trust_root / "digest.md"
+
+    import sspower_mem.digest as d
+
+    monkeypatch.setattr(d, "compute_id", lambda *a, **k: "collision00000000")
+
+    a_id, _ = append_block_or_skip(
+        digest, trust_root, "user:global", "user-global", "content-A", {}
+    )
+    b_id, _ = append_block_or_skip(
+        digest, trust_root, "user:global", "user-global", "content-B", {}
+    )
+    assert a_id == "collision00000000"
+    assert b_id == "collision00000000_dup1"
+    blocks = list(parse_blocks(digest.read_text()))
+    assert {b["id"] for b in blocks} == {a_id, b_id}
