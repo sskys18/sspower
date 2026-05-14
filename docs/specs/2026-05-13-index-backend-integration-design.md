@@ -141,11 +141,11 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to th
 ### In scope
 - New CLI `sspower-mem` (Python, `uvx`-launched) with `add` / `search` / `migrate` / `digest` / `doctor` subcommands.
 - New `codex-bridge.mjs complete --json` subcommand (OpenAI-shape chat-completion).
-- Codex-bridge-based index LLM adapter + Model2Vec index embedder adapter (registration mechanism TBD in Phase 0).
+- Codex-bridge-based client-side extraction, defensive Mem0 no-op LLM registration, and Model2Vec Mem0 embedder registration (Phase 0 API verified).
 - Vector store: **Chroma** local-embedded, file-backed at `~/.claude/sspower/idx/chroma/`.
 - Graph store: disabled.
 - Plaintext substrate: per-scope `digest.md` (project-scope at `<cwd>/.claude/wiki/digest.md`, user-scope at `~/.claude/sspower/digest.md`). Append-only, block-structured, symlink-safe.
-- File lock (`fcntl.flock`) around every `add` (digest + the index's raw + the index's extract = one critical section).
+- File lock (`fcntl.flock`) around every `add` (digest + Mem0 raw add + Codex extraction + Mem0 extracted fact writes = one critical section).
 - Migration from existing wiki/sessions+decisions+gotchas + `~/.claude/projects/*/memory/*.md`.
 - Hook rewrites: `hooks/wiki-archive.{sh,py}`, `hooks/session-start` (existing bash file).
 - Skill updates: `using-sspower`, `brainstorming`, `systematic-debugging`, **`writing-plans`** (currently reads `<cwd>/.claude/wiki/decisions.md` + `sessions/` in its Pre-flight section — rewrite to call `sspower-mem search --layer decision,episodic`).
@@ -170,8 +170,10 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to th
 | D8 | Self-hosted only; **never the cloud-hosted index service**; **upstream telemetry MUST be disabled before any index-library import**. Exact opt-out mechanism (env var name, module patch, or both) verified in Phase 0 (§7.1 Q5) — D8 locks the privacy invariant, NOT a specific identifier. | Privacy. |
 | D9 | No Semble. | User 2026-05-13. |
 | D10 | brainstorming HARD-GATE: no implementation code until this spec passes self-review + Codex spec-review + user approval. | Handoff. |
-| D11 | One write critical section: file lock → (digest append) → (the index's `infer=False` raw add) → (the index's `infer=True` extract) → release. Failures in steps 2/3 do not roll back step 1; the digest line is authoritative. | v2 (resolves Codex missing #5 + misunderstanding #3). |
+| D11 | One write critical section: file lock → digest append → `Memory.add(infer=False, kind=raw)` → `codex-bridge.mjs complete --json` client-side extraction → `Memory.add(infer=False, kind=extracted)` × N → release. Failures in steps 2/3 do not roll back step 1; the digest line is authoritative. Phase C never calls `Memory.add(infer=True)` in the add path. | v11 amendment after Phase 0 source verification (supersedes v2/v8 extraction path). |
 | D12 | digest.md (new source-of-truth path) uses **`safe_append_strict`** (new primitive, §6.4 — `openat`-walk + `O_NOFOLLOW`, closes TOCTOU). Legacy `wiki-archive.py` helpers (`_safe_write_text`, `_safe_append_text`) are retained ONLY for the legacy `sessions/*.md` belt during Phase E. | v2 origin; v5 rewritten to reflect §6.4 amendment (v4 misunderstanding #2 + v5 misunderstanding #1). |
+| D13 | Extraction is performed **client-side** via `codex-bridge.mjs complete --json` (Phase B). The bridge response is parsed by sspower into N independent facts; each fact is written as its own Mem0 `infer=False` record with `metadata.kind="extracted"`, `metadata.raw_id=<digest block id>`, `metadata.fact_index=<0-based facts index>`, and deterministic `metadata.fact_hash`. Mem0 receives only `infer=False` calls, so the entity-store path never activates. | v11 amendment; Phase 0 Q6/Q7. |
+| D14 | Extraction-step failure observability is owned by sspower: bridge nonzero exit, bridge JSON `error`, invalid envelope JSON, invalid content JSON, or missing `facts` key sets `extracted="skipped-failed"` and returns rc=10. A valid empty response `{"facts":[]}` sets `extracted="ok"` with 0 extracted records. Mid-write failure while storing facts sets `extracted="skipped-partial"` and returns rc=10. | v11 amendment; restores failure signal lost by Mem0 `infer=True`. |
 
 ## 4. Verified preconditions (2026-05-13)
 
@@ -185,12 +187,12 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to th
 | Symlink-safe helpers in wiki-archive.py | ✓ `_has_symlink_component` (L73), `_safe_writability_probe` (L92), `resolve_out_dir` (L122), `_safe_write_text` (L150), `_safe_append_text` (L162). The new source-of-truth digest path uses `safe_append_strict` (§6.4 — `O_NOFOLLOW`-based, closes TOCTOU). Legacy helpers retained for the legacy `sessions/*.md` belt only. |
 | Codex bridge 24h reliability | ⚠️ 4 transient bridge events today, all self-recovered. Justifies D2 + D11. |
 
-Unknowns deferred to **Phase 0** (must resolve before Phase C; see §7.1):
-- the index's custom-provider registration mechanism (Codex source check found no `provider: custom` key in `<index>/utils/factory.py`).
-- the index's custom-embedder factory registration.
-- the index's `Memory.add(infer=False)` exact semantics (storage path, returned ids, metadata schema).
-- the index's SQLite `history.db` path override mechanism.
-- Whether upstream telemetry honors an env-var opt-out (exact name TBD by reading upstream source) or requires a runtime module patch.
+Phase 0 source verification is complete (`docs/specs/2026-05-13-index-provider-registration.md`, upstream `70bc9e51`) and resolves the Phase C API surface:
+- LLM provider registration: `LlmFactory.register_provider(name, class_path_string, BaseLlmConfig)`.
+- Embedder registration: direct `EmbedderFactory.provider_to_class[name] = class_path_string`; no public `register_provider`.
+- `Memory.add(infer=False)` writes to the same `memories` collection, embeds via the configured embedder, preserves caller metadata, and uses Mem0 UUID primary ids.
+- SQLite history path: pass explicit `MemoryConfig.history_db_path`.
+- Telemetry opt-out: set `MEM0_TELEMETRY=False` before first Mem0 import, plus defensive telemetry no-op patch.
 
 ## 5. Architecture & storage layout
 
@@ -255,7 +257,7 @@ Subcommands:
 sspower-mem add    --scope <project|user> --layer <episodic|decision|gotcha|user-global>
                    (--content <text> | --content-file <path>) [--cwd <path>] [--meta k=v ...] [--no-llm]
                    # v10: --content is always literal; explicit --content-file avoids @-path LFI risk.
-                   # --no-llm: skip step 3 (the index's `infer=True` / Codex extraction).
+                   # --no-llm: skip step 3a/3b (client-side extraction + extracted-record writes).
 sspower-mem search --scope <project|user|project,user> [--cwd <path>] [--layer <l1,l2,...>]
                    (--query <text> | --mode recent) [--top-k 8] [--json] [--idx-only]
                    # --query <text>:  semantic/grep search (default behavior).
@@ -282,13 +284,19 @@ sspower-mem migrate [--from-wiki <dir>] [--from-memory <dir>] [--dry-run]
                     #   - --reextract takes optional value: <id> for single block, `all` for every
                     #     raw-only block (default = `all`). `no_llm=true` blocks are SKIPPED on
                     #     `all` but processed on explicit <id>.
-sspower-mem digest --scope <project|user> [--cwd <path>] [--rebuild-chroma [--no-llm]]
+sspower-mem digest --scope <project|user> [--cwd <path>] [--rebuild-chroma [--reextract [<raw_id>|all]] [--no-llm]]
                    # --rebuild-chroma: re-ingest every digest.md block into the index from scratch.
-                   #                   Default: full re-add via the standard `add` path = step 2
-                   #                   (raw) + step 3 (extract) per block. Blocks with `no_llm=true`
-                   #                   in digest metadata SKIP step 3 (preserves original intent).
-                   #                   Idempotent via effective_id+kind dedup (§6.1 D11).
-                   # --rebuild-chroma --no-llm: force-skip step 3 for ALL blocks (used when the
+                   #                   Without --reextract: clear the entire Mem0 `memories`
+                   #                   collection, then replay every digest block as raw + extracted
+                   #                   records via the standard step 2/3a/3b path. Blocks with
+                   #                   `no_llm=true` in digest metadata SKIP step 3a/3b (preserves
+                   #                   original intent).
+                   # --rebuild-chroma --reextract <raw_id>: targeted extraction repair for one raw
+                   #                   block. Delete existing extracted records for raw_id, re-run
+                   #                   step 3a, then write deterministic step 3b records.
+                   # --rebuild-chroma --reextract all: same targeted purge/reextract flow for every
+                   #                   digest block; raw records are retained.
+                   # --rebuild-chroma --no-llm: force-skip step 3a/3b for ALL blocks (used when the
                    #                   bridge is down and you just want raw indexing restored fast).
 sspower-mem doctor [--bootstrap]
                    # health: lock writable, chroma reachable, bridge reachable, m2v loads, digest writable
@@ -311,7 +319,7 @@ Every block has a **stable id** = `sha1(scope|layer|content)[:16]` (64 bits — 
 
 **Effective id propagation** (v6 missing #6 fix): once `_dup<N>` is appended, the **effective id** (full string including suffix) is used as `block_id` everywhere downstream — `meta["id"]` for the index's raw-add path, and `meta["raw_id"]` on the index's extract-add path. Pseudocode below uses `effective_id` to make this explicit. Two genuinely distinct content blocks with the same 64-bit prefix will therefore have distinct records in the index and distinct digest entries.
 
-The id is the correlation key across all three writes (digest header line, the index's raw record metadata `id`, the index's extract record metadata `raw_id`).
+The id is the correlation key across the digest write, the raw index write, and every extracted fact write (digest header line, Mem0 raw record metadata `id`, Mem0 extracted record metadata `raw_id`).
 
 ```python
 # Lazy-import policy (v6 missing #1): the upstream index library + chromadb + model2vec are NOT imported at module load.
@@ -337,29 +345,52 @@ with fcntl.flock(LOCK_FD, fcntl.LOCK_EX):
         from idx_lib import Memory  # alias for the upstream index lib  # noqa: lazy
         # idx_raw_upsert(content, user_id=<scope>, metadata={**meta, "kind": "raw"})
         #   Idempotency: pre-search the index by metadata.id+kind=raw; if hit → skip.
-        step2_ok = idx_raw_upsert(content, meta)
+        step2_ok = idx_raw_upsert(content, {**meta, "kind": "raw"})
     except ImportError as e:
         log_errors_jsonl({"stage": "step2_import", "err": str(e)}); step2_ok = False
     except Exception as e:
         log_errors_jsonl({"stage": "step2_index", "err": str(e)}); step2_ok = False
 
-    # Step 3 (EXTRACT): metadata uses raw_id=effective_id.
-    if no_llm_flag:
-        step3_ok = True  # intentional skip; exit 0
+    # Step 3 (EXTRACT): Phase C owns extraction. NO Memory.add(infer=True).
+    if not step2_ok:
+        # Preserve D11 ordering. If raw indexing failed, do not spend bridge time or write
+        # extracted records into a store whose raw record is missing.
+        step3_ok = False
+        extracted_status = "skipped-intentional" if no_llm_flag else "skipped-failed"
+    elif no_llm_flag:
+        step3_ok = True  # intentional skip; exit 0 if step 2 succeeded
         extracted_status = "skipped-intentional"
     else:
         try:
-            # idx_extract_upsert(content, user_id=<scope>,
-            #   metadata={**meta, "kind": "extracted", "raw_id": effective_id})
-            #   Idempotency: pre-search by metadata.raw_id+kind=extracted; if hit → skip.
-            step3_ok = idx_extract_upsert(content, {**meta, "kind": "extracted", "raw_id": effective_id})
-            extracted_status = "ok" if step3_ok else "skipped-failed"
-        except ImportError as e:
-            log_errors_jsonl({"stage": "step3_import", "err": str(e)}); step3_ok = False
+            # Step 3a (CLIENT EXTRACTION): call codex-bridge complete --json with the
+            # extraction prompt contract in §6.1.5. The parser returns a bounded list
+            # of fact strings or raises ExtractFailed.
+            facts = bridge_extract_facts(content)
+        except ExtractFailed as e:
+            log_errors_jsonl({"stage": "step3a_extract", "err": str(e)}); step3_ok = False
             extracted_status = "skipped-failed"
-        except Exception as e:
-            log_errors_jsonl({"stage": "step3_index", "err": str(e)}); step3_ok = False
-            extracted_status = "skipped-failed"
+        else:
+            step3_ok = True
+            extracted_status = "ok"  # also true for facts == []
+            for fact_index, fact_text in enumerate(facts):
+                fact_hash = sha1(f"{effective_id}:{fact_text}".encode()).hexdigest()[:16]
+                fact_meta = {
+                    **meta,
+                    "kind": "extracted",
+                    "raw_id": effective_id,
+                    "fact_index": fact_index,
+                    "fact_hash": fact_hash,
+                }
+                try:
+                    # Step 3b (EXTRACTED INDEX): Memory.add(..., infer=False).
+                    # Idempotency: pre-search by metadata.raw_id+kind+fact_hash; if hit → skip.
+                    idx_extracted_upsert(fact_text, fact_meta)
+                except ImportError as e:
+                    log_errors_jsonl({"stage": "step3b_import", "err": str(e)})
+                    step3_ok = False; extracted_status = "skipped-partial"; break
+                except Exception as e:
+                    log_errors_jsonl({"stage": "step3b_index", "err": str(e)})
+                    step3_ok = False; extracted_status = "skipped-partial"; break
 
 # Lock released.
 # Exit code (single rule):
@@ -368,24 +399,68 @@ with fcntl.flock(LOCK_FD, fcntl.LOCK_EX):
 #   step1 ok, (step2 or step3) failed → 10
 ```
 
-Step 2 (`infer=False`) gives raw indexing even when Codex is down — the index stores content + Model2Vec vector without LLM extraction. Step 3 (`infer=True`) adds LLM-extracted facts. The `raw_id` metadata field correlates extract records back to the raw record so `--rebuild-chroma` can dedup and `search` can deduplicate hits.
+Step 2 (`infer=False`) gives raw indexing even when Codex is down — Mem0 stores content + Model2Vec vector without LLM extraction. Step 3a calls Codex through the bridge and parses facts in sspower code. Step 3b writes each fact as its own `Memory.add(infer=False)` record. The `raw_id` metadata field correlates extracted records back to the raw record so `--rebuild-chroma --reextract <raw_id>` can purge/rewrite partial fact sets and `search` can deduplicate hits.
 
 Codex misunderstanding #2 (correlation) + #3 (raw fallback) fix.
 
+#### 6.1.5 Extraction prompt contract
+
+Step 3a invokes:
+
+```bash
+codex-bridge.mjs complete --json --prompt <extraction-template>(content) --timeout 60000
+```
+
+The bridge stdout MUST be the Phase B OpenAI-shape envelope:
+
+```json
+{"id":"...","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"<STRING>"}}],"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}
+```
+
+The extraction contract is on `choices[0].message.content`: that string MUST parse as JSON object `{"facts":["fact 1","fact 2"]}`. It is not a bare array. Empty success is exactly `{"facts":[]}` and produces `extracted="ok"` with 0 extracted records.
+
+Invalid envelope JSON, a bridge-level JSON `error` field, missing `choices[0].message.content`, invalid content JSON, missing `facts`, or any non-string `facts[*]` element fails Step 3a: log `errors.jsonl`, set `extracted="skipped-failed"`, and return rc=10.
+
+The extraction prompt MUST instruct Codex to emit exactly the content JSON object above, with no Markdown fences and no prose. The parser keeps at most the first 32 facts and truncates each fact string to 512 characters before Step 3b. The deterministic metadata is computed from the bounded fact text:
+
+```python
+fact_meta = {
+    "kind": "extracted",
+    "raw_id": effective_id,          # digest header id: sha1[:16], plus _dup<N> only on collision
+    "fact_index": fact_index,        # 0-based position in the parsed facts array
+    "fact_hash": sha1(f"{effective_id}:{fact_text}".encode()).hexdigest()[:16],
+    "id": effective_id,
+    "layer": layer,
+    "scope": scope,
+    "ts": iso_now(),
+}
+```
+
+#### Rebuild / reextract recovery
+
+Targeted partial recovery is deterministic and operates only on extracted records for one raw block:
+
+1. `sspower-mem digest --rebuild-chroma --reextract <raw_id>` searches Mem0 with `user_id=<scope>` and filters `metadata.raw_id == <raw_id>` plus `metadata.kind == "extracted"`, then deletes every match.
+2. It reads the raw block's content from `digest.md` by header id `<raw_id>` and re-runs Step 3a.
+3. It re-runs Step 3b for each returned fact, writing `kind`, `raw_id`, `fact_index`, and `fact_hash` as above.
+4. It is idempotent: a second run deletes and rewrites the same bounded `fact_index`/`fact_hash` set. If a pre-search dedup check runs before each write, it is a no-op after the targeted purge.
+
+`sspower-mem digest --rebuild-chroma` without `--reextract` is the full repair path: clear the entire Mem0 `memories` collection, walk `digest.md`, and replay every raw block plus extracted facts through Step 2/3a/3b. Blocks with `[meta] {"no_llm": true}` replay only Step 2 unless `--reextract <raw_id>` explicitly targets that block.
+
 #### `add --no-llm` semantics (resolves v4 missing #4)
 
-`add --no-llm`: intentional skip of **step 3 only**. Step 2 (raw indexing) still runs normally.
+`add --no-llm`: intentional skip of **Step 3a/3b only**. Step 2 (raw indexing) still runs normally.
 
-- **Exit code rule** (clarifies v7 missing #3): `--no-llm` reclassifies step 3 from "fail = rc=10" to "intentional skip = no rc effect". The overall add rule still applies to step 2:
+- **Exit code rule** (clarifies v7 missing #3): `--no-llm` reclassifies Step 3a/3b from "fail = rc=10" to "intentional skip = no rc effect". The overall add rule still applies to step 2:
   - step1 fail → 20
   - step1 ok + step2 ok + (--no-llm) → **0** (intentional skip; clean success)
   - step1 ok + **step2 fail** + (--no-llm) → **10** (step 2 failure is not masked by --no-llm)
   - step1 ok + step2 ok + step3 ok (no flag) → 0
   - step1 ok + (step2 or step3) fail (no flag) → 10
-- **Output representation**: when `--json`, the result object has `"extracted": "skipped-intentional"` (vs `"skipped-failed"` for the rc=10 case where step 3 raised, and `"ok"` when step 3 succeeded).
+- **Output representation**: when `--json`, the result object has `"extracted": "skipped-intentional"` (vs `"skipped-failed"` / `"skipped-partial"` for rc=10 Step 3a/3b failures, and `"ok"` when Step 3a/3b succeeded).
 - **Persistence**: the digest block header includes `[meta] no_llm=true`. The index's raw record's metadata also has `no_llm=true`.
 - **`migrate --reextract` interaction**: blocks tagged `no_llm=true` are **SKIPPED** by `--reextract all` (they're intentional, not victims of bridge outage). `--reextract <id>` (explicit single id) re-runs extraction regardless of the flag — used when the user changes their mind about a specific block.
-- **`--no-llm` does NOT save the bridge call cost twice**: the bridge is not invoked at all in step 3. The index client just isn't called with `infer=True`.
+- **`--no-llm` does NOT save the bridge call cost twice**: the bridge is not invoked at all in step 3a, and no extracted-record writes are attempted in step 3b.
 
 #### Read path
 
@@ -482,33 +557,34 @@ codex-bridge.mjs complete --json --prompt <text|@file>
 - Defaults: model `gpt-5.5`, effort `minimal`, timeout 60s.
 - Implementation note: thin wrapper over the existing Codex CLI single-shot path. Reuse `secureTmpFile` + `cleanupTmpDir` from existing bridge for the prompt file. Reuse `classifyError` for failure logging.
 
-### 6.3 Index custom-LLM + custom-embedder adapters
+### 6.3 Mem0 defensive LLM + custom-embedder adapters
 
-**Exact registration mechanism: TBD in Phase 0.** Codex source check (factory.py) found built-in provider maps only, no documented `provider: custom` key. Three candidate mechanisms to evaluate in Phase 0:
+Phase 0 source verification (`docs/specs/2026-05-13-index-provider-registration.md`, upstream `70bc9e51`) freezes the factory API shape:
 
-1. **Subclass + factory monkey-patch**: add our class to `<index>.utils.factory.LlmFactory.provider_to_class` at import time. Lowest invasiveness, fragile across index-library versions.
-2. **Wrapper façade**: instantiate the index with a stock provider, then replace `memory_instance.llm` / `memory_instance.embedding_model` post-init with our objects. Bypasses factory entirely. Depends on whether the index re-reads these from config later.
-3. **Fork**: maintain a thin sspower fork of the index with the providers added. Most resilient, highest maintenance cost.
+- `LlmFactory.register_provider(name, class_path_string, BaseLlmConfig)` is public and stores a class-path string, not a class object.
+- `EmbedderFactory.provider_to_class` is a private `dict[str, str]` of class-path strings. `EmbedderFactory.register_provider` does not exist; direct dict mutation is the only available mechanism.
 
-Phase 0 produces a 1-page mini-spec choosing one mechanism with evidence (index-backend source citations) and recording the chosen mechanism's stability assumptions.
-
-Adapter interfaces (sketch, exact signatures TBD in Phase 0 once the index-backend source is read):
+The Phase C add path does **not** need `CodexBridgeLLM`, because sspower never calls `Memory.add(infer=True)`. Extraction is client-side Step 3a (§6.1.5). Mem0 still expects an LLM provider in config, so sspower registers a defensive no-op provider that raises if any future change accidentally re-enables Mem0 inference:
 
 ```python
-class CodexBridgeLLM:
-    """Implements index LLM interface. Calls codex-bridge.mjs complete --json."""
-    def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto"):
-        # subprocess.run([BRIDGE, "complete", "--json", "--prompt", flatten(messages)], timeout=60)
-        # On non-zero exit → raise CodexBridgeUnavailable (the index catches in infer=True path)
+from mem0.llms.configs import BaseLlmConfig
+from mem0.utils.factory import LlmFactory, EmbedderFactory
 
-class Model2VecEmbedder:
-    """Implements index embedder interface."""
-    def __init__(self, model_name="minishlab/potion-base-8M"):
-        from model2vec import StaticModel
-        self.model = StaticModel.from_pretrained(model_name)
-    def embed(self, text, memory_action=None):
-        return self.model.encode(text).tolist()
+LlmFactory.register_provider(
+    "sspower-noop",
+    "sspower_mem.mem.noop.NoOpLLM",
+    BaseLlmConfig,
+)
+EmbedderFactory.provider_to_class["sspower-model2vec"] = "sspower_mem.mem.embedder.Model2VecEmbedder"
 ```
+
+`NoOpLLM` subclasses Mem0's `LLMBase` and implements `generate_response(...)` as:
+
+```python
+raise RuntimeError("infer=True forbidden in Phase C")
+```
+
+`Model2VecEmbedder` is the real embedder used by every `Memory.add(..., infer=False)` call. Per Phase 0 Q2, Mem0 constructs custom embedders as `Model2VecEmbedder(BaseEmbedderConfig(**config))`, so the class must accept the base config object and load the pinned `minishlab/potion-base-8M` model from that config/default. This direct `provider_to_class` string mutation is the only monkey-patch allowed in Phase C.
 
 ### 6.4 digest.md format
 
@@ -639,10 +715,11 @@ Block format (v2 with v4 id-width tightening; v9 metadata encoding fix below):
 
 **Metadata encoding (v9 amendment, resolves Phase A round-2 auto-review docs-drift finding):** the `[meta] ` line is followed by a **compact JSON object** — NOT `key=value, key=value`. The earlier `key=value` format was lossy for values containing commas or equals signs (e.g., path strings). Phase A implementation uses JSON; the spec is amended to match. `[meta] {}` is the empty case.
 
-- `id` = first 16 chars of SHA-1 over `(scope|layer|content)` (v4 bump from 8 chars; see §6.1 for collision-handling).
+- `id` = first 16 chars of SHA-1 over `(scope|layer|content)` (v4 bump from 8 chars; see §6.1 for collision-handling). This digest header id is the raw block's stable id used as extracted-record `metadata.raw_id`; if collision handling adds `_dup<N>`, that effective id is the stable raw id.
 - `<scope>` = `project:<hash>` or `user:global`.
 - Trailing `---\n\n` separator on every block.
 - Grep-friendly: layer/scope/id all on the header line.
+- Digest blocks store raw content and metadata only. They do not store extracted facts and there is no `extraction_input_id` field; reextract/rebuild derives extraction input from the digest block content addressed by the header id.
 
 ### 6.5 Hook + skill rewrites
 
@@ -667,20 +744,20 @@ There is no `skills/session-start/SKILL.md` and this spec does not introduce one
 
 ## 7. Migration
 
-### 7.1 Phase 0 — index-backend source verification (NEW, blocks Phase C)
+### 7.1 Phase 0 — index-backend source verification (completed)
 
-**Deliverable:** a 1-page mini-spec `docs/specs/2026-05-13-index-provider-registration.md` answering:
+**Deliverable:** the completed mini-spec `docs/specs/2026-05-13-index-provider-registration.md` (upstream `70bc9e51`) answering:
 
-1. Which of the 3 registration mechanisms in §6.3 we choose, with index-backend source citations.
+1. Which registration mechanisms §6.3 uses, with index-backend source citations.
 2. Exact `LlmFactory` / `EmbedderFactory` API surface in current index-library main.
 3. `Memory.add(infer=False)` storage path: does it write to the same collection as `infer=True`? What metadata does it return? Does it embed via the configured embedder?
 4. How to override the index's history-DB path (env var? config key? subclass?).
 5. Upstream telemetry opt-out: exact env-var name (read upstream source — does NOT assume any particular identifier) and/or runtime module patch (`<index>.memory.telemetry` or equivalent). Phase 0 picks one and freezes the variable name into the implementation.
 6. **the index's v3 entity-linking / entity-store behavior** (resolves v3 missing #4): does the current OSS index algorithm lazily create extra Chroma collections (entity store) even when graph is off? If yes, what is the collection name, where is it persisted, and can it be disabled? Sources to check: `<index>/memory/main.py` (entity-store init), (upstream index migration docs). Spec assumption ("Chroma stores exactly the configured `memories` collection + nothing else") must be verified or revised.
-7. **`Memory.add(infer=True)` metadata + failure semantics** (resolves v4 missing #5): does the index preserve caller-supplied metadata (`raw_id`, `kind=extracted`, `id`, `layer`, `scope`, `ts`) when extraction yields multiple facts (1-to-N)? What is the resolution under ADD/UPDATE/NONE actions — does UPDATE replace metadata? Does the LLM adapter raising an exception surface to the caller, or does the index swallow it and return `[]`? Step 3 (§6.1) relies on (a) `raw_id` correlation surviving extraction, (b) failures being observable (so the wrapper sets `extracted="skipped-failed"`, not `"ok"`). If the index swallows the failure, we must wrap `Memory.add(infer=True)` with our own pre-check (e.g., timing the call + comparing the post-add count) or fork the relevant method. Source to check: `<index>/memory/main.py:add` + `_add_to_vector_store`.
-8. **the index's metadata-filter API surface** (resolves v7 missing #9): does the index's `Memory.search` (or a sibling like `Memory.get`/`Memory.list`) accept arbitrary `metadata.<key>` filters (e.g., `metadata.id == "<block_id>" AND metadata.kind == "raw"`)? §6.1 dedup pre-search requires this. If the index only filters by the top-level `user_id` + a fixed `run_id`/`agent_id` set, we must implement dedup by: (a) maintaining our own SQLite dedup table at `~/.claude/sspower/idx/dedup.db` (block_id+kind → idx_record_id), or (b) issuing a broad search + filtering metadata client-side, or (c) forking. Output of Phase 0 must pick one. Source to check: `<index>/memory/main.py:search` and `<index>/vector_stores/chroma.py` (or equivalent) for the filter pass-through.
+7. **`Memory.add(infer=True)` entity-store + failure semantics** (resolves v4 missing #5 and drives the v11 pivot): does the index preserve caller metadata, does it emit UPDATE/NONE, does it instantiate entity-store collections, and do LLM adapter failures propagate? Phase 0 found that `infer=True` creates the entity-store path, emits only ADD, and swallows LLM failures as `[]`; Phase C therefore forbids `infer=True` and implements Step 3a/3b in §6.1.
+8. **the index's metadata-filter API surface** (resolves v7 missing #9): does the index's `Memory.search` (or a sibling like `Memory.get`/`Memory.list`) accept arbitrary `metadata.<key>` filters (e.g., `metadata.id == "<block_id>" AND metadata.kind == "raw"`)? §6.1 dedup pre-search requires this. Phase 0 verified exact-match metadata filters pass through to Chroma, so no sspower SQLite dedup table or fork is needed.
 
-Phase 0 reads the index-backend source only — no implementation. Output is a doc. Re-run Codex spec-review on the mini-spec before unblocking Phase C.
+Phase 0 read the index-backend source only — no implementation. Its answers are now folded into §3, §4, §6.1, §6.3, §8, and §9.
 
 ### 7.2 One-shot migration
 
@@ -696,7 +773,7 @@ For each block:
 2. Call `sspower-mem add` (which applies the same `effective_id` collision logic from §6.1 — full-content compare on apparent id collision, `_dup<N>` suffix if content differs). Migration does NOT bypass the standard add path or its dedup rules (resolves v7 missing #8).
 3. Tag metadata: `migrated_from=<path>`, `original_mtime=<ts>` (merged into the standard meta dict before `add` is called).
 
-`--dry-run` prints plan, writes nothing. `--reextract` re-runs LLM extraction (the index's `infer=True` re-add) for entries currently lacking extracted facts (e.g. when Codex was down at migrate time).
+`--dry-run` prints plan, writes nothing. `--reextract` re-runs Step 3a client-side extraction and Step 3b `infer=False` extracted-record writes for entries currently lacking extracted facts (e.g. when Codex was down at migrate time).
 
 After Phase F green-checkpoint, archive legacy `wiki/sessions/`, `wiki/decisions.md`, `wiki/gotchas.md` under `wiki/_legacy_pre_idx/`. The digest.md is now the substrate.
 
@@ -706,20 +783,20 @@ After Phase F green-checkpoint, archive legacy `wiki/sessions/`, `wiki/decisions
 |---------|-----------|-------------|----------|
 | `digest.md` unwritable | step 1 of write critical section | exit 20 HARD. **Hook propagates the failure** (logs hint to stderr and exits 20 itself, per Phase E wrapper). Loud failure beats silent data loss — data-loss event must surface to the user, not get swallowed by `set +e`. | free disk; rerun hook manually. |
 | the index's `infer=False` raw add fails (Chroma corrupt/locked, embedder load error) | step 2 raises | digest line is already durable. errors.jsonl logged. `add_result.raw="skipped"`. exit 10. | `sspower-mem digest --rebuild-chroma` re-ingests all digest blocks. |
-| Codex bridge `complete` timeout/error | step 3 raises CodexBridgeUnavailable | digest + raw embedding stored. Only LLM-extracted facts are skipped. `add_result.extracted="skipped"`. exit 10. | `sspower-mem migrate --reextract` once bridge healthy. |
-| Model2Vec / chromadb / index-library import fails inside `add` | lazy import raises after digest append | exit **10** (NOT 30). Digest line is already durable; only the index's raw+extract are skipped. `errors.jsonl` logged. Lazy-import policy: the upstream index library + chromadb + model2vec are imported INSIDE `add` AFTER step 1 (digest append), so a missing or broken Python dep cannot bypass the digest write. This preserves D2/D11 against dep regression. | `sspower-mem doctor --bootstrap`; if model fetch fails, smaller pinned model in config.json. |
+| Codex bridge `complete --json` timeout/error, bridge JSON `error`, invalid envelope, invalid content JSON, or missing `facts` key | step 3a raises `ExtractFailed` | digest + raw embedding stored. No extracted records are written. `add_result.extracted="skipped-failed"`. exit 10. | `sspower-mem migrate --reextract <raw_id>` once bridge healthy. |
+| Mem0 `Memory.add(infer=False)` extracted-record write fails (Chroma full / metadata-filter error) | step 3b raises after Step 3a succeeded | digest + raw embedding stored. Some extracted records may have landed before failure. `add_result.extracted="skipped-partial"`. exit 10. | `sspower-mem digest --rebuild-chroma --reextract <raw_id>` deletes all `metadata.raw_id=<raw_id>` + `metadata.kind="extracted"` records, re-runs Step 3a, then writes the deterministic Step 3b set. If raw records are also suspect, run `sspower-mem digest --rebuild-chroma` to clear the full `memories` collection and replay digest.md. |
+| Model2Vec / chromadb / index-library import fails inside `add` | lazy import raises after digest append | exit **10** (NOT 30). Digest line is already durable; raw indexing and extracted-record writes are skipped. `errors.jsonl` logged. Lazy-import policy: the upstream index library + chromadb + model2vec are imported INSIDE `add` AFTER step 1 (digest append), so a missing or broken Python dep cannot bypass the digest write. This preserves D2/D11 against dep regression. | `sspower-mem doctor --bootstrap`; if model fetch fails, smaller pinned model in config.json. |
 | Model2Vec model load fails at CLI startup (before `add` begins) | `doctor --bootstrap` only — `add` never imports m2v at startup | exit 30 from doctor; `add` is unaffected because it doesn't import m2v until after digest append. | re-bootstrap with smaller model. |
 | `uv` / `uvx` missing | hook wrapper `command -v uvx` check | exit 30 (from wrapper, before invoking sspower-mem). Hook no-ops with hint. Legacy belt still runs. | `brew install uv`. |
 | Lock file unwritable | `fcntl.flock` raises | exit 30. Same as uv-missing path. No alternate-location fallback — D5/D11 pin storage to `~/.claude/sspower/idx/` and a split lock would silently fragment the substrate. | fix permissions on `~/.claude/sspower/idx/` (or its parent); rerun `sspower-mem doctor --bootstrap`. |
-| index returns wrong/garbage facts on search | not auto-detected | digest grep fallback never sees garbage facts. Manual inspection of `search --json` shows source ids. | `sspower-mem migrate --reextract <id>` re-runs extraction on a known-good block; or set `--no-llm` per-add to skip extraction for that block. |
 | Chroma history-db growth | `doctor` reports size | not blocking; informational only. | manual `vacuum`/`reset` via `chromadb` CLI. |
 
 **The contract**: if `sspower-mem add` returns 0 or 10, the content is recoverable from digest.md by `--rebuild-chroma`. Exit 20 is the only data-loss exit and it's disk-level.
 
 ## 9. Phases (ordered for independent verifiability)
 
-### Phase 0 — index-backend source verification (NEW, blocks C)
-Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. Re-run Codex spec-review on it. No code in Phase 0.
+### Phase 0 — index-backend source verification (completed)
+Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. No code in Phase 0.
 
 ### Phase A — sspower-mem skeleton, **digest-only** (no the index yet)
 - [ ] `scripts/sspower_mem/` package + `pyproject.toml`.
@@ -734,17 +811,17 @@ Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. R
 - [ ] Tests against fixture Codex responses (mock spawn).
 - [ ] Manual smoke against real Codex.
 
-### Phase C — index-backend wiring (blocked by Phase 0 + Phase A + Phase B)
+### Phase C — index-backend wiring (blocked by Phase A + Phase B; Phase 0 complete)
 
-**All bullets below are CONTRACTS PENDING Phase 0** — they describe the intended end-state, but the exact index-backend API surface (registration mechanism, `infer=False` semantics, history.db override, telemetry opt-out) is verified and frozen only by the Phase 0 mini-spec. If Phase 0 finds a different shape, this section is rewritten before Phase C starts.
+**Phase 0 source verification is complete** in `docs/specs/2026-05-13-index-provider-registration.md` (upstream `70bc9e51`). The bullets below use that verified API surface: LLM registration by class-path string, embedder registration by `provider_to_class` string mutation, explicit `history_db_path`, `MEM0_TELEMETRY=False` before first Mem0 import plus defensive telemetry patch, and `infer=False` only.
 
 - [ ] Add the index + chromadb + model2vec to `sspower_mem` deps; pin versions (pins selected during Phase 0 + Phase A bootstrap testing).
-- [ ] Implement `CodexBridgeLLM` and `Model2VecEmbedder` per the mechanism chosen in Phase 0 (§6.3 candidates 1/2/3).
-- [ ] Wire `infer=False` (raw) → `infer=True` (extract) two-step add inside the lock, using stable `block_id` + `raw_id` metadata correlation (§6.1 D11). Idempotent upsert per §6.1.
+- [ ] Implement defensive `NoOpLLM` and `Model2VecEmbedder` registration exactly as §6.3 specifies (`LlmFactory.register_provider(...)` class-path string; `EmbedderFactory.provider_to_class[...]` class-path string).
+- [ ] Wire `infer=False` raw add → Step 3a `codex-bridge complete --json` extraction → Step 3b `infer=False` extracted fact writes inside the lock, using stable digest `raw_id` plus `fact_index`/`fact_hash` metadata (§6.1 D11/D13). Idempotent upsert per §6.1.
 - [ ] `doctor --bootstrap` extended: download M2V model (`potion-base-8M`), init chromadb at `~/.claude/sspower/idx/chroma/`, run round-trip add+search, run `complete --json` round-trip against Codex bridge. Warm `uvx` cache.
-- [ ] Disable upstream telemetry in CLI entry before any index-library import. The exact mechanism (env var name + value, and/or runtime module patch) is the Phase 0 Q5 deliverable — wire whatever Phase 0 selects, do NOT hard-code a guessed identifier.
-- [ ] Pin the index's history.db to `~/.claude/sspower/idx/history.db` (mechanism from Phase 0 question 4 — env var vs config key vs subclass).
-- [ ] Tests: round-trip add → search; idempotency (same content added twice = single record per kind); error injections per §8 (chroma corrupt, bridge timeout, m2v load fail).
+- [ ] Disable upstream telemetry in CLI entry before any Mem0 import: set `MEM0_TELEMETRY=False`, set `MEM0_TELEMETRY_SAMPLE_RATE=0`, then defensively patch `mem0.memory.telemetry.capture_event` / `capture_client_event` to no-ops per Phase 0 Q5.
+- [ ] Pin the index's history.db to `~/.claude/sspower/idx/history.db` via `MemoryConfig.history_db_path` (Phase 0 Q4).
+- [ ] Tests: round-trip add → search; idempotency (same content added twice = single raw record and same deterministic extracted fact set); error injections per §8 (chroma corrupt, bridge timeout, invalid extraction JSON, partial Step 3b write, m2v load fail).
 
 ### Phase D — Migration
 - [ ] `sspower-mem migrate` against a copy of real wiki+memory. Verify idempotence (twice = same row count).
@@ -866,15 +943,12 @@ Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. R
 - [ ] All Codex v1 findings answered in §0 with file/section pointer.
 - [ ] Repo surfaces (§4) verified against actual filesystem, not assumed.
 
-## 11. Open questions (Phase 0 must close)
+## 11. Remaining open questions
 
-1. the index's custom-LLM registration mechanism — choose subclass-monkey-patch / wrapper façade / fork.
-2. the index's custom-embedder factory API.
-3. `Memory.add(infer=False)` exact semantics: storage path, returned ids, embedder use, metadata schema.
-4. the index's SQLite history-DB path override mechanism.
-5. Upstream telemetry opt-out: exact env-var name (verified by reading upstream source, NOT guessed) and whether import-time honor is sufficient or runtime module patch (`<index>.memory.telemetry` or equivalent) is required.
-6. Chroma persistent (sqlite3 + HNSW) locking semantics under concurrent PreCompact + SessionEnd (the §6.1 file lock is the belt; need to know if Chroma has its own to skip the suspenders).
-7. `sspower-mem search` latency budget on `hooks/session-start` (target <1s for UX). M2V encode ~10ms warm + Chroma top-k 8 ~5ms = OK in theory; verify on real machine in Phase A.
+Phase 0 closed the Mem0 provider-registration, `infer=False`, history DB, telemetry, entity-store, and metadata-filter questions; those answers are now load-bearing in §4, §6.1, §6.3, and §9.
+
+1. Chroma persistent (sqlite3 + HNSW) locking semantics under concurrent PreCompact + SessionEnd (the §6.1 file lock is the belt; need to know if Chroma has its own to skip the suspenders).
+2. `sspower-mem search` latency budget on `hooks/session-start` (target <1s for UX). M2V encode ~10ms warm + Chroma top-k 8 ~5ms = OK in theory; verify on real machine in Phase A.
 
 ## 12. Non-goals / explicit rejections
 
