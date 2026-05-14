@@ -3,6 +3,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from argparse import Namespace
 
 from sspower_mem.digest import format_block
 from sspower_mem.scope import scope_id
@@ -199,6 +200,60 @@ def test_cli_add_content_file_refuses_symlinked_input(monkeypatch, tmp_path):
     assert "content file read failed" in err
     assert "symlink target content" not in out
     assert not (tmp_path / "home" / ".claude" / "sspower" / "digest.md").exists()
+
+
+def test_cli_add_content_file_over_max_exits_20(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    content_file = tmp_path / "oversized-memory.txt"
+    content_file.write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content-file",
+        str(content_file),
+    )
+
+    assert rc == 20
+    assert out == ""
+    assert "content exceeds max bytes" in err
+    assert not (tmp_path / "home" / ".claude" / "sspower" / "digest.md").exists()
+
+
+def test_cli_search_oversized_digest_exits_20(monkeypatch, tmp_path, capsys):
+    import sspower_mem.io as io_mod
+    from sspower_mem.cli import cmd_search
+
+    fake_home = tmp_path / "home"
+    digest_dir = fake_home / ".claude" / "sspower"
+    digest_dir.mkdir(parents=True)
+    (digest_dir / "digest.md").write_bytes(b"abcdef")
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(io_mod, "MAX_DIGEST_BYTES", 5)
+
+    rc = cmd_search(
+        Namespace(
+            scope="user",
+            cwd=None,
+            layer=None,
+            top_k=5,
+            mode="recent",
+            query=None,
+            json=True,
+            idx_only=False,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert rc == 20
+    assert captured.out == ""
+    assert "content exceeds max bytes" in captured.err
 
 
 def test_cli_search_text_output_strips_ansi(monkeypatch, tmp_path):

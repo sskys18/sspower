@@ -3,6 +3,7 @@ import pathlib
 import pytest
 import stat
 
+import sspower_mem.io as io_mod
 from sspower_mem.io import safe_append_strict
 from sspower_mem.io import safe_makedirs_strict
 from sspower_mem.io import safe_read_strict
@@ -78,6 +79,15 @@ def test_safe_read_strict_round_trip(trust_root):
     assert safe_read_strict(path, trust_root) == "hello\nworld\n"
 
 
+def test_safe_read_strict_rejects_oversized_digest(trust_root, monkeypatch):
+    path = trust_root / "digest.md"
+    path.write_bytes(b"abcdef")
+    monkeypatch.setattr(io_mod, "MAX_DIGEST_BYTES", 5)
+
+    with pytest.raises(OSError, match="content exceeds max bytes"):
+        safe_read_strict(path, trust_root)
+
+
 def test_safe_append_strict_refuses_fifo(trust_root):
     if not hasattr(os, "mkfifo"):
         pytest.skip("mkfifo is not available on this platform")
@@ -99,6 +109,19 @@ def test_safe_append_strict_rejects_outside_trust_root(trust_root, tmp_path):
     outside = tmp_path / "elsewhere" / "digest.md"
     with pytest.raises(OSError, match="not under trust_root"):
         safe_append_strict(outside, "x\n", trust_root)
+
+
+def test_safe_append_strict_rejects_path_outside_trust_root_when_parent_anchor_set(
+    trust_root, parent_anchor
+):
+    outside_dir = parent_anchor / "outside"
+    outside_dir.mkdir()
+    outside = outside_dir / "digest.md"
+
+    with pytest.raises(OSError, match="not under trust_root"):
+        safe_append_strict(outside, "x\n", trust_root, parent_anchor)
+
+    assert not outside.exists()
 
 
 def test_safe_makedirs_strict_creates_nested(trust_root):

@@ -8,6 +8,8 @@ import os
 import pathlib
 import stat
 
+MAX_DIGEST_BYTES = 64 * 1024 * 1024
+
 
 def _open_dir(path_or_fd, flags_dir: int, *, dir_fd: int | None = None) -> int:
     return os.open(path_or_fd, flags_dir, dir_fd=dir_fd) if dir_fd is not None else os.open(path_or_fd, flags_dir)
@@ -203,10 +205,14 @@ def safe_read_strict(path: pathlib.Path, trust_root: pathlib.Path) -> str:
         try:
             _assert_regular_private_file(file_fd, path)
             chunks: list[bytes] = []
+            total = 0
             while True:
                 chunk = os.read(file_fd, 1024 * 1024)
                 if not chunk:
                     break
+                total += len(chunk)
+                if total > MAX_DIGEST_BYTES:
+                    raise OSError(f"content exceeds max bytes: {MAX_DIGEST_BYTES}")
                 chunks.append(chunk)
             return b"".join(chunks).decode("utf-8")
         finally:

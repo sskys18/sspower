@@ -37,6 +37,23 @@ _INJECTION_RE = re.compile(r"(?:^|\n)---\n\n## \S+ · [^·]+? · [^·]+? · \S+\
 DigestSource: TypeAlias = tuple[pathlib.Path, pathlib.Path, str, frozenset[str]]
 
 
+def _validate_digest_path_under_trust_root(
+    digest_path: pathlib.Path,
+    trust_root: pathlib.Path,
+) -> None:
+    try:
+        rel = digest_path.relative_to(trust_root)
+    except ValueError as e:
+        raise OSError(f"digest path {digest_path} not under trust_root {trust_root}") from e
+
+    if not rel.parts:
+        raise OSError(f"digest path {digest_path} must name a file below trust_root {trust_root}")
+
+    for part in rel.parts:
+        if part in ("", ".", ".."):
+            raise OSError(f"digest path {digest_path} contains traversal component {part!r}")
+
+
 def _source_parts(source: DigestSource) -> DigestSource:
     if not (isinstance(source, tuple) and len(source) == 4):
         raise TypeError(
@@ -71,7 +88,7 @@ def format_block(
     """
     if _INJECTION_RE.search(content):
         raise ValueError("content contains reserved digest boundary pattern; refusing to append")
-    body = content.rstrip("\n")
+    body = content
     meta_line = "[meta] " + json.dumps(meta, separators=(",", ":"), sort_keys=True)
     return f"## {ts} · {scope} · {layer} · {block_id}\n{meta_line}\n{body}{_SEPARATOR}"
 
@@ -83,7 +100,6 @@ def parse_blocks(text: str) -> Iterator[dict]:
     """
     raw_blocks = _BLOCK_BOUNDARY_RE.split(text)
     for raw in raw_blocks:
-        raw = raw.strip("\n")
         if not raw:
             continue
         lines = raw.split("\n")
@@ -145,6 +161,7 @@ def append_block_or_skip(
     Returns (effective_id, was_new). was_new=False means an identical block
     already existed and no write was performed.
     """
+    _validate_digest_path_under_trust_root(digest_path, trust_root)
     safe_makedirs_strict(trust_root, parent_anchor)
 
     base_id = compute_id(scope, layer, content)
@@ -172,7 +189,7 @@ def append_block_or_skip(
         meta=meta,
         content=content,
     )
-    safe_append_strict(digest_path, block, parent_anchor)
+    safe_append_strict(digest_path, block, trust_root, parent_anchor)
     return effective_id, True
 
 

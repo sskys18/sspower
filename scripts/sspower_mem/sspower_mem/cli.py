@@ -37,6 +37,7 @@ from sspower_mem.scope import (
 PROJECT_LAYERS = frozenset({"episodic", "decision", "gotcha"})
 USER_LAYERS = frozenset({"user-global"})
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+MAX_CONTENT_FILE_BYTES = 8 * 1024 * 1024
 
 
 def _sanitize_for_terminal(s: str) -> str:
@@ -74,10 +75,14 @@ def _read_content_file(path: str) -> str:
     try:
         _assert_regular_private_file(file_fd, abs_path)
         chunks: list[bytes] = []
+        total = 0
         while True:
             chunk = os.read(file_fd, 1024 * 1024)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > MAX_CONTENT_FILE_BYTES:
+                raise OSError(f"content exceeds max bytes: {MAX_CONTENT_FILE_BYTES}")
             chunks.append(chunk)
         return b"".join(chunks).decode("utf-8")
     finally:
@@ -130,7 +135,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         return 30
 
     try:
-        with acquire_lock(lock_path):
+        with acquire_lock(lock_path, parent_anchor=parent_anchor("user", None)):
             try:
                 eff_id, was_new = append_block_or_skip(
                     digest_path=dpath,

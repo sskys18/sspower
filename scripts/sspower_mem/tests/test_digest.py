@@ -56,6 +56,23 @@ def test_format_block_round_trips_through_parse():
     assert p["content"].rstrip() == "some content\nspanning lines"
 
 
+def test_format_block_preserves_trailing_newlines():
+    content = "some content\nspanning lines\n\n"
+    block = format_block(
+        ts="2026-05-13T10:00:00Z",
+        scope="project:abc12345",
+        layer="episodic",
+        block_id="0123456789abcdef",
+        meta={"foo": "bar"},
+        content=content,
+    )
+
+    parsed = list(parse_blocks(block))
+
+    assert len(parsed) == 1
+    assert parsed[0]["content"] == content
+
+
 def test_parse_blocks_handles_multiple():
     b1 = format_block("2026-05-13T10:00:00Z", "user:global", "user-global",
                      "id0000000000000a", {}, "first")
@@ -244,6 +261,24 @@ def test_append_block_or_skip_resists_ancestor_symlink_swap(tmp_path, monkeypatc
         )
 
     assert not (attacker_claude / "wiki" / "digest.md").exists()
+
+
+def test_append_block_or_skip_rejects_digest_outside_trust_root(trust_root, parent_anchor):
+    outside = parent_anchor / "outside"
+    digest = outside / "digest.md"
+
+    with pytest.raises(OSError, match="not under trust_root"):
+        append_block_or_skip(
+            digest_path=digest,
+            trust_root=trust_root,
+            parent_anchor=parent_anchor,
+            scope="user:global",
+            layer="user-global",
+            content="must not append outside trust root",
+            meta={},
+        )
+
+    assert not digest.exists()
 
 
 def test_load_all_blocks_drops_spoofed_scope(trust_root, parent_anchor):

@@ -1,4 +1,5 @@
 import multiprocessing as mp
+import os
 import pathlib
 import time
 
@@ -30,3 +31,31 @@ def test_acquire_lock_blocks_concurrent_writer(tmp_path):
         assert elapsed >= 0.4, f"second acquire returned too fast ({elapsed:.2f}s)"
     p.join(timeout=2.0)
     assert p.exitcode == 0
+
+
+def test_acquire_lock_refuses_symlinked_final_file(tmp_path):
+    lock_dir = tmp_path / "idx"
+    lock_dir.mkdir()
+    target = tmp_path / "outside.lock"
+    target.write_text("", encoding="utf-8")
+    lock_path = lock_dir / ".lock"
+    os.symlink(target, lock_path)
+
+    with pytest.raises(OSError):
+        with acquire_lock(lock_path, parent_anchor=tmp_path):
+            pass
+
+    assert target.read_text(encoding="utf-8") == ""
+
+
+def test_acquire_lock_refuses_symlinked_parent(tmp_path):
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    lock_dir = tmp_path / "idx"
+    os.symlink(target_dir, lock_dir)
+
+    with pytest.raises(OSError):
+        with acquire_lock(lock_dir / ".lock", parent_anchor=tmp_path):
+            pass
+
+    assert not (target_dir / ".lock").exists()
