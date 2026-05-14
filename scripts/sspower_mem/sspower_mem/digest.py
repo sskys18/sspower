@@ -16,8 +16,11 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import pathlib
 import re
 from typing import Iterator
+
+from sspower_mem.io import safe_append_strict, safe_makedirs_strict
 
 
 _HEADER_RE = re.compile(
@@ -85,3 +88,63 @@ def parse_blocks(text: str) -> Iterator[dict]:
             "meta": meta,
             "content": body,
         }
+
+
+def _existing_blocks_by_base(digest_path: pathlib.Path) -> dict[str, list[dict]]:
+    """Map base_id (with any _dup<N> stripped) to blocks already present."""
+    if not digest_path.exists():
+        return {}
+    by_base: dict[str, list[dict]] = {}
+    for blk in parse_blocks(digest_path.read_text(encoding="utf-8")):
+        bid = blk["id"]
+        base = bid.split("_dup", 1)[0]
+        by_base.setdefault(base, []).append(blk)
+    return by_base
+
+
+def append_block_or_skip(
+    digest_path: pathlib.Path,
+    trust_root: pathlib.Path,
+    scope: str,
+    layer: str,
+    content: str,
+    meta: dict,
+    ts: str | None = None,
+    *,
+    parent_anchor: pathlib.Path | None = None,
+) -> tuple[str, bool]:
+    """Append a block using collision-safe ids.
+
+    Returns (effective_id, was_new). was_new=False means an identical block
+    already existed and no write was performed.
+    """
+    if parent_anchor is not None:
+        safe_makedirs_strict(trust_root, parent_anchor)
+
+    base_id = compute_id(scope, layer, content)
+    existing = _existing_blocks_by_base(digest_path)
+    for blk in existing.get(base_id, []):
+        if blk["content"].rstrip("\n") == content.rstrip("\n"):
+            return blk["id"], False
+
+    if base_id in existing:
+        suffixes = [
+            int(b["id"].split("_dup", 1)[1])
+            for b in existing[base_id]
+            if "_dup" in b["id"] and b["id"].split("_dup", 1)[1].isdigit()
+        ]
+        n = max(suffixes, default=0) + 1
+        effective_id = f"{base_id}_dup{n}"
+    else:
+        effective_id = base_id
+
+    block = format_block(
+        ts=ts or iso_now(),
+        scope=scope,
+        layer=layer,
+        block_id=effective_id,
+        meta=meta,
+        content=content,
+    )
+    safe_append_strict(digest_path, block, trust_root)
+    return effective_id, True
