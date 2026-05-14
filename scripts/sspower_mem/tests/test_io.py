@@ -3,6 +3,7 @@ import pathlib
 import pytest
 
 from sspower_mem.io import safe_append_strict
+from sspower_mem.io import safe_makedirs_strict
 
 
 def test_safe_append_strict_refuses_symlinked_final_file(trust_root, tmp_path):
@@ -37,3 +38,22 @@ def test_safe_append_strict_rejects_outside_trust_root(trust_root, tmp_path):
     outside = tmp_path / "elsewhere" / "digest.md"
     with pytest.raises(OSError, match="not under trust_root"):
         safe_append_strict(outside, "x\n", trust_root)
+
+
+def test_safe_makedirs_strict_creates_nested(trust_root):
+    target = trust_root / "a" / "b" / "c"
+    safe_makedirs_strict(target, trust_root)
+    assert target.is_dir()
+    # idempotent
+    safe_makedirs_strict(target, trust_root)
+    assert target.is_dir()
+
+
+def test_safe_makedirs_strict_refuses_symlink_in_path(trust_root, tmp_path):
+    outside = tmp_path / "evil"
+    outside.mkdir()
+    link_dir = trust_root / "a"
+    os.symlink(outside, link_dir)
+    target = link_dir / "b"
+    with pytest.raises(OSError):
+        safe_makedirs_strict(target, trust_root)
