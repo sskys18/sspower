@@ -114,11 +114,12 @@ def test_meta_serialization_handles_commas_and_equals():
     assert parsed[0]["meta"]["migrated_from"] == "/path/with,comma=equals.md"
 
 
-def test_append_block_or_skip_returns_id_on_new(trust_root):
+def test_append_block_or_skip_returns_id_on_new(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     eff_id, was_new = append_block_or_skip(
         digest_path=digest,
         trust_root=trust_root,
+        parent_anchor=parent_anchor,
         scope="user:global",
         layer="user-global",
         content="first",
@@ -129,13 +130,13 @@ def test_append_block_or_skip_returns_id_on_new(trust_root):
     assert digest.exists()
 
 
-def test_append_block_or_skip_dedups_identical_content(trust_root):
+def test_append_block_or_skip_dedups_identical_content(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     a_id, a_new = append_block_or_skip(
-        digest, trust_root, "user:global", "user-global", "same", {}
+        digest, trust_root, parent_anchor, "user:global", "user-global", "same", {}
     )
     b_id, b_new = append_block_or_skip(
-        digest, trust_root, "user:global", "user-global", "same", {}
+        digest, trust_root, parent_anchor, "user:global", "user-global", "same", {}
     )
     assert a_id == b_id
     assert a_new is True
@@ -144,7 +145,9 @@ def test_append_block_or_skip_dedups_identical_content(trust_root):
     assert len(blocks) == 1
 
 
-def test_append_block_or_skip_handles_collision_with_dup_suffix(trust_root, monkeypatch):
+def test_append_block_or_skip_handles_collision_with_dup_suffix(
+    trust_root, parent_anchor, monkeypatch
+):
     """If two distinct contents hash to the same base_id, the second gets `_dup1`."""
     digest = trust_root / "digest.md"
 
@@ -153,10 +156,10 @@ def test_append_block_or_skip_handles_collision_with_dup_suffix(trust_root, monk
     monkeypatch.setattr(d, "compute_id", lambda *a, **k: "collision00000000")
 
     a_id, _ = append_block_or_skip(
-        digest, trust_root, "user:global", "user-global", "content-A", {}
+        digest, trust_root, parent_anchor, "user:global", "user-global", "content-A", {}
     )
     b_id, _ = append_block_or_skip(
-        digest, trust_root, "user:global", "user-global", "content-B", {}
+        digest, trust_root, parent_anchor, "user:global", "user-global", "content-B", {}
     )
     assert a_id == "collision00000000"
     assert b_id == "collision00000000_dup1"
@@ -200,11 +203,12 @@ def test_append_block_or_skip_resists_ancestor_symlink_swap(tmp_path, monkeypatc
     assert not (attacker_claude / "wiki" / "digest.md").exists()
 
 
-def test_grep_search_tokenizes_and_scores(trust_root):
+def test_grep_search_tokenizes_and_scores(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "memory backend design decision about chroma",
@@ -213,6 +217,7 @@ def test_grep_search_tokenizes_and_scores(trust_root):
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "completely unrelated content about telegram",
@@ -221,12 +226,13 @@ def test_grep_search_tokenizes_and_scores(trust_root):
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "another chroma note",
         {},
     )
-    hits = grep_search([digest], "chroma backend", top_k=5)
+    hits = grep_search([(digest, parent_anchor)], "chroma backend", top_k=5)
     assert len(hits) == 2
     # The first block has both tokens; should rank above the chroma-only one.
     assert "memory backend" in hits[0]["content"]
@@ -234,41 +240,44 @@ def test_grep_search_tokenizes_and_scores(trust_root):
     assert hits[0]["source"] == "digest-grep"
 
 
-def test_grep_search_drops_short_tokens(trust_root):
+def test_grep_search_drops_short_tokens(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "chromaDB note",
         {},
     )
-    hits = grep_search([digest], "is a db", top_k=5)
+    hits = grep_search([(digest, parent_anchor)], "is a db", top_k=5)
     # All tokens < 3 chars; query becomes the literal string.
     # "is a db" appears as substring? Not in the content. Should be empty.
     assert hits == []
 
 
-def test_grep_search_max_zero_returns_empty(trust_root):
+def test_grep_search_max_zero_returns_empty(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "hello world",
         {},
     )
-    hits = grep_search([digest], "absent_term_xyz", top_k=5)
+    hits = grep_search([(digest, parent_anchor)], "absent_term_xyz", top_k=5)
     assert hits == []
 
 
-def test_recent_returns_newest_first(trust_root):
+def test_recent_returns_newest_first(trust_root, parent_anchor):
     digest = trust_root / "digest.md"
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "old",
@@ -278,6 +287,7 @@ def test_recent_returns_newest_first(trust_root):
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "mid",
@@ -287,19 +297,20 @@ def test_recent_returns_newest_first(trust_root):
     append_block_or_skip(
         digest,
         trust_root,
+        parent_anchor,
         "user:global",
         "user-global",
         "new",
         {},
         ts="2026-05-12T00:00:00Z",
     )
-    hits = recent([digest], top_k=2)
+    hits = recent([(digest, parent_anchor)], top_k=2)
     assert [h["content"].strip() for h in hits] == ["new", "mid"]
     assert hits[0]["score"] == 1.0
     assert hits[0]["source"] == "digest-recent"
 
 
-def test_recent_tied_timestamps_prefer_project_and_score_all_one(trust_root):
+def test_recent_tied_timestamps_prefer_project_and_score_all_one(trust_root, parent_anchor):
     ts = "2026-05-13T10:00:00Z"
     user_root = trust_root / "user"
     project_root = trust_root / "project"
@@ -324,7 +335,7 @@ def test_recent_tied_timestamps_prefer_project_and_score_all_one(trust_root):
         encoding="utf-8",
     )
 
-    hits = recent([user_digest, project_digest], top_k=3)
+    hits = recent([(user_digest, parent_anchor), (project_digest, parent_anchor)], top_k=3)
 
     assert [h["id"] for h in hits] == [
         "aproject0000000",

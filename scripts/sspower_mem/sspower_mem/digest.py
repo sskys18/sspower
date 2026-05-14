@@ -33,13 +33,15 @@ _BLOCK_BOUNDARY_RE = re.compile(
 )
 _RESERVED_BOUNDARY_RE = re.compile(r"(?:^|\n)---\n\n## ")
 
-DigestSource: TypeAlias = pathlib.Path | tuple[pathlib.Path, pathlib.Path]
+DigestSource: TypeAlias = tuple[pathlib.Path, pathlib.Path]
 
 
 def _source_parts(source: DigestSource) -> tuple[pathlib.Path, pathlib.Path]:
-    if isinstance(source, tuple):
-        return source
-    return source, source.parent
+    if not (isinstance(source, tuple) and len(source) == 2):
+        raise TypeError(
+            f"digest source must be (digest_path, parent_anchor) tuple, got {type(source).__name__}"
+        )
+    return source
 
 
 def compute_id(scope: str, layer: str, content: str) -> str:
@@ -109,11 +111,11 @@ def parse_blocks(text: str) -> Iterator[dict]:
 
 
 def _existing_blocks_by_base(
-    digest_path: pathlib.Path, read_root: pathlib.Path
+    digest_path: pathlib.Path, parent_anchor: pathlib.Path
 ) -> dict[str, list[dict]]:
     """Map base_id (with any _dup<N> stripped) to blocks already present."""
     try:
-        text = safe_read_strict(digest_path, read_root)
+        text = safe_read_strict(digest_path, parent_anchor)
     except FileNotFoundError:
         return {}
     by_base: dict[str, list[dict]] = {}
@@ -127,25 +129,22 @@ def _existing_blocks_by_base(
 def append_block_or_skip(
     digest_path: pathlib.Path,
     trust_root: pathlib.Path,
+    parent_anchor: pathlib.Path,
     scope: str,
     layer: str,
     content: str,
     meta: dict,
     ts: str | None = None,
-    *,
-    parent_anchor: pathlib.Path | None = None,
 ) -> tuple[str, bool]:
     """Append a block using collision-safe ids.
 
     Returns (effective_id, was_new). was_new=False means an identical block
     already existed and no write was performed.
     """
-    if parent_anchor is not None:
-        safe_makedirs_strict(trust_root, parent_anchor)
-    io_root = parent_anchor if parent_anchor is not None else trust_root
+    safe_makedirs_strict(trust_root, parent_anchor)
 
     base_id = compute_id(scope, layer, content)
-    existing = _existing_blocks_by_base(digest_path, io_root)
+    existing = _existing_blocks_by_base(digest_path, parent_anchor)
     for blk in existing.get(base_id, []):
         if blk["content"].rstrip("\n") == content.rstrip("\n"):
             return blk["id"], False
@@ -169,7 +168,7 @@ def append_block_or_skip(
         meta=meta,
         content=content,
     )
-    safe_append_strict(digest_path, block, io_root)
+    safe_append_strict(digest_path, block, parent_anchor)
     return effective_id, True
 
 
