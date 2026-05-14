@@ -8,6 +8,47 @@
 
 ## 0. Change log
 
+### v10 → v11 (Phase C amendment, after Phase 0 source verification + Phase A v0.1.x experience)
+
+Phase 0 (`docs/specs/2026-05-13-index-provider-registration.md` @ upstream SHA `70bc9e51`) found three constraints that contradict the v8 add-path design:
+
+1. `Memory.add(infer=True)` activates the Chroma entity-store and lazily creates additional collections beyond the configured `memories` collection. Entity-store cannot be disabled when graph store is off. (Phase 0 Q6.)
+2. `Memory.add(infer=True)` only emits the `ADD` action in current OSS V3 — never `UPDATE` or `NONE`. v8's UPDATE/NONE handling is dead code. (Phase 0 Q7.)
+3. `Memory.add(infer=True)` swallows LLM-adapter exceptions and returns `[]`. v8 assumed observable failure to set `extracted="skipped-failed"`. (Phase 0 Q7.)
+
+Phase C therefore re-specifies the extraction path. The contract below supersedes v8's §6.1 Step 3 and the `infer=True` references in §6.3 / §6.4 / §8 for Phase C onwards. Phase A's digest-only contract is unchanged.
+
+**v11 amendments to locked decisions:**
+
+- **D11 (amended):** One write critical section = `lock → digest append → Memory.add(infer=False, kind=raw) → codex-bridge complete (extract facts) → Memory.add(infer=False, kind=extracted) × N → release`. NO call to `Memory.add(infer=True)` anywhere in the add path.
+- **D13 (new):** Extraction is performed **client-side** via `codex-bridge.mjs complete --json` (Phase B). The bridge's response content is parsed into N independent facts; each fact is written as a separate `infer=False` Mem0 record with `metadata.kind="extracted"` and `metadata.raw_id=<block_id>`. Result: Mem0 receives only `infer=False` calls; the entity-store never activates; the `memories` collection holds both raw and extracted records differentiated by `metadata.kind`.
+- **D14 (new):** Extraction-step failure observability is restored: a `codex-bridge complete` non-zero exit or JSON `error` field sets `extracted="skipped-failed"` and returns rc=10. An empty-but-valid Codex response (no facts extracted) sets `extracted="ok"` with 0 extracted records — distinct from the failure case.
+- **§6.1 Step 3 contract change (Phase C):** Step 3 is now two sub-steps:
+  - Step 3a — `codex-bridge.mjs complete --json --prompt <extraction-template>(content)`. Wall-time cap 60s (bridge enforces). On exit≠0 or `error` JSON → step 3 fails, exit 10, `extracted="skipped-failed"`. On `[]` content → step 3 ok with 0 facts.
+  - Step 3b — for each parsed fact: `Memory.add(fact, user_id=scope, metadata={kind:"extracted", raw_id, layer, scope, ts}, infer=False)`. All N writes succeed or step 3 fails (rc=10). N is bounded (see "Extraction prompt contract" below).
+- **§6.3 amendment:** `CodexBridgeLLM` adapter is **NO LONGER NEEDED for the add path** since we never call `infer=True`. Mem0 still requires SOME LLM provider registered at init even if unused, so register a minimal no-op `LlmFactory.register_provider("noop", NoOpLLM)` that raises `RuntimeError("infer=True forbidden in Phase C")` if ever invoked. Defensive: if a future change accidentally re-enables `infer=True`, the no-op raises loudly instead of silently activating entity-store.
+- **§6.3 amendment (embedder):** Per Phase 0 Q2, `EmbedderFactory.register_provider` does not exist. Use `EmbedderFactory.provider_to_class["codex_bridge"] = Model2VecEmbedder` direct dict mutation (Phase 0 Q2 verified pattern). This is the ONLY monkey-patch; ban any other.
+- **§5 amendment (storage layout):** `history.db` location is pinned via `MemoryConfig.history_db_path` (Phase 0 Q4 verified config key). Path: `~/.claude/sspower/idx/history.db`. Same as v8.
+- **§8 amendment (failure-mode rows):**
+  - "Codex bridge `complete` timeout/error" → step 3a raises → digest + raw embedding stored, no extracted records. `extracted="skipped-failed"`, rc=10. Recovery: `sspower-mem migrate --reextract` once bridge healthy. (Same as v8 row.)
+  - NEW row: "Mem0 `Memory.add(infer=False)` extracted-record write fails (Chroma full / metadata-filter error)" → step 3b raises → some extracted records may have landed before failure. `extracted="skipped-partial"`. rc=10. Recovery: `--rebuild-chroma` re-derives extracted set deterministically from digest.md raw blocks (which include `meta.extraction_input_id` linking back).
+  - REMOVED row: "the index returns wrong/garbage facts on search" — superseded by D13/D14 (extraction is our code; we control the prompt; bad facts are a prompt bug, not an opaque library issue).
+
+**Extraction prompt contract (new §6.1.5 in v11):**
+
+- Prompt template lives at `scripts/sspower_mem/sspower_mem/extract_prompt.py` as a single string. Caller substitutes the raw content; nothing else. No examples — minimal token budget.
+- Codex returns structured JSON: `{"facts": ["fact 1", "fact 2", ...]}` (we use Codex's `--json` mode but ALSO parse the content field as a JSON array of strings). On invalid JSON → log warning + step 3 fails with `extracted="skipped-failed"`.
+- Hard cap: **maximum 32 facts** per add. Truncate beyond. Prevents pathological responses from blowing out Chroma.
+- Each fact body is bounded: **maximum 512 chars**. Truncate. Facts longer than 512 chars are not facts.
+- Empty `facts: []` is valid → `extracted="ok"` with 0 records.
+
+**What does NOT change in v11:**
+
+- D1-D10, D12: source-of-truth contract, scope syntax, write critical section's lock placement, digest format, exit-code boundaries (0/10/20/30), trust-boundary helpers from Phase A.
+- §6.4 (digest format) — unchanged.
+- §7.1 Phase 0 — historical reference; the deliverable that triggered this amendment.
+- §9 phases — Phase 0 + Phase A done; Phase B done (codex-bridge complete --json); Phase C now re-specified; Phases D-F unchanged in shape.
+
 ### v7 → v8 (after Codex review of v7)
 - **`--idx-only` rename propagated** to all read-path references (Codex flagged 2 stale `--no-grep-fallback` mentions) (v7 missing #1 + misunderstanding #1).
 - **Phase E `--cwd` propagation** — shell wrapper example + session-start rewrite now both pass `--cwd "$CLAUDE_HOOK_CWD"` / `--cwd "$payload_cwd"` explicitly (v7 missing #2 + misunderstanding #3).
