@@ -14,7 +14,13 @@ import os
 import pathlib
 import sys
 
-from sspower_mem.digest import append_block_or_skip, grep_search, parse_blocks, recent
+from sspower_mem.digest import (
+    DigestSource,
+    _load_all_blocks,
+    append_block_or_skip,
+    grep_search,
+    recent,
+)
 from sspower_mem.doctor import bootstrap, health
 from sspower_mem.io import safe_read_strict
 from sspower_mem.lock import acquire_lock
@@ -26,6 +32,9 @@ from sspower_mem.scope import (
     trust_root,
     user_sspower_dir,
 )
+
+PROJECT_LAYERS = frozenset({"episodic", "decision", "gotcha"})
+USER_LAYERS = frozenset({"user-global"})
 
 
 def _resolve_cwd(args: argparse.Namespace) -> pathlib.Path | None:
@@ -116,7 +125,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 def cmd_search(args: argparse.Namespace) -> int:
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
-    sources: list[tuple[pathlib.Path, pathlib.Path]] = []
+    sources: list[DigestSource] = []
 
     try:
         cwd = canonicalize_cwd(args.cwd) if args.cwd and needs_project else None
@@ -124,9 +133,19 @@ def cmd_search(args: argparse.Namespace) -> int:
             if scope == "project":
                 if cwd is None:
                     cwd = canonicalize_cwd(os.getcwd())
-                sources.append((digest_path("project", cwd), parent_anchor("project", cwd)))
+                sources.append((
+                    digest_path("project", cwd),
+                    parent_anchor("project", cwd),
+                    scope_id("project", cwd),
+                    PROJECT_LAYERS,
+                ))
             elif scope == "user":
-                sources.append((digest_path("user", None), parent_anchor("user", None)))
+                sources.append((
+                    digest_path("user", None),
+                    parent_anchor("user", None),
+                    scope_id("user", None),
+                    USER_LAYERS,
+                ))
             else:
                 print(f"sspower-mem: unknown scope: {scope}", file=sys.stderr)
                 return 30
@@ -183,8 +202,12 @@ def cmd_digest(args: argparse.Namespace) -> int:
         return 20
 
     dpath = digest_path(args.scope, cwd)
+    panchor = parent_anchor(args.scope, cwd)
+    sc_id = scope_id(args.scope, cwd)
+    allowed_layers = PROJECT_LAYERS if args.scope == "project" else USER_LAYERS
     try:
-        digest_text = safe_read_strict(dpath, parent_anchor(args.scope, cwd))
+        safe_read_strict(dpath, panchor)
+        blocks = _load_all_blocks([(dpath, panchor, sc_id, allowed_layers)])
     except FileNotFoundError:
         print(
             json.dumps(
@@ -202,7 +225,6 @@ def cmd_digest(args: argparse.Namespace) -> int:
         print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
         return 20
 
-    blocks = list(parse_blocks(digest_text))
     by_layer: dict[str, int] = {}
     for block in blocks:
         by_layer[block["layer"]] = by_layer.get(block["layer"], 0) + 1

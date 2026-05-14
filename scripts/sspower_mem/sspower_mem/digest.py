@@ -18,6 +18,7 @@ import hashlib
 import json
 import pathlib
 import re
+import warnings
 from typing import Iterator, TypeAlias
 
 from sspower_mem.io import safe_append_strict, safe_makedirs_strict, safe_read_strict
@@ -31,15 +32,17 @@ _SEPARATOR = "\n---\n\n"
 _BLOCK_BOUNDARY_RE = re.compile(
     r"\n---\n\n(?=## \S+ · [^·]+? · [^·]+? · \S+\s*(?:\n|$)|\s*\Z)"
 )
-_RESERVED_BOUNDARY_RE = re.compile(r"(?:^|\n)---\n\n## ")
+_INJECTION_RE = re.compile(r"(?:^|\n)---\n\n## \S+ · [^·]+? · [^·]+? · \S+\s*(?:\n|$)")
 
-DigestSource: TypeAlias = tuple[pathlib.Path, pathlib.Path]
+DigestSource: TypeAlias = tuple[pathlib.Path, pathlib.Path, str, frozenset[str]]
 
 
-def _source_parts(source: DigestSource) -> tuple[pathlib.Path, pathlib.Path]:
-    if not (isinstance(source, tuple) and len(source) == 2):
+def _source_parts(source: DigestSource) -> DigestSource:
+    if not (isinstance(source, tuple) and len(source) == 4):
         raise TypeError(
-            f"digest source must be (digest_path, parent_anchor) tuple, got {type(source).__name__}"
+            "digest source must be "
+            "(digest_path, parent_anchor, expected_scope, allowed_layers) tuple, "
+            f"got {type(source).__name__}"
         )
     return source
 
@@ -66,7 +69,7 @@ def format_block(
     Callers must scrub or escape content containing the reserved digest boundary
     before passing it here.
     """
-    if _RESERVED_BOUNDARY_RE.search(content):
+    if _INJECTION_RE.search(content):
         raise ValueError("content contains reserved digest boundary pattern; refusing to append")
     body = content.rstrip("\n")
     meta_line = "[meta] " + json.dumps(meta, separators=(",", ":"), sort_keys=True)
@@ -111,15 +114,16 @@ def parse_blocks(text: str) -> Iterator[dict]:
 
 
 def _existing_blocks_by_base(
-    digest_path: pathlib.Path, parent_anchor: pathlib.Path
+    digest_path: pathlib.Path,
+    parent_anchor: pathlib.Path,
+    expected_scope: str,
+    allowed_layers: frozenset[str],
 ) -> dict[str, list[dict]]:
     """Map base_id (with any _dup<N> stripped) to blocks already present."""
-    try:
-        text = safe_read_strict(digest_path, parent_anchor)
-    except FileNotFoundError:
-        return {}
     by_base: dict[str, list[dict]] = {}
-    for blk in parse_blocks(text):
+    for blk in _load_all_blocks([
+        (digest_path, parent_anchor, expected_scope, allowed_layers)
+    ]):
         bid = blk["id"]
         base = bid.split("_dup", 1)[0]
         by_base.setdefault(base, []).append(blk)
@@ -144,7 +148,7 @@ def append_block_or_skip(
     safe_makedirs_strict(trust_root, parent_anchor)
 
     base_id = compute_id(scope, layer, content)
-    existing = _existing_blocks_by_base(digest_path, parent_anchor)
+    existing = _existing_blocks_by_base(digest_path, parent_anchor, scope, frozenset({layer}))
     for blk in existing.get(base_id, []):
         if blk["content"].rstrip("\n") == content.rstrip("\n"):
             return blk["id"], False
@@ -186,12 +190,31 @@ def _tokenize(query: str) -> list[str]:
 def _load_all_blocks(digest_sources: list[DigestSource]) -> list[dict]:
     blocks: list[dict] = []
     for source in digest_sources:
-        p, read_root = _source_parts(source)
+        p, read_root, expected_scope, allowed_layers = _source_parts(source)
         try:
             text = safe_read_strict(p, read_root)
         except FileNotFoundError:
             continue
-        blocks.extend(parse_blocks(text))
+        for blk in parse_blocks(text):
+            if blk["scope"] != expected_scope:
+                warnings.warn(
+                    "dropped digest block "
+                    f"{blk['id']!r} from {p}: scope {blk['scope']!r} "
+                    f"does not match source scope {expected_scope!r}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            if blk["layer"] not in allowed_layers:
+                warnings.warn(
+                    "dropped digest block "
+                    f"{blk['id']!r} from {p}: layer {blk['layer']!r} "
+                    f"is not allowed for source scope {expected_scope!r}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+            blocks.append(blk)
     return blocks
 
 

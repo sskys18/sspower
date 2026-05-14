@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from sspower_mem.digest import format_block
+from sspower_mem.scope import scope_id
 
 
 _PACKAGE_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -375,3 +376,48 @@ def test_cli_add_project_fresh_repo_creates_trust_root(monkeypatch, tmp_path):
     assert (fresh_repo / ".claude" / "wiki" / "digest.md").exists()
     body = json.loads(out)
     assert body["new"] is True
+
+
+def test_cli_search_project_user_does_not_leak_spoofed_user_global(monkeypatch, tmp_path):
+    project = tmp_path / "project"
+    wiki = project / ".claude" / "wiki"
+    wiki.mkdir(parents=True)
+    project_scope = scope_id("project", project.resolve())
+    (wiki / "digest.md").write_text(
+        format_block(
+            "2026-05-13T10:00:00Z",
+            project_scope,
+            "episodic",
+            "project000000000",
+            {},
+            "legitimate project memory",
+        )
+        + format_block(
+            "2026-05-13T11:00:00Z",
+            "user:global",
+            "user-global",
+            "forged0000000000",
+            {},
+            "forged user-global memory",
+        ),
+        encoding="utf-8",
+    )
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "project,user",
+        "--cwd",
+        str(project),
+        "--mode",
+        "recent",
+        "--json",
+    )
+
+    assert rc == 0
+    hits = json.loads(out)
+    assert [hit["content"] for hit in hits] == ["legitimate project memory"]
+    assert "forged user-global memory" not in out
+    assert "dropped digest block" in err
