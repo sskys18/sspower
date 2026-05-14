@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use sspower:subagent-driven-development (recommended) or sspower:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a `uvx`-runnable Python CLI `sspower-mem` that provides a plaintext memory backend (per-scope `digest.md`) with strict symlink/TOCTOU-safe writes, file-locked appends, and grep+recent search. Zero Mem0/Chroma/Model2Vec dependencies. Ship-able as v0 independent of all later phases.
+**Goal:** Ship a `uvx`-runnable Python CLI `sspower-mem` that provides a plaintext memory backend (per-scope `digest.md`) with strict symlink/TOCTOU-safe writes, file-locked appends, and grep+recent search. Zero index-backend/Chroma/Model2Vec dependencies. Ship-able as v0 independent of all later phases.
 
-**Architecture:** Stdlib-only Python 3.11+ package at `scripts/sspower_mem/`. Layered modules: `io.py` (openat-walk primitives) → `lock.py` (`fcntl.flock` ctx) → `scope.py` (cwd canonicalization, path derivation) → `digest.py` (block id, append, parse, search) → `doctor.py` (bootstrap) → `cli.py` (argparse dispatch). Tests with pytest. All four exit codes (0/10/20/30) wired through. The Mem0 contract is RESERVED — Phase A returns `extracted: "n/a"` (not "ok"/"skipped"); `--no-llm` is accepted but no-op since there is no LLM step yet.
+**Architecture:** Stdlib-only Python 3.11+ package at `scripts/sspower_mem/`. Layered modules: `io.py` (openat-walk primitives) → `lock.py` (`fcntl.flock` ctx) → `scope.py` (cwd canonicalization, path derivation) → `digest.py` (block id, append, parse, search) → `doctor.py` (bootstrap) → `cli.py` (argparse dispatch). Tests with pytest. All four exit codes (0/10/20/30) wired through. The index-backend contract is RESERVED — Phase A returns `extracted: "n/a"` (not "ok"/"skipped"); `--no-llm` is accepted but no-op since there is no LLM step yet.
 
 **Tech Stack:** Python 3.11+ (POSIX: macOS + Linux), stdlib only (`argparse`, `fcntl`, `hashlib`, `os`, `pathlib`, `re`, `subprocess`, `sys`, `json`, `time`, `datetime`), `pytest` (dev dep), `uv` for runtime invocation. No network. No third-party runtime deps.
 
-**Spec reference:** `docs/specs/2026-05-13-mem0-backend-integration-design.md` v8, sections §5 (storage layout), §6.1 (CLI contract + write critical section + read path), §6.4 (digest format + safe_append_strict), §9 Phase A (checklist).
+**Spec reference:** `docs/specs/2026-05-13-index-backend-integration-design.md` v8, sections §5 (storage layout), §6.1 (CLI contract + write critical section + read path), §6.4 (digest format + safe_append_strict), §9 Phase A (checklist).
 
 ---
 
@@ -460,7 +460,7 @@ git commit -m "test(sspower-mem): mutual exclusion contract for acquire_lock"
 """POSIX fcntl-based exclusive file lock context manager.
 
 Per spec §6.1: one critical section per `add` invocation, lock file at
-~/.claude/sspower/mem0/.lock.
+~/.claude/sspower/idx/.lock.
 """
 from __future__ import annotations
 
@@ -599,7 +599,7 @@ def canonicalize_cwd(cwd_arg: str) -> pathlib.Path:
 
 
 def scope_id(scope: str, cwd: pathlib.Path | None) -> str:
-    """Return the scope key used as Mem0 user_id and digest header field.
+    """Return the scope key used as the index backend's user_id and digest header field.
     project → sha1(realpath(cwd))[:16]; user → "user:global"."""
     if scope == "project":
         if cwd is None:
@@ -670,15 +670,15 @@ from sspower_mem.digest import compute_id, format_block, parse_blocks
 
 
 def test_compute_id_is_stable_sha1_16():
-    a = compute_id("project:abc", "decision", "use Mem0")
-    b = compute_id("project:abc", "decision", "use Mem0")
+    a = compute_id("project:abc", "decision", "use the index")
+    b = compute_id("project:abc", "decision", "use the index")
     assert a == b
-    assert a == hashlib.sha1(b"project:abc|decision|use Mem0").hexdigest()[:16]
+    assert a == hashlib.sha1(b"project:abc|decision|use the index").hexdigest()[:16]
 
 
 def test_compute_id_differs_on_content_change():
-    assert compute_id("project:abc", "decision", "use Mem0") != \
-           compute_id("project:abc", "decision", "use Mem0!")
+    assert compute_id("project:abc", "decision", "use the index") != \
+           compute_id("project:abc", "decision", "use the index!")
 
 
 def test_format_block_round_trips_through_parse():
@@ -1224,9 +1224,9 @@ def test_bootstrap_creates_user_sspower_dir(monkeypatch, tmp_path):
 
     result = bootstrap()
     sspower = fake_home / ".claude" / "sspower"
-    assert (sspower / "mem0").is_dir()
-    assert (sspower / "mem0" / ".lock").exists()
-    assert (sspower / "mem0" / "config.json").exists()
+    assert (sspower / "idx").is_dir()
+    assert (sspower / "idx" / ".lock").exists()
+    assert (sspower / "idx" / "config.json").exists()
     assert result["status"] == "ok"
 
     # Idempotent — second call must not raise.
@@ -1287,22 +1287,22 @@ from sspower_mem.scope import user_sspower_dir
 
 
 def bootstrap() -> dict:
-    """Create ~/.claude/sspower/mem0/{.lock,config.json}. Idempotent."""
+    """Create ~/.claude/sspower/idx/{.lock,config.json}. Idempotent."""
     base = user_sspower_dir()
     base.parent.mkdir(parents=True, exist_ok=True)  # ~/.claude/ may not exist
     base.mkdir(mode=0o700, exist_ok=True)
-    mem0 = base / "mem0"
+    idx = base / "idx"
     # Use safe_makedirs_strict; parent_anchor = ~/.claude/sspower/
-    safe_makedirs_strict(mem0, base)
-    lock = mem0 / ".lock"
+    safe_makedirs_strict(idx, base)
+    lock = idx / ".lock"
     if not lock.exists():
         lock.touch(mode=0o600)
-    config = mem0 / "config.json"
+    config = idx / "config.json"
     if not config.exists():
         config.write_text(json.dumps({
             "version": "0.1.0",
             "phase": "A",
-            "mem0": {"enabled": False, "note": "Phase A: digest-only, no Mem0"},
+            "index": {"enabled": False, "note": "Phase A: digest-only, no index backend"},
         }, indent=2))
     return {"status": "ok", "base": str(base)}
 
@@ -1310,8 +1310,8 @@ def bootstrap() -> dict:
 def health() -> dict:
     """Lightweight health check. Returns booleans for each subsystem."""
     base = user_sspower_dir()
-    mem0 = base / "mem0"
-    lock = mem0 / ".lock"
+    idx = base / "idx"
+    lock = idx / ".lock"
     digest = base / "digest.md"
     return {
         "lock_writable": lock.exists() and _writable(lock),
@@ -1409,7 +1409,7 @@ def cmd_add(args) -> int:
     if args.no_llm:
         meta = {**meta, "no_llm": True}
 
-    lock_path = user_sspower_dir() / "mem0" / ".lock"
+    lock_path = user_sspower_dir() / "idx" / ".lock"
     if not lock_path.exists():
         print(f"sspower-mem: lock missing at {lock_path}; run `sspower-mem doctor --bootstrap`",
               file=sys.stderr)
@@ -1429,8 +1429,8 @@ def cmd_add(args) -> int:
     result = {
         "id": eff_id,
         "new": was_new,
-        "raw": "n/a",          # Phase A: no Mem0
-        "extracted": "n/a",    # Phase A: no Mem0
+        "raw": "n/a",          # Phase A: no index backend yet
+        "extracted": "n/a",    # Phase A: no index backend yet
     }
     print(json.dumps(result))
     return 0
@@ -1508,7 +1508,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mode", choices=["recent"])
     search.add_argument("--top-k", type=int, default=8)
     search.add_argument("--json", action="store_true")
-    search.add_argument("--mem0-only", action="store_true")  # Phase A: accepted, no-op
+    search.add_argument("--idx-only", action="store_true")  # Phase A: accepted, no-op
     search.set_defaults(func=cmd_search)
 
     doc = sub.add_parser("doctor", help="Health + bootstrap")
@@ -1690,7 +1690,7 @@ git commit -m "docs(sspower-mem): Phase A v0.1.0 release note"
 
 **Deviations from v8 spec** (deliberate, flagged):
 - **Meta serialization**: spec §6.4 used `[meta] key=value, key=value` which breaks on paths with commas/equals (Codex v8 missing #4). This plan uses `[meta] <json-dict>` instead. Lossless, parseable, future-proof.
-- **`extracted` field in `add` JSON output**: Phase A returns `"raw": "n/a", "extracted": "n/a"` rather than the spec's `"ok"/"skipped-*"` since there is no Mem0 step yet. Phase C will replace these with the spec's values.
+- **`extracted` field in `add` JSON output**: Phase A returns `"raw": "n/a", "extracted": "n/a"` rather than the spec's `"ok"/"skipped-*"` since there is no index-backend step yet. Phase C will replace these with the spec's values.
 - **`--no-llm` is a no-op in Phase A**: the flag is accepted (so hooks/skills can pass it without breaking) and recorded in meta, but it has no behavioral effect until Phase C.
 
 **Placeholder scan**: none. All steps have exact code, exact commands, expected output.

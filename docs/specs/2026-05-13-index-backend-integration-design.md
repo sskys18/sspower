@@ -1,53 +1,53 @@
-# Mem0 as Native Memory Backend for sspower — Design Spec
+# Native Index Backend for sspower Memory — Design Spec
 
-> Status: **ACCEPTED v8 — Phase A only** (2026-05-13). User decision after 8 Codex spec-reviews plateaued at 10–14 issues/pass (12→9→10→12→7→11→14→14, ~3.85M cumulative input tokens). The Phase A slice (digest-only plaintext backend, §9 Phase A) is well-specified and Codex-praised across all 8 passes. Phases B–F (Mem0 wiring + migration + hooks/skills rewrites) are **PROVISIONAL** — they remain in this spec as design intent, but their open contracts will be re-specified after (a) Phase 0 reads Mem0 source, and (b) Phase A implementation surfaces real runtime edges. The 14 v8 issues are scoped almost entirely to Phases B–F; do NOT block Phase A on them.
+> Status: **ACCEPTED v8 — Phase A only** (2026-05-13). User decision after 8 Codex spec-reviews plateaued at 10–14 issues/pass (12→9→10→12→7→11→14→14, ~3.85M cumulative input tokens). The Phase A slice (digest-only plaintext backend, §9 Phase A) is well-specified and Codex-praised across all 8 passes. Phases B–F (index-backend wiring + migration + hooks/skills rewrites) are **PROVISIONAL** — they remain in this spec as design intent, but their open contracts will be re-specified after (a) Phase 0 reads the index-backend source, and (b) Phase A implementation surfaces real runtime edges. The 14 v8 issues are scoped almost entirely to Phases B–F; do NOT block Phase A on them.
 >
 > Next step: `writing-plans` for Phase A. HARD-GATE D10 lifted for Phase A only; remains in effect for everything else until a revised spec passes a fresh review.
 > Author: Claude (Opus 4.7), 2026-05-13.
-> Supersedes: v1–v4 (same file) and the Semble + Mem0 dual-track proposal in `docs/handoff.md` (2026-05-12 21:30). Semble is **out of scope** (user decision 2026-05-13).
+> Supersedes: v1–v4 (same file) and the Semble + index-backend dual-track proposal in `docs/handoff.md` (2026-05-12 21:30). Semble is **out of scope** (user decision 2026-05-13).
 
 ## 0. Change log
 
 ### v7 → v8 (after Codex review of v7)
-- **`--mem0-only` rename propagated** to all read-path references (Codex flagged 2 stale `--no-grep-fallback` mentions) (v7 missing #1 + misunderstanding #1).
+- **`--idx-only` rename propagated** to all read-path references (Codex flagged 2 stale `--no-grep-fallback` mentions) (v7 missing #1 + misunderstanding #1).
 - **Phase E `--cwd` propagation** — shell wrapper example + session-start rewrite now both pass `--cwd "$CLAUDE_HOOK_CWD"` / `--cwd "$payload_cwd"` explicitly (v7 missing #2 + misunderstanding #3).
 - **`add --no-llm` step 2 fail = rc=10** (clarified): --no-llm only affects step 3 classification; step 2 fail still degrades (v7 missing #3 + misunderstanding #2).
-- **rc=30 vs rc=10 boundary table** — startup deps (uvx, Python, doctor) = rc=30; in-add Mem0 imports (lazy-loaded) = rc=10. Unambiguous (v7 missing #4).
-- **`--mem0-only` zero-result behavior** — empty Mem0 result = `[]` + rc=0; Mem0 exception = nonzero exit (v7 missing #5).
+- **rc=30 vs rc=10 boundary table** — startup deps (uvx, Python, doctor) = rc=30; in-add index-backend imports (lazy-loaded) = rc=10. Unambiguous (v7 missing #4).
+- **`--idx-only` zero-result behavior** — empty index result = `[]` + rc=0; index-backend exception = nonzero exit (v7 missing #5).
 - **`--cwd` canonicalization** — realpath() before openat anchor + hash; missing cwd = rc=20; symlink resolves cleanly (v7 missing #6).
 - **fd ownership idiom** documented for both strict helpers — no double-close (v7 missing #7).
 - **Migration uses `effective_id` logic** — `_dup<N>` collision handling inherited via the standard `add` call path (v7 missing #8 + misunderstanding #4).
-- **Phase 0 Q#8** added — Mem0 metadata-filter API surface verification + fallback options (dedup-db, client-side filter, fork) (v7 missing #9).
+- **Phase 0 Q#8** added — the index's metadata-filter API surface verification + fallback options (dedup-db, client-side filter, fork) (v7 missing #9).
 - **`digest --rebuild-chroma` extraction behavior** specified — default = full add path with per-block `no_llm` flag respected; `--no-llm` force-skips step 3 (v7 missing #10).
 
 ### v6 → v7 (after Codex review of v6)
-- **Lazy Mem0 imports** in `add` step 2/3 — Mem0/chromadb/model2vec are NOT imported at startup; only inside step 2/3 AFTER step 1's digest append. Import failures degrade to rc=10 (not rc=30), preserving D2/D11 against dep regression (v6 missing #1).
+- **Lazy index-backend imports** in `add` step 2/3 — the upstream index library + chromadb + model2vec are NOT imported at startup; only inside step 2/3 AFTER step 1's digest append. Import failures degrade to rc=10 (not rc=30), preserving D2/D11 against dep regression (v6 missing #1).
 - **Python wrapper full contract** — `wiki-archive.py` now has a Python equivalent of the shell wrapper: pre-flight `shutil.which("uvx")`, `UV_OFFLINE=1` env, `--offline` flag, exit-code normalization (non-{0,10,20} → 30). No leakage of uvx-internal exits (v6 missing #2).
 - **`--cwd <path>` shared option** added to all subcommands. Hooks pass it from the hook JSON payload `cwd` field; CLI does not infer from `os.getcwd()` when called via hook (v6 missing #3).
 - **`resolve_out_dir` NOT reused** for project trust-root creation — that function returns `sessions/` with central-fallback behavior. v7 introduces `safe_makedirs_strict` (openat-style mkdirat walk) and on unwritable project cwd returns rc=20 instead of falling back to a different location (v6 missing #4 + misunderstandings #1/#2).
 - **writing-plans rewrite** now grammar-compliant: includes `--mode recent` (or `--query <task>`) as required by the search CLI contract (v6 missing #5).
-- **`_dup<N>` propagation**: pseudocode in §6.1 now passes `effective_id` (not `base_id`) through to Mem0 metadata (`id`, `raw_id`). Two distinct blocks with the same 64-bit prefix get distinct Mem0 records (v6 missing #6).
+- **`_dup<N>` propagation**: pseudocode in §6.1 now passes `effective_id` (not `base_id`) through to the index's metadata (`id`, `raw_id`). Two distinct blocks with the same 64-bit prefix get distinct records in the index (v6 missing #6).
 - **`migrate --reextract` standalone mode**: synopsis updated — `--from-wiki`/`--from-memory` are OPTIONAL when `--reextract` is set; REQUIRED otherwise (v6 missing #7).
-- **`--mem0-only` renamed to `--mem0-only`** and tightened to disable BOTH exception-fallback AND zero-result fallback. Old name only gated one path (v6 missing #8).
+- **`--idx-only` renamed to `--idx-only`** and tightened to disable BOTH exception-fallback AND zero-result fallback. Old name only gated one path (v6 missing #8).
 - **Degenerate-case rules** for all score normalizations: single hit / all-tied / empty scope / max-zero grep / shared-ts all explicitly resolved. No division-by-zero, no NaN (v6 missing #9).
 
 ### v5 → v6 (after Codex review of v5)
 - **D12 row rewritten** — now correctly states digest path uses `safe_append_strict` (was still saying "no new write primitives") (v5 misunderstanding #1).
 - **Wrapper rc=30 normalization** — pre-flight `command -v uvx` check + post-call exit-code collapse (anything not in {0,10,20} → 30). uvx-internal exits never leak past the wrapper (v5 missing #1).
 - **`source="digest-recent"`** added to the result schema; `--mode recent` cross-scope merge defined (sort by ts desc, scope priority project>user, lex on id; score = linear ts-position normalized) (v5 missing #2).
-- **Mem0 multi-scope score merge algorithm** — min-max normalize per scope, then concat + sort by normalized score desc + tie-break ts desc + lex on id. Result entries carry the normalized score, not the raw Mem0 score (v5 missing #3).
+- **the index's multi-scope score merge algorithm** — min-max normalize per scope, then concat + sort by normalized score desc + tie-break ts desc + lex on id. Result entries carry the normalized score, not the index's raw score (v5 missing #3).
 - **`safe_append_strict` rejects path-traversal** components (`..`, `.`, empty) before walking. `relative_to` does not normalize these and openat would happily traverse out (v5 missing #4).
 - **`append_index_entry` removed in Phase E**; `index.md` frozen to `index_legacy.md`; `digest.md` itself serves as the new grep-able index (v5 missing #5).
 - **Project trust-root creation assigned**: lazy creation on first `add --scope project` via existing `resolve_out_dir(cwd)`. `doctor --bootstrap` covers user-scope only (v5 missing #6).
 
 ### v4 → v5 (after Codex review of v4)
 - **Wrapper function rewritten** — under `set -euo pipefail` (the existing hooks' shell flags), a wrapper returning non-zero kills the script before the caller's case statement runs. v5 wrapper ALWAYS returns 0 and communicates rc via the global `SSP_RC`; caller dispatches on `$SSP_RC` (v4 missing #1).
-- **SessionStart read mode** — added `sspower-mem search --mode recent` (no query, return top-k newest blocks; bypasses Mem0, source="digest-recent"). `hooks/session-start` uses `--mode recent`, not `--query` (v4 missing #2).
+- **SessionStart read mode** — added `sspower-mem search --mode recent` (no query, return top-k newest blocks; bypasses the index backend, source="digest-recent"). `hooks/session-start` uses `--mode recent`, not `--query` (v4 missing #2).
 - **Phase E checklist** explicitly adds `skills/writing-plans/SKILL.md` (v4 missing #3).
 - **`add --no-llm` semantics fully specified** — exits 0, JSON `extracted="skipped-intentional"`, metadata `no_llm=true`, `--reextract all` skips these (v4 missing #4).
 - **Phase 0 question #7** added — verify `Memory.add(infer=True)` metadata preservation across ADD/UPDATE/NONE + LLM-adapter failure visibility. Step 3 in §6.1 relies on both (v4 missing #5).
 - **Hook offline contract enforced** — wrapper invokes `UV_OFFLINE=1 uvx --offline`. Cache misses on the critical path → rc=30, never network (v4 missing #6).
-- **Multi-scope search corrected** — Mem0 `user_id` filter is scalar (verified). v5 mapping table + read path both issue **per-scope sequential searches** and merge client-side; the v4 `user_id IN (...)` shape was wrong (v4 missing #7).
+- **Multi-scope search corrected** — the index's `user_id` filter is scalar (verified). v5 mapping table + read path both issue **per-scope sequential searches** and merge client-side; the v4 `user_id IN (...)` shape was wrong (v4 missing #7).
 - **Mixed id width fixed** — `[:8]` → `[:16]` everywhere (§5 mapping table, §6.1 pseudocode, §7.2 migration). v4 left 3 stale `[:8]` references (v4 misunderstanding #1).
 - **Primitive references consistent** — §4 preconditions row + §6.1 step-1 comment + Phase A bullet all now name `safe_append_strict`. Legacy `_safe_append_text` is explicitly limited to the legacy belt only (v4 misunderstanding #2).
 - **`safe_append_strict` parent-dir model** — rewritten as `openat`-style walk: open trust_root with `O_DIRECTORY|O_NOFOLLOW`, then walk each rel component via `os.open(part, ..., dir_fd=cur_fd)`. Full chain integrity below trust_root. Trust-root model explicit: components at/above trust_root are user-owned, not atomically protected (v4 misunderstanding #3).
@@ -58,7 +58,7 @@
 - §2 + §6.5 add **`skills/writing-plans/SKILL.md`** to the in-scope rewrites — Codex found its Pre-flight section reads `wiki/decisions.md` + `sessions/` (v3 missing #1). Verified in repo.
 - §6.1 subcommand contract declares the previously-undeclared flags: `add --no-llm`, `migrate --reextract [<id>|all]` (v3 missing #2).
 - §6.1 read path adds a **fully deterministic grep-fallback scoring algorithm** (tokenize → per-block hit count → size-normalized raw score → max-normalized → top-k with newest-wins, then lex tiebreak) (v3 missing #3).
-- §7.1 Phase 0 question #6 added: **verify Mem0 v3 entity-linking / entity-store behavior** — current OSS algorithm may lazily create extra Chroma collections (v3 missing #4).
+- §7.1 Phase 0 question #6 added: **verify the index's v3 entity-linking / entity-store behavior** — current OSS algorithm may lazily create extra Chroma collections (v3 missing #4).
 - §8 row 1 rewritten + Phase E wrapper aligned: **rc=20 always propagates** as `exit 20`. v3 had §8 "hook returns success" vs Phase E "propagates" — picked propagate, fixed §8.
 - §6.1 stable id widened to `sha1[:16]` (64 bits) with explicit full-content compare + `_dup<N>` suffix on collision (v3 misunderstanding #2).
 - §5 Chroma storage layout corrected: `chroma.sqlite3` + HNSW dirs, not "DuckDB+Parquet" (v3 misunderstanding #3, sourced).
@@ -68,48 +68,48 @@
 
 ### v2 → v3 (after Codex review of v2)
 - §6.1 write critical section rewritten with **stable `block_id` correlation key** and explicit per-step idempotency / upsert rules. Resolves v2 missing #3 (exit code ambiguity) + #4 (de-dup/rebuild) + misunderstanding #2 (raw/extract correlation). Exit code rule is now single: step1 fail → 20; step1 ok + step2 + step3 all ok → 0; step1 ok + (step2 OR step3) failed → 10.
-- §6.1 read path replaced `degraded: true` flag with explicit per-result `source: "mem0" | "digest-grep"` field + deterministic 4-rule order. New `--mem0-only` flag. Resolves v2 missing #5 + the "non-deterministic fallback" misunderstanding.
+- §6.1 read path replaced `degraded: true` flag with explicit per-result `source: "index" | "digest-grep"` field + deterministic 4-rule order. New `--idx-only` flag. Resolves v2 missing #5 + the "non-deterministic fallback" misunderstanding.
 - §9 Phase E hook wrapper bash rewritten — capture `rc=$?` BEFORE any negation/chained command (the `if ! out=$(...)` pattern in v2 hides the original exit code because `!` sets `$?` to the negated status). Resolves v2 missing #2 + misunderstanding #1.
 - §6.1 exact `uvx --from <path>` launch form specified — points at `<plugin-root>/scripts/sspower_mem/` source tree. Resolves v2 missing #6.
 - §9 Phase C entire block now labeled "CONTRACTS PENDING Phase 0". Every bullet keyed to the Phase 0 question it depends on. Resolves v2 missing #1 + misunderstanding #3.
 
 ### v1 → v2 (after Codex review of v1)
 
-- **D1 inverted** to resolve Codex misunderstanding #1 — digest.md is now the **source of truth**, Mem0 is an **indexed semantic cache** built from digest.md. Justification: user constraint "dont make it fail" + the no-rollback argument both require a plaintext durable surface. "Single backend" still holds: the legacy wiki/{sessions,decisions,gotchas}.md + auto-memory/*.md surfaces are replaced by **one** plaintext substrate (digest.md per scope) + Mem0 as its index. No third store.
-- New **§7.1 Phase 0** — read Mem0 source + write a provider-registration mini-plan **before** committing to the LLM/embedder adapter strategy. Codex source check (factory.py) found no public `provider: custom` key. Phase 0 must produce a verified mechanism (subclass / monkey-patch / fork / wrapper façade) before Phase C is unblocked.
-- §6.3 rewrites the LLM/embedder strategy: every `add` now does **(a) digest write → (b) Mem0 `infer=False` raw add → (c) Mem0 `infer=True` extraction**, in that order. (b) guarantees Chroma always has the raw embedding even when Codex bridge LLM is unavailable. Resolves Codex misunderstanding #3.
-- §5 pins Mem0 SQLite history under `~/.claude/sspower/mem0/history.db` and sets `MEM0_TELEMETRY=false` before import. Resolves Codex missing #4.
-- §6.1 adds a **file lock** (`fcntl.flock` on `~/.claude/sspower/mem0/.lock`) around the full add path, as a Phase A requirement. Resolves Codex missing #5.
+- **D1 inverted** to resolve Codex misunderstanding #1 — digest.md is now the **source of truth**, the index is an **indexed semantic cache** built from digest.md. Justification: user constraint "dont make it fail" + the no-rollback argument both require a plaintext durable surface. "Single backend" still holds: the legacy wiki/{sessions,decisions,gotchas}.md + auto-memory/*.md surfaces are replaced by **one** plaintext substrate (digest.md per scope) + the index as its index. No third store.
+- New **§7.1 Phase 0** — read the index-backend source + write a provider-registration mini-plan **before** committing to the LLM/embedder adapter strategy. Codex source check (factory.py) found no public `provider: custom` key. Phase 0 must produce a verified mechanism (subclass / monkey-patch / fork / wrapper façade) before Phase C is unblocked.
+- §6.3 rewrites the LLM/embedder strategy: every `add` now does **(a) digest write → (b) the index's `infer=False` raw add → (c) the index's `infer=True` extraction**, in that order. (b) guarantees Chroma always has the raw embedding even when Codex bridge LLM is unavailable. Resolves Codex misunderstanding #3.
+- §5 pins the index's SQLite history under `~/.claude/sspower/idx/history.db` and sets `INDEX_TELEMETRY=false` before import. Resolves Codex missing #4.
+- §6.1 adds a **file lock** (`fcntl.flock` on `~/.claude/sspower/idx/.lock`) around the full add path, as a Phase A requirement. Resolves Codex missing #5.
 - §6.5 (digest format) cites and reuses the existing `wiki-archive.py` symlink-safe helpers (`_has_symlink_component`, `_safe_writability_probe`, `resolve_out_dir`, `_safe_write_text`, `_safe_append_text`). Resolves Codex missing #6.
-- §6.1 defines the exact scope syntax → Mem0 filter mapping. Resolves Codex missing #1.
-- §9 Phase A adds an explicit **bootstrap/prefetch** step that downloads Model2Vec + warms Mem0 before any hook starts depending on `sspower-mem`. Documents the offline contract: "After bootstrap, no network calls on any hook path." Resolves Codex missing #7.
+- §6.1 defines the exact scope syntax → index filter mapping. Resolves Codex missing #1.
+- §9 Phase A adds an explicit **bootstrap/prefetch** step that downloads Model2Vec + warms the index before any hook starts depending on `sspower-mem`. Documents the offline contract: "After bootstrap, no network calls on any hook path." Resolves Codex missing #7.
 - §9 Phase E adds a hook-wrapper exit-code normalization contract (exits 10/30 → hook exit 0 with a logged hint; exit 20 propagates). Resolves Codex missing #8.
 - §6.6 corrected against real repo: hooks are `hooks/session-start` (bash, no `.sh`) and `hooks/prompt-submit`, not `session-start.sh`. There is **no** `skills/session-start/SKILL.md`; the SessionStart context-injection is hook-only. Resolves Codex misunderstanding #2.
 - §12 dropped the contradictory "auto-memory md as source-of-truth" line. The user-global auto-memory is replaced by digest.md scope `user:global`. Resolves Codex misunderstanding #4.
 
 ## 1. Goal
 
-Replace sspower's two current memory surfaces — project wiki (`<cwd>/.claude/wiki/`) and global auto-memory (`~/.claude/projects/<slug>/memory/`) — with **a single plaintext substrate** (per-scope `digest.md`, written through symlink-safe helpers) plus **Mem0** (self-hosted, github.com/mem0ai/mem0) as a semantic cache over that substrate.
+Replace sspower's two current memory surfaces — project wiki (`<cwd>/.claude/wiki/`) and global auto-memory (`~/.claude/projects/<slug>/memory/`) — with **a single plaintext substrate** (per-scope `digest.md`, written through symlink-safe helpers) plus **the index** (self-hosted, the upstream OSS index project) as a semantic cache over that substrate.
 
-One write path (`sspower-mem add`) appends to digest.md first, then writes to Mem0 (raw + extracted). One read path (`sspower-mem search`) queries Mem0 and falls back to digest.md grep when Mem0 is unavailable. Every hook + skill that currently reads/writes the wiki or auto-memory routes through this CLI.
+One write path (`sspower-mem add`) appends to digest.md first, then writes to the index (raw + extracted). One read path (`sspower-mem search`) queries the index and falls back to digest.md grep when the index is unavailable. Every hook + skill that currently reads/writes the wiki or auto-memory routes through this CLI.
 
 ## 2. Scope
 
 ### In scope
 - New CLI `sspower-mem` (Python, `uvx`-launched) with `add` / `search` / `migrate` / `digest` / `doctor` subcommands.
 - New `codex-bridge.mjs complete --json` subcommand (OpenAI-shape chat-completion).
-- Codex-bridge-based Mem0 LLM adapter + Model2Vec Mem0 embedder adapter (registration mechanism TBD in Phase 0).
-- Vector store: **Chroma** local-embedded, file-backed at `~/.claude/sspower/mem0/chroma/`.
+- Codex-bridge-based index LLM adapter + Model2Vec index embedder adapter (registration mechanism TBD in Phase 0).
+- Vector store: **Chroma** local-embedded, file-backed at `~/.claude/sspower/idx/chroma/`.
 - Graph store: disabled.
 - Plaintext substrate: per-scope `digest.md` (project-scope at `<cwd>/.claude/wiki/digest.md`, user-scope at `~/.claude/sspower/digest.md`). Append-only, block-structured, symlink-safe.
-- File lock (`fcntl.flock`) around every `add` (digest + Mem0 raw + Mem0 extract = one critical section).
+- File lock (`fcntl.flock`) around every `add` (digest + the index's raw + the index's extract = one critical section).
 - Migration from existing wiki/sessions+decisions+gotchas + `~/.claude/projects/*/memory/*.md`.
 - Hook rewrites: `hooks/wiki-archive.{sh,py}`, `hooks/session-start` (existing bash file).
 - Skill updates: `using-sspower`, `brainstorming`, `systematic-debugging`, **`writing-plans`** (currently reads `<cwd>/.claude/wiki/decisions.md` + `sessions/` in its Pre-flight section — rewrite to call `sspower-mem search --layer decision,episodic`).
 
 ### Out of scope (this spec)
 - Semble (user decision 2026-05-13).
-- Mem0 cloud, Mem0 graph store, OpenMemory daemon, Qdrant.
+- the cloud-hosted index service, the index's graph store, OpenMemory daemon, Qdrant.
 - Multi-machine sync (each machine has its own local digest.md + Chroma).
 - New skill `skills/session-start/SKILL.md` (does not currently exist; this spec does not introduce one).
 
@@ -117,17 +117,17 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to Me
 
 | # | Decision | Source / status |
 |---|----------|-----------------|
-| D1 | **digest.md is the source of truth. Mem0 is an indexed semantic cache rebuildable from digest.md.** | v2 (resolves Codex misunderstanding #1). |
+| D1 | **digest.md is the source of truth. the index is an indexed semantic cache rebuildable from digest.md.** | v2 (resolves Codex misunderstanding #1). |
 | D2 | Mirror-first write order + degrade-to-md fallback on every read/write. | User 2026-05-13. |
-| D3 | LLM for Mem0 fact extraction = **Codex via codex-bridge.mjs OAuth**, not OpenAI API, not local LLM. | User. |
+| D3 | LLM for index fact extraction = **Codex via codex-bridge.mjs OAuth**, not OpenAI API, not local LLM. | User. |
 | D4 | Embedder = **Model2Vec** (`potion-base-8M`), local. | This spec. |
-| D5 | Vector store = **Chroma local-embedded** at `~/.claude/sspower/mem0/chroma/`. | This spec. |
+| D5 | Vector store = **Chroma local-embedded** at `~/.claude/sspower/idx/chroma/`. | This spec. |
 | D6 | Graph store = off. | This spec. |
-| D7 | Memory layers (metadata-only, not separate Mem0 collections): `episodic`, `decision`, `gotcha`, `user-global`. | Handoff. |
-| D8 | Self-hosted only; **never Mem0 cloud**; `MEM0_TELEMETRY=false` before import. | Privacy. |
+| D7 | Memory layers (metadata-only, not separate index collections): `episodic`, `decision`, `gotcha`, `user-global`. | Handoff. |
+| D8 | Self-hosted only; **never the cloud-hosted index service**; `INDEX_TELEMETRY=false` before import. | Privacy. |
 | D9 | No Semble. | User 2026-05-13. |
 | D10 | brainstorming HARD-GATE: no implementation code until this spec passes self-review + Codex spec-review + user approval. | Handoff. |
-| D11 | One write critical section: file lock → (digest append) → (Mem0 `infer=False` raw add) → (Mem0 `infer=True` extract) → release. Failures in steps 2/3 do not roll back step 1; the digest line is authoritative. | v2 (resolves Codex missing #5 + misunderstanding #3). |
+| D11 | One write critical section: file lock → (digest append) → (the index's `infer=False` raw add) → (the index's `infer=True` extract) → release. Failures in steps 2/3 do not roll back step 1; the digest line is authoritative. | v2 (resolves Codex missing #5 + misunderstanding #3). |
 | D12 | digest.md (new source-of-truth path) uses **`safe_append_strict`** (new primitive, §6.4 — `openat`-walk + `O_NOFOLLOW`, closes TOCTOU). Legacy `wiki-archive.py` helpers (`_safe_write_text`, `_safe_append_text`) are retained ONLY for the legacy `sessions/*.md` belt during Phase E. | v2 origin; v5 rewritten to reflect §6.4 amendment (v4 misunderstanding #2 + v5 misunderstanding #1). |
 
 ## 4. Verified preconditions (2026-05-13)
@@ -143,43 +143,43 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to Me
 | Codex bridge 24h reliability | ⚠️ 4 transient bridge events today, all self-recovered. Justifies D2 + D11. |
 
 Unknowns deferred to **Phase 0** (must resolve before Phase C; see §7.1):
-- Mem0 custom-provider registration mechanism (Codex source check found no `provider: custom` key in `mem0/utils/factory.py`).
-- Mem0 custom-embedder factory registration.
-- Mem0 `Memory.add(infer=False)` exact semantics (storage path, returned ids, metadata schema).
-- Mem0 SQLite `history.db` path override mechanism.
-- Whether Mem0 telemetry honors `MEM0_TELEMETRY=false` or requires a different opt-out.
+- the index's custom-provider registration mechanism (Codex source check found no `provider: custom` key in `<index>/utils/factory.py`).
+- the index's custom-embedder factory registration.
+- the index's `Memory.add(infer=False)` exact semantics (storage path, returned ids, metadata schema).
+- the index's SQLite `history.db` path override mechanism.
+- Whether the index's telemetry honors `INDEX_TELEMETRY=false` or requires a different opt-out.
 
 ## 5. Architecture & storage layout
 
 ```
 ~/.claude/sspower/
-  mem0/
+  idx/
     chroma/           # vector store (Chroma persistent layout: `chroma.sqlite3` + per-collection
                       # HNSW index dirs; the "DuckDB+Parquet" name in v3 was a stale Chroma fact —
                       # current Chroma stores SQLite + HNSW files. Source verified against
                       # https://cookbook.chromadb.dev/core/storage-layout/ during v4 review.)
-    history.db        # Mem0 SQLite history (pinned here, D8)
-    config.json       # Mem0 config snapshot
+    history.db        # the index backend's SQLite history (pinned here, D8)
+    config.json       # the index backend's config snapshot
     .lock             # fcntl lock file for write critical section
     errors.jsonl      # degraded-write log (exit 10 path)
   digest.md           # user-global scope plaintext substrate
 
 <cwd>/.claude/wiki/
   digest.md           # project-scope plaintext substrate (NEW: source of truth)
-  _legacy_pre_mem0/   # archive of pre-migration sessions/decisions/gotchas (after Phase F)
+  _legacy_pre_idx/   # archive of pre-migration sessions/decisions/gotchas (after Phase F)
 ```
 
-### Scope syntax → Mem0 filter mapping (resolves Codex missing #1)
+### Scope syntax → index filter mapping (resolves Codex missing #1)
 
-| sspower-mem scope arg | digest.md location | Mem0 filter |
+| sspower-mem scope arg | digest.md location | index filter |
 |-----------------------|---------------------|-------------|
 | `--scope project` (implicit current cwd) | `<cwd>/.claude/wiki/digest.md` | `user_id = "project:<sha1(cwd)[:16]>"` |
 | `--scope user` | `~/.claude/sspower/digest.md` | `user_id = "user:global"` |
-| `--scope project,user` (search only) | both files concatenated for grep fallback | **Two sequential Mem0 searches** (current Mem0 `Memory.search` validates `filters.user_id` as a scalar entity id, not a list; verified against `mem0/memory/main.py` during v4 review). One call with `user_id="project:<hash>"`, one with `user_id="user:global"`; results merged client-side, scored against the union, top-k by score. |
+| `--scope project,user` (search only) | both files concatenated for grep fallback | **Two sequential index searches** (current the index's `Memory.search` validates `filters.user_id` as a scalar entity id, not a list; verified against `<index>/memory/main.py` during v4 review). One call with `user_id="project:<hash>"`, one with `user_id="user:global"`; results merged client-side, scored against the union, top-k by score. |
 
-`--layer <episodic|decision|gotcha|user-global>` maps to Mem0 `metadata.layer` (filterable but not partitioning). The `user-global` layer is only valid in the `user` scope.
+`--layer <episodic|decision|gotcha|user-global>` maps to the index's `metadata.layer` (filterable but not partitioning). The `user-global` layer is only valid in the `user` scope.
 
-Rationale for `user_id` (not `agent_id`/`run_id`): Mem0's main entity filter is `user_id`. We overload it as the scope key; `run_id` is per-session and would fragment retrieval. `metadata.layer` provides intra-scope filtering.
+Rationale for `user_id` (not `agent_id`/`run_id`): the index's main entity filter is `user_id`. We overload it as the scope key; `run_id` is per-session and would fragment retrieval. `metadata.layer` provides intra-scope filtering.
 
 ## 6. Components
 
@@ -211,19 +211,19 @@ Subcommands:
 
 sspower-mem add    --scope <project|user> --layer <episodic|decision|gotcha|user-global>
                    --content @<file>|<text> [--cwd <path>] [--meta k=v ...] [--no-llm]
-                   # --no-llm: skip step 3 (Mem0 infer=True / Codex extraction).
+                   # --no-llm: skip step 3 (the index's `infer=True` / Codex extraction).
 sspower-mem search --scope <project|user|project,user> [--cwd <path>] [--layer <l1,l2,...>]
-                   (--query <text> | --mode recent) [--top-k 8] [--json] [--mem0-only]
+                   (--query <text> | --mode recent) [--top-k 8] [--json] [--idx-only]
                    # --query <text>:  semantic/grep search (default behavior).
-                   # --mode recent:   no query; return top-k most-recent blocks. Bypasses Mem0;
+                   # --mode recent:   no query; return top-k most-recent blocks. Bypasses the index;
                    #                  source="digest-recent". Used by hooks/session-start.
                    # Exactly one of --query and --mode is required.
-                   # --mem0-only: disables ALL digest fallback (both exception fallback AND zero-result
+                   # --idx-only: disables ALL digest fallback (both exception fallback AND zero-result
                    #              fallback). Renamed from v5's `--no-grep-fallback` (which only gated
                    #              the 0-result fallback — Codex v6 flagged the ambiguity).
-                   #              Behavior with --mem0-only set:
-                   #                - Mem0 raises  → CLI exits NONZERO (caller debugs the dep/Chroma).
-                   #                - Mem0 returns [] → CLI prints [] and exits 0 (legitimate no-match).
+                   #              Behavior with --idx-only set:
+                   #                - the index raises  → CLI exits NONZERO (caller debugs the dep/Chroma).
+                   #                - the index returns [] → CLI prints [] and exits 0 (legitimate no-match).
                    #              Default (flag NOT set): both fallbacks active, digest grep covers
                    #              both exceptions and zero-result.
 sspower-mem migrate [--from-wiki <dir>] [--from-memory <dir>] [--dry-run]
@@ -232,14 +232,14 @@ sspower-mem migrate [--from-wiki <dir>] [--from-memory <dir>] [--dry-run]
                     # reextract-existing mode (--reextract, no source dirs needed).
                     # Constraints:
                     #   - If --reextract is set: --from-* are OPTIONAL. The command operates on
-                    #     existing digest.md + Mem0 records only.
+                    #     existing digest.md + the index's records only.
                     #   - If --reextract is NOT set: at least one of --from-wiki / --from-memory
                     #     is REQUIRED (otherwise migrate has no input).
                     #   - --reextract takes optional value: <id> for single block, `all` for every
                     #     raw-only block (default = `all`). `no_llm=true` blocks are SKIPPED on
                     #     `all` but processed on explicit <id>.
 sspower-mem digest --scope <project|user> [--cwd <path>] [--rebuild-chroma [--no-llm]]
-                   # --rebuild-chroma: re-ingest every digest.md block into Mem0 from scratch.
+                   # --rebuild-chroma: re-ingest every digest.md block into the index from scratch.
                    #                   Default: full re-add via the standard `add` path = step 2
                    #                   (raw) + step 3 (extract) per block. Blocks with `no_llm=true`
                    #                   in digest metadata SKIP step 3 (preserves original intent).
@@ -257,20 +257,20 @@ sspower-mem doctor [--bootstrap]
 | Code | Meaning | When |
 |------|---------|------|
 | `0`  | OK | All requested steps succeeded; or `--no-llm` and steps 1+2 succeeded. |
-| `10` | Degraded: digest written, Mem0 step failed | Step 1 ok + step 2 or 3 failed (incl. Mem0/chromadb/model2vec **import** failure inside `add` — lazy-load policy, see §6.1). |
+| `10` | Degraded: digest written, the index-backend step failed | Step 1 ok + step 2 or 3 failed (incl. the upstream index library + chromadb + model2vec **import** failure inside `add` — lazy-load policy, see §6.1). |
 | `20` | HARD: digest write failed | Disk full / readonly / symlink-refused / path-traversal / project cwd unwritable (no fallback location for source-of-truth writes). |
-| `30` | Startup dependency missing | uvx not on PATH, Python interpreter missing, or `doctor --bootstrap` never run (lock file absent at expected path). NOT used for in-add Mem0 import failures — those are rc=10 per the lazy-import policy. Caller logs hint, no-ops. |
+| `30` | Startup dependency missing | uvx not on PATH, Python interpreter missing, or `doctor --bootstrap` never run (lock file absent at expected path). NOT used for in-add index-backend import failures — those are rc=10 per the lazy-import policy. Caller logs hint, no-ops. |
 
 #### Write critical section (D11)
 
 Every block has a **stable id** = `sha1(scope|layer|content)[:16]` (64 bits — collision probability < 1e-12 at 10⁴ blocks via birthday bound; v3 used `[:8]` = 32 bits which Codex flagged as collision-material at 10K scale). On any apparent id collision in `digest_append_or_skip`, the implementation **must** compare full content before skipping; if the content differs, append anyway with a `_dup<N>` suffix in the id field (`<base_id>_dup1`, `<base_id>_dup2`, …, picking the next free N) and log a warning.
 
-**Effective id propagation** (v6 missing #6 fix): once `_dup<N>` is appended, the **effective id** (full string including suffix) is used as `block_id` everywhere downstream — `meta["id"]` for the Mem0 raw add, and `meta["raw_id"]` on the Mem0 extract add. Pseudocode below uses `effective_id` to make this explicit. Two genuinely distinct content blocks with the same 64-bit prefix will therefore have distinct Mem0 records and distinct digest entries.
+**Effective id propagation** (v6 missing #6 fix): once `_dup<N>` is appended, the **effective id** (full string including suffix) is used as `block_id` everywhere downstream — `meta["id"]` for the index's raw-add path, and `meta["raw_id"]` on the index's extract-add path. Pseudocode below uses `effective_id` to make this explicit. Two genuinely distinct content blocks with the same 64-bit prefix will therefore have distinct records in the index and distinct digest entries.
 
-The id is the correlation key across all three writes (digest header line, Mem0 raw record metadata `id`, Mem0 extract record metadata `raw_id`).
+The id is the correlation key across all three writes (digest header line, the index's raw record metadata `id`, the index's extract record metadata `raw_id`).
 
 ```python
-# Lazy-import policy (v6 missing #1): Mem0/chromadb/model2vec are NOT imported at module load.
+# Lazy-import policy (v6 missing #1): the upstream index library + chromadb + model2vec are NOT imported at module load.
 # They are imported INSIDE step 2/3 below, AFTER step 1's digest append has succeeded.
 # A missing/broken Python dep therefore cannot bypass the digest write — it surfaces as rc=10
 # (degraded), not rc=30 (which would skip the digest entirely).
@@ -290,14 +290,14 @@ with fcntl.flock(LOCK_FD, fcntl.LOCK_EX):
 
     # Step 2 (RAW INDEX): lazy-import here so import-time failures degrade to rc=10.
     try:
-        from mem0 import Memory  # noqa: lazy
-        # mem0_raw_upsert(content, user_id=<scope>, metadata={**meta, "kind": "raw"})
-        #   Idempotency: pre-search Mem0 by metadata.id+kind=raw; if hit → skip.
-        step2_ok = mem0_raw_upsert(content, meta)
+        from idx_lib import Memory  # alias for the upstream index lib  # noqa: lazy
+        # idx_raw_upsert(content, user_id=<scope>, metadata={**meta, "kind": "raw"})
+        #   Idempotency: pre-search the index by metadata.id+kind=raw; if hit → skip.
+        step2_ok = idx_raw_upsert(content, meta)
     except ImportError as e:
         log_errors_jsonl({"stage": "step2_import", "err": str(e)}); step2_ok = False
     except Exception as e:
-        log_errors_jsonl({"stage": "step2_mem0", "err": str(e)}); step2_ok = False
+        log_errors_jsonl({"stage": "step2_index", "err": str(e)}); step2_ok = False
 
     # Step 3 (EXTRACT): metadata uses raw_id=effective_id.
     if no_llm_flag:
@@ -305,16 +305,16 @@ with fcntl.flock(LOCK_FD, fcntl.LOCK_EX):
         extracted_status = "skipped-intentional"
     else:
         try:
-            # mem0_extract_upsert(content, user_id=<scope>,
+            # idx_extract_upsert(content, user_id=<scope>,
             #   metadata={**meta, "kind": "extracted", "raw_id": effective_id})
             #   Idempotency: pre-search by metadata.raw_id+kind=extracted; if hit → skip.
-            step3_ok = mem0_extract_upsert(content, {**meta, "kind": "extracted", "raw_id": effective_id})
+            step3_ok = idx_extract_upsert(content, {**meta, "kind": "extracted", "raw_id": effective_id})
             extracted_status = "ok" if step3_ok else "skipped-failed"
         except ImportError as e:
             log_errors_jsonl({"stage": "step3_import", "err": str(e)}); step3_ok = False
             extracted_status = "skipped-failed"
         except Exception as e:
-            log_errors_jsonl({"stage": "step3_mem0", "err": str(e)}); step3_ok = False
+            log_errors_jsonl({"stage": "step3_index", "err": str(e)}); step3_ok = False
             extracted_status = "skipped-failed"
 
 # Lock released.
@@ -324,7 +324,7 @@ with fcntl.flock(LOCK_FD, fcntl.LOCK_EX):
 #   step1 ok, (step2 or step3) failed → 10
 ```
 
-Step 2 (`infer=False`) gives raw indexing even when Codex is down — Mem0 stores content + Model2Vec vector without LLM extraction. Step 3 (`infer=True`) adds LLM-extracted facts. The `raw_id` metadata field correlates extract records back to the raw record so `--rebuild-chroma` can dedup and `search` can deduplicate hits.
+Step 2 (`infer=False`) gives raw indexing even when Codex is down — the index stores content + Model2Vec vector without LLM extraction. Step 3 (`infer=True`) adds LLM-extracted facts. The `raw_id` metadata field correlates extract records back to the raw record so `--rebuild-chroma` can dedup and `search` can deduplicate hits.
 
 Codex misunderstanding #2 (correlation) + #3 (raw fallback) fix.
 
@@ -339,27 +339,27 @@ Codex misunderstanding #2 (correlation) + #3 (raw fallback) fix.
   - step1 ok + step2 ok + step3 ok (no flag) → 0
   - step1 ok + (step2 or step3) fail (no flag) → 10
 - **Output representation**: when `--json`, the result object has `"extracted": "skipped-intentional"` (vs `"skipped-failed"` for the rc=10 case where step 3 raised, and `"ok"` when step 3 succeeded).
-- **Persistence**: the digest block header includes `[meta] no_llm=true`. The Mem0 raw record's metadata also has `no_llm=true`.
+- **Persistence**: the digest block header includes `[meta] no_llm=true`. The index's raw record's metadata also has `no_llm=true`.
 - **`migrate --reextract` interaction**: blocks tagged `no_llm=true` are **SKIPPED** by `--reextract all` (they're intentional, not victims of bridge outage). `--reextract <id>` (explicit single id) re-runs extraction regardless of the flag — used when the user changes their mind about a specific block.
-- **`--no-llm` does NOT save the bridge call cost twice**: the bridge is not invoked at all in step 3. The Mem0 client just isn't called with `infer=True`.
+- **`--no-llm` does NOT save the bridge call cost twice**: the bridge is not invoked at all in step 3. The index client just isn't called with `infer=True`.
 
 #### Read path
 
 ```
 search (deterministic order):
-  1. Try Mem0 search — **one call per scope** (Mem0 user_id filter is scalar; see §5 mapping).
+  1. Try the index's search — **one call per scope** (the index's user_id filter is scalar; see §5 mapping).
      For `--scope project,user`: issue search(query, user_id="project:<hash>") AND
      search(query, user_id="user:global"), concatenate hits, then de-dup by metadata.raw_id
      (or metadata.id when raw_id absent): prefer kind=extracted when both kinds match;
      fall back to kind=raw. Re-score against the union per the merged-scope rule in step 5 below.
-  2. Mem0 raised exception          → fall through to grep fallback. source="digest-grep".
-  3. Mem0 returned 0 results AND `--mem0-only` NOT set (default: fallback enabled)
+  2. the index raised an exception          → fall through to grep fallback. source="digest-grep".
+  3. the index returned 0 results AND `--idx-only` NOT set (default: fallback enabled)
                                     → grep fallback. source="digest-grep".
-  4. Mem0 returned ≥1 result        → return Mem0 hits. source="mem0".
+  4. the index returned ≥1 result        → return the index hits. source="index".
 
 Every result entry:
   { "id": "<block_id>",
-    "source": "mem0" | "digest-grep" | "digest-recent",
+    "source": "index" | "digest-grep" | "digest-recent",
     "score": <float in [0,1]>,         // for "digest-recent": newest = 1.0, oldest in set = 0.0 (linear)
     "content": "...", "scope": "...", "layer": "...", "ts": "..." }
 
@@ -378,16 +378,16 @@ Grep fallback scoring (deterministic, no external lib):
   5. For merged `--scope project,user` fallback: concatenate per-scope candidate lists, run step 3 over
      the union (single normalization across both scopes), then top-k. Each result keeps its native scope.
 
-  Cross-scope merge rules (apply to both Mem0 and digest-recent paths, NOT only grep fallback):
+  Cross-scope merge rules (apply to both the index and digest-recent paths, NOT only grep fallback):
 
-  (A) Mem0 multi-scope: scores returned by separate Mem0 searches are NOT directly comparable across
-      collections (Mem0/Chroma cosine similarity is bounded in [0,1] but normalization differs by query
+  (A) index multi-scope: scores returned by separate index searches are NOT directly comparable across
+      collections (the index/Chroma cosine similarity is bounded in [0,1] but normalization differs by query
       and collection). Algorithm:
         - For each scope, run search, take its top-k hits.
         - Min-max normalize each scope's hit scores to [0,1] within that scope.
         - Concatenate, sort by normalized score desc, tie-break by ts desc, then lex on id.
         - Return top-k from the merged sorted list.
-      Result entries carry their NORMALIZED score, not the raw Mem0 score.
+      Result entries carry their NORMALIZED score, not the index's raw score.
 
   (B) digest-recent multi-scope: collect newest --top-k blocks from each scope's digest.md.
       Sort the union by ts desc; tie-break by scope priority (project > user); then lex on id.
@@ -396,8 +396,8 @@ Grep fallback scoring (deterministic, no external lib):
 
   Degenerate-case rules (resolves v6 missing #9):
     - **Empty scope**: zero hits contribute nothing to the merged list. If both scopes empty → return [].
-    - **Single hit in a scope** (Mem0): min == max → normalized score = 1.0 for that hit (no division by zero).
-    - **All hits tied at the same raw score** (Mem0): min == max → all normalized to 1.0; tie-breaks proceed
+    - **Single hit in a scope** (the index): min == max → normalized score = 1.0 for that hit (no division by zero).
+    - **All hits tied at the same raw score** (the index): min == max → all normalized to 1.0; tie-breaks proceed
       by ts desc then lex on id.
     - **Single block in digest-recent merged set**: score = 1.0.
     - **All blocks in digest-recent share the same ts**: score = 1.0 for all; tie-breaks by scope priority
@@ -406,7 +406,7 @@ Grep fallback scoring (deterministic, no external lib):
     - Implementation: a tiny helper `min_max_norm(values)` that returns `[1.0]*len(values)` when `min==max`.
 
 CLI flags:
-  --mem0-only   disable step 3 (Mem0-only mode for debugging)
+  --idx-only   disable step 3 (index-only mode for debugging)
   --json               machine-readable output (the above object array)
 ```
 
@@ -426,7 +426,7 @@ codex-bridge.mjs complete --json --prompt <text|@file>
   1. Pass `--sandbox read-only` (no file writes, no spawns beyond read-only shell).
   2. Prepend a hard system directive: `You are a single-turn extractor. Do NOT call any tool. Respond with the answer directly. If you start to call a tool, stop and answer in text.`
   3. Set `reasoning.effort=minimal` (lowers the chance of tool-use during reasoning).
-  4. Cap wall time at 60s; on timeout return exit nonzero so the Mem0 extract step degrades cleanly.
+  4. Cap wall time at 60s; on timeout return exit nonzero so the index's extract step degrades cleanly.
 - This is the achievable contract. Full tool-off requires upstream Codex CLI changes; out of scope.
 - Output (stdout): OpenAI-shape `chat.completion`:
   ```json
@@ -438,27 +438,27 @@ codex-bridge.mjs complete --json --prompt <text|@file>
 - Defaults: model `gpt-5.5`, effort `minimal`, timeout 60s.
 - Implementation note: thin wrapper over the existing Codex CLI single-shot path. Reuse `secureTmpFile` + `cleanupTmpDir` from existing bridge for the prompt file. Reuse `classifyError` for failure logging.
 
-### 6.3 Mem0 custom-LLM + custom-embedder adapters
+### 6.3 Index custom-LLM + custom-embedder adapters
 
 **Exact registration mechanism: TBD in Phase 0.** Codex source check (factory.py) found built-in provider maps only, no documented `provider: custom` key. Three candidate mechanisms to evaluate in Phase 0:
 
-1. **Subclass + factory monkey-patch**: add our class to `mem0.utils.factory.LlmFactory.provider_to_class` at import time. Lowest invasiveness, fragile across Mem0 versions.
-2. **Wrapper façade**: instantiate Mem0 with a stock provider, then replace `memory_instance.llm` / `memory_instance.embedding_model` post-init with our objects. Bypasses factory entirely. Depends on whether Mem0 re-reads these from config later.
-3. **Fork**: maintain a thin sspower fork of Mem0 with the providers added. Most resilient, highest maintenance cost.
+1. **Subclass + factory monkey-patch**: add our class to `<index>.utils.factory.LlmFactory.provider_to_class` at import time. Lowest invasiveness, fragile across index-library versions.
+2. **Wrapper façade**: instantiate the index with a stock provider, then replace `memory_instance.llm` / `memory_instance.embedding_model` post-init with our objects. Bypasses factory entirely. Depends on whether the index re-reads these from config later.
+3. **Fork**: maintain a thin sspower fork of the index with the providers added. Most resilient, highest maintenance cost.
 
-Phase 0 produces a 1-page mini-spec choosing one mechanism with evidence (Mem0 source citations) and recording the chosen mechanism's stability assumptions.
+Phase 0 produces a 1-page mini-spec choosing one mechanism with evidence (index-backend source citations) and recording the chosen mechanism's stability assumptions.
 
-Adapter interfaces (sketch, exact signatures TBD in Phase 0 once Mem0 source is read):
+Adapter interfaces (sketch, exact signatures TBD in Phase 0 once the index-backend source is read):
 
 ```python
 class CodexBridgeLLM:
-    """Implements Mem0 LLM interface. Calls codex-bridge.mjs complete --json."""
+    """Implements index LLM interface. Calls codex-bridge.mjs complete --json."""
     def generate_response(self, messages, response_format=None, tools=None, tool_choice="auto"):
         # subprocess.run([BRIDGE, "complete", "--json", "--prompt", flatten(messages)], timeout=60)
-        # On non-zero exit → raise CodexBridgeUnavailable (Mem0 catches in infer=True path)
+        # On non-zero exit → raise CodexBridgeUnavailable (the index catches in infer=True path)
 
 class Model2VecEmbedder:
-    """Implements Mem0 embedder interface."""
+    """Implements index embedder interface."""
     def __init__(self, model_name="minishlab/potion-base-8M"):
         from model2vec import StaticModel
         self.model = StaticModel.from_pretrained(model_name)
@@ -621,20 +621,20 @@ There is no `skills/session-start/SKILL.md` and this spec does not introduce one
 
 ## 7. Migration
 
-### 7.1 Phase 0 — Mem0 source verification (NEW, blocks Phase C)
+### 7.1 Phase 0 — index-backend source verification (NEW, blocks Phase C)
 
-**Deliverable:** a 1-page mini-spec `docs/specs/2026-05-13-mem0-provider-registration.md` answering:
+**Deliverable:** a 1-page mini-spec `docs/specs/2026-05-13-index-provider-registration.md` answering:
 
-1. Which of the 3 registration mechanisms in §6.3 we choose, with Mem0 source citations.
-2. Exact `LlmFactory` / `EmbedderFactory` API surface in current Mem0 main.
+1. Which of the 3 registration mechanisms in §6.3 we choose, with index-backend source citations.
+2. Exact `LlmFactory` / `EmbedderFactory` API surface in current index-library main.
 3. `Memory.add(infer=False)` storage path: does it write to the same collection as `infer=True`? What metadata does it return? Does it embed via the configured embedder?
-4. How to override Mem0's history-DB path (env var? config key? subclass?).
-5. Whether `MEM0_TELEMETRY=false` honors at import time, or telemetry requires patching `mem0.memory.telemetry`.
-6. **Mem0 v3 entity-linking / entity-store behavior** (resolves v3 missing #4): does the current Mem0 OSS algorithm lazily create extra Chroma collections (entity store) even when graph is off? If yes, what is the collection name, where is it persisted, and can it be disabled? Sources to check: `mem0/memory/main.py` (entity-store init), https://docs.mem0.ai/migration/oss-v2-to-v3. Spec assumption ("Chroma stores exactly the configured `memories` collection + nothing else") must be verified or revised.
-7. **`Memory.add(infer=True)` metadata + failure semantics** (resolves v4 missing #5): does Mem0 preserve caller-supplied metadata (`raw_id`, `kind=extracted`, `id`, `layer`, `scope`, `ts`) when extraction yields multiple facts (1-to-N)? What is the resolution under ADD/UPDATE/NONE actions — does UPDATE replace metadata? Does the LLM adapter raising an exception surface to the caller, or does Mem0 swallow it and return `[]`? Step 3 (§6.1) relies on (a) `raw_id` correlation surviving extraction, (b) failures being observable (so the wrapper sets `extracted="skipped-failed"`, not `"ok"`). If Mem0 swallows the failure, we must wrap `Memory.add(infer=True)` with our own pre-check (e.g., timing the call + comparing the post-add count) or fork the relevant method. Source to check: `mem0/memory/main.py:add` + `_add_to_vector_store`.
-8. **Mem0 metadata-filter API surface** (resolves v7 missing #9): does Mem0's `Memory.search` (or a sibling like `Memory.get`/`Memory.list`) accept arbitrary `metadata.<key>` filters (e.g., `metadata.id == "<block_id>" AND metadata.kind == "raw"`)? §6.1 dedup pre-search requires this. If Mem0 only filters by the top-level `user_id` + a fixed `run_id`/`agent_id` set, we must implement dedup by: (a) maintaining our own SQLite dedup table at `~/.claude/sspower/mem0/dedup.db` (block_id+kind → mem0_record_id), or (b) issuing a broad search + filtering metadata client-side, or (c) forking. Output of Phase 0 must pick one. Source to check: `mem0/memory/main.py:search` and `mem0/vector_stores/chroma.py` (or equivalent) for the filter pass-through.
+4. How to override the index's history-DB path (env var? config key? subclass?).
+5. Whether `INDEX_TELEMETRY=false` honors at import time, or telemetry requires patching `<index>.memory.telemetry`.
+6. **the index's v3 entity-linking / entity-store behavior** (resolves v3 missing #4): does the current OSS index algorithm lazily create extra Chroma collections (entity store) even when graph is off? If yes, what is the collection name, where is it persisted, and can it be disabled? Sources to check: `<index>/memory/main.py` (entity-store init), (upstream index migration docs). Spec assumption ("Chroma stores exactly the configured `memories` collection + nothing else") must be verified or revised.
+7. **`Memory.add(infer=True)` metadata + failure semantics** (resolves v4 missing #5): does the index preserve caller-supplied metadata (`raw_id`, `kind=extracted`, `id`, `layer`, `scope`, `ts`) when extraction yields multiple facts (1-to-N)? What is the resolution under ADD/UPDATE/NONE actions — does UPDATE replace metadata? Does the LLM adapter raising an exception surface to the caller, or does the index swallow it and return `[]`? Step 3 (§6.1) relies on (a) `raw_id` correlation surviving extraction, (b) failures being observable (so the wrapper sets `extracted="skipped-failed"`, not `"ok"`). If the index swallows the failure, we must wrap `Memory.add(infer=True)` with our own pre-check (e.g., timing the call + comparing the post-add count) or fork the relevant method. Source to check: `<index>/memory/main.py:add` + `_add_to_vector_store`.
+8. **the index's metadata-filter API surface** (resolves v7 missing #9): does the index's `Memory.search` (or a sibling like `Memory.get`/`Memory.list`) accept arbitrary `metadata.<key>` filters (e.g., `metadata.id == "<block_id>" AND metadata.kind == "raw"`)? §6.1 dedup pre-search requires this. If the index only filters by the top-level `user_id` + a fixed `run_id`/`agent_id` set, we must implement dedup by: (a) maintaining our own SQLite dedup table at `~/.claude/sspower/idx/dedup.db` (block_id+kind → idx_record_id), or (b) issuing a broad search + filtering metadata client-side, or (c) forking. Output of Phase 0 must pick one. Source to check: `<index>/memory/main.py:search` and `<index>/vector_stores/chroma.py` (or equivalent) for the filter pass-through.
 
-Phase 0 reads Mem0 source only — no implementation. Output is a doc. Re-run Codex spec-review on the mini-spec before unblocking Phase C.
+Phase 0 reads the index-backend source only — no implementation. Output is a doc. Re-run Codex spec-review on the mini-spec before unblocking Phase C.
 
 ### 7.2 One-shot migration
 
@@ -650,60 +650,60 @@ For each block:
 2. Call `sspower-mem add` (which applies the same `effective_id` collision logic from §6.1 — full-content compare on apparent id collision, `_dup<N>` suffix if content differs). Migration does NOT bypass the standard add path or its dedup rules (resolves v7 missing #8).
 3. Tag metadata: `migrated_from=<path>`, `original_mtime=<ts>` (merged into the standard meta dict before `add` is called).
 
-`--dry-run` prints plan, writes nothing. `--reextract` re-runs LLM extraction (Mem0 `infer=True` re-add) for entries currently lacking extracted facts (e.g. when Codex was down at migrate time).
+`--dry-run` prints plan, writes nothing. `--reextract` re-runs LLM extraction (the index's `infer=True` re-add) for entries currently lacking extracted facts (e.g. when Codex was down at migrate time).
 
-After Phase F green-checkpoint, archive legacy `wiki/sessions/`, `wiki/decisions.md`, `wiki/gotchas.md` under `wiki/_legacy_pre_mem0/`. The digest.md is now the substrate.
+After Phase F green-checkpoint, archive legacy `wiki/sessions/`, `wiki/decisions.md`, `wiki/gotchas.md` under `wiki/_legacy_pre_idx/`. The digest.md is now the substrate.
 
 ## 8. Failure modes (D2 / D11 compliance)
 
 | Failure | Detection | Degradation | Recovery |
 |---------|-----------|-------------|----------|
 | `digest.md` unwritable | step 1 of write critical section | exit 20 HARD. **Hook propagates the failure** (logs hint to stderr and exits 20 itself, per Phase E wrapper). Loud failure beats silent data loss — data-loss event must surface to the user, not get swallowed by `set +e`. | free disk; rerun hook manually. |
-| Mem0 `infer=False` raw add fails (Chroma corrupt/locked, embedder load error) | step 2 raises | digest line is already durable. errors.jsonl logged. `add_result.raw="skipped"`. exit 10. | `sspower-mem digest --rebuild-chroma` re-ingests all digest blocks. |
+| the index's `infer=False` raw add fails (Chroma corrupt/locked, embedder load error) | step 2 raises | digest line is already durable. errors.jsonl logged. `add_result.raw="skipped"`. exit 10. | `sspower-mem digest --rebuild-chroma` re-ingests all digest blocks. |
 | Codex bridge `complete` timeout/error | step 3 raises CodexBridgeUnavailable | digest + raw embedding stored. Only LLM-extracted facts are skipped. `add_result.extracted="skipped"`. exit 10. | `sspower-mem migrate --reextract` once bridge healthy. |
-| Model2Vec / chromadb / mem0ai import fails inside `add` | lazy import raises after digest append | exit **10** (NOT 30). Digest line is already durable; only Mem0 raw+extract are skipped. `errors.jsonl` logged. Lazy-import policy: Mem0/chromadb/model2vec are imported INSIDE `add` AFTER step 1 (digest append), so a missing or broken Python dep cannot bypass the digest write. This preserves D2/D11 against dep regression. | `sspower-mem doctor --bootstrap`; if model fetch fails, smaller pinned model in config.json. |
+| Model2Vec / chromadb / index-library import fails inside `add` | lazy import raises after digest append | exit **10** (NOT 30). Digest line is already durable; only the index's raw+extract are skipped. `errors.jsonl` logged. Lazy-import policy: the upstream index library + chromadb + model2vec are imported INSIDE `add` AFTER step 1 (digest append), so a missing or broken Python dep cannot bypass the digest write. This preserves D2/D11 against dep regression. | `sspower-mem doctor --bootstrap`; if model fetch fails, smaller pinned model in config.json. |
 | Model2Vec model load fails at CLI startup (before `add` begins) | `doctor --bootstrap` only — `add` never imports m2v at startup | exit 30 from doctor; `add` is unaffected because it doesn't import m2v until after digest append. | re-bootstrap with smaller model. |
 | `uv` / `uvx` missing | hook wrapper `command -v uvx` check | exit 30 (from wrapper, before invoking sspower-mem). Hook no-ops with hint. Legacy belt still runs. | `brew install uv`. |
-| Lock file unwritable | `fcntl.flock` raises | exit 30. Same as uv-missing path. | check `~/.claude/sspower/mem0/` permissions; fall back to `~/.cache/sspower/mem0/`. |
-| Mem0 returns wrong/garbage facts on search | not auto-detected | digest grep fallback never sees garbage facts. Manual inspection of `search --json` shows source ids. | `sspower-mem migrate --reextract <id>` re-runs extraction on a known-good block; or set `--no-llm` per-add to skip extraction for that block. |
+| Lock file unwritable | `fcntl.flock` raises | exit 30. Same as uv-missing path. | check `~/.claude/sspower/idx/` permissions; fall back to `~/.cache/sspower/idx/`. |
+| index returns wrong/garbage facts on search | not auto-detected | digest grep fallback never sees garbage facts. Manual inspection of `search --json` shows source ids. | `sspower-mem migrate --reextract <id>` re-runs extraction on a known-good block; or set `--no-llm` per-add to skip extraction for that block. |
 | Chroma history-db growth | `doctor` reports size | not blocking; informational only. | manual `vacuum`/`reset` via `chromadb` CLI. |
 
 **The contract**: if `sspower-mem add` returns 0 or 10, the content is recoverable from digest.md by `--rebuild-chroma`. Exit 20 is the only data-loss exit and it's disk-level.
 
 ## 9. Phases (ordered for independent verifiability)
 
-### Phase 0 — Mem0 source verification (NEW, blocks C)
-Deliverable: `docs/specs/2026-05-13-mem0-provider-registration.md` per §7.1. Re-run Codex spec-review on it. No code in Phase 0.
+### Phase 0 — index-backend source verification (NEW, blocks C)
+Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. Re-run Codex spec-review on it. No code in Phase 0.
 
-### Phase A — sspower-mem skeleton, **digest-only** (no Mem0 yet)
+### Phase A — sspower-mem skeleton, **digest-only** (no the index yet)
 - [ ] `scripts/sspower_mem/` package + `pyproject.toml`.
-- [ ] `sspower-mem add/search/digest/doctor` operating ONLY on digest.md (no Mem0 dep).
+- [ ] `sspower-mem add/search/digest/doctor` operating ONLY on digest.md (no index-backend dep).
 - [ ] File lock (`fcntl.flock`) around add. Symlink-safe writes via the new `safe_append_strict` (§6.4) — NOT the legacy `_safe_append_text` (TOCTOU gap; retained only for the legacy belt).
-- [ ] `doctor --bootstrap` creates `~/.claude/sspower/mem0/` + writes empty `config.json` + `.lock`.
+- [ ] `doctor --bootstrap` creates `~/.claude/sspower/idx/` + writes empty `config.json` + `.lock`.
 - [ ] Tests: append correctness under lock contention, header parse, grep search, exit-20 on unwritable, exit-30 on missing dependency, symlink refusal.
-- [ ] **Checkpoint**: working plain-md backend with no Mem0 dep. Ship-able as v0.
+- [ ] **Checkpoint**: working plain-md backend with no index-backend dep. Ship-able as v0.
 
 ### Phase B — codex-bridge `complete --json`
 - [ ] Add `complete` subcommand to `scripts/codex-bridge.mjs`.
 - [ ] Tests against fixture Codex responses (mock spawn).
 - [ ] Manual smoke against real Codex.
 
-### Phase C — Mem0 wiring (blocked by Phase 0 + Phase A + Phase B)
+### Phase C — index-backend wiring (blocked by Phase 0 + Phase A + Phase B)
 
-**All bullets below are CONTRACTS PENDING Phase 0** — they describe the intended end-state, but the exact Mem0 API surface (registration mechanism, `infer=False` semantics, history.db override, telemetry opt-out) is verified and frozen only by the Phase 0 mini-spec. If Phase 0 finds a different shape, this section is rewritten before Phase C starts.
+**All bullets below are CONTRACTS PENDING Phase 0** — they describe the intended end-state, but the exact index-backend API surface (registration mechanism, `infer=False` semantics, history.db override, telemetry opt-out) is verified and frozen only by the Phase 0 mini-spec. If Phase 0 finds a different shape, this section is rewritten before Phase C starts.
 
-- [ ] Add Mem0 + chromadb + model2vec to `sspower_mem` deps; pin versions (pins selected during Phase 0 + Phase A bootstrap testing).
+- [ ] Add the index + chromadb + model2vec to `sspower_mem` deps; pin versions (pins selected during Phase 0 + Phase A bootstrap testing).
 - [ ] Implement `CodexBridgeLLM` and `Model2VecEmbedder` per the mechanism chosen in Phase 0 (§6.3 candidates 1/2/3).
 - [ ] Wire `infer=False` (raw) → `infer=True` (extract) two-step add inside the lock, using stable `block_id` + `raw_id` metadata correlation (§6.1 D11). Idempotent upsert per §6.1.
-- [ ] `doctor --bootstrap` extended: download M2V model (`potion-base-8M`), init chromadb at `~/.claude/sspower/mem0/chroma/`, run round-trip add+search, run `complete --json` round-trip against Codex bridge. Warm `uvx` cache.
-- [ ] Set `MEM0_TELEMETRY=false` in CLI entry before any `mem0` import (mechanism verified in Phase 0 question 5 — env var vs telemetry-module patch).
-- [ ] Pin Mem0 history.db to `~/.claude/sspower/mem0/history.db` (mechanism from Phase 0 question 4 — env var vs config key vs subclass).
+- [ ] `doctor --bootstrap` extended: download M2V model (`potion-base-8M`), init chromadb at `~/.claude/sspower/idx/chroma/`, run round-trip add+search, run `complete --json` round-trip against Codex bridge. Warm `uvx` cache.
+- [ ] Set `INDEX_TELEMETRY=false` in CLI entry before any `the-index` import (mechanism verified in Phase 0 question 5 — env var vs telemetry-module patch).
+- [ ] Pin the index's history.db to `~/.claude/sspower/idx/history.db` (mechanism from Phase 0 question 4 — env var vs config key vs subclass).
 - [ ] Tests: round-trip add → search; idempotency (same content added twice = single record per kind); error injections per §8 (chroma corrupt, bridge timeout, m2v load fail).
 
 ### Phase D — Migration
 - [ ] `sspower-mem migrate` against a copy of real wiki+memory. Verify idempotence (twice = same row count).
 - [ ] `--reextract` works on a block whose initial add ran with bridge mocked-failed.
-- [ ] Sample-compare: random 10 legacy md blocks vs Mem0 search results.
+- [ ] Sample-compare: random 10 legacy md blocks vs the index's search results.
 
 ### Phase E — Hooks + skills
 - [ ] Rewrite `hooks/wiki-archive.py` write tail to call `sspower-mem add`.
@@ -743,7 +743,7 @@ Deliverable: `docs/specs/2026-05-13-mem0-provider-registration.md` per §7.1. Re
     esac
     case "$SSP_RC" in
       0)  : ;;  # success; $SSP_OUT is the result
-      10) echo "[sspower-mem] degraded (rc=10, mem0 step failed): $SSP_OUT" >&2 ;;
+      10) echo "[sspower-mem] degraded (rc=10, the index-backend step failed): $SSP_OUT" >&2 ;;
       20) echo "[sspower-mem] HARD fail (rc=20, digest unwritable): $SSP_OUT" >&2 ;;
       30) echo "[sspower-mem] dep missing (rc=30, uv cache not warmed?): $SSP_OUT" >&2; SSP_OUT="" ;;
       *)  echo "[sspower-mem] unexpected rc=$SSP_RC: $SSP_OUT" >&2; SSP_OUT="" ;;
@@ -804,9 +804,9 @@ Deliverable: `docs/specs/2026-05-13-mem0-provider-registration.md` per §7.1. Re
 
 ### Phase F — Verification & deprecation
 - [ ] Run for 1 week on real sessions.
-- [ ] Weekly compare: digest.md block count vs Mem0 raw-collection count (must match modulo migration).
+- [ ] Weekly compare: digest.md block count vs index raw-collection count (must match modulo migration).
 - [ ] Remove legacy belt write in `wiki-archive.py`.
-- [ ] Archive existing legacy files under `_legacy_pre_mem0/`.
+- [ ] Archive existing legacy files under `_legacy_pre_idx/`.
 
 ## 10. Self-review checklist (pre Codex re-review)
 
@@ -815,27 +815,27 @@ Deliverable: `docs/specs/2026-05-13-mem0-provider-registration.md` per §7.1. Re
 - [ ] Scope §2 in/out exhaustive.
 - [ ] Every §8 failure mode has detect + degrade + recover.
 - [ ] No implementation code (HARD-GATE D10).
-- [ ] §9 phases independently verifiable. Phase A ships without Mem0 at all.
-- [ ] Source-of-truth contract consistent across §1, D1, D11, §6.1, §8 (digest is durable; Mem0 is index).
+- [ ] §9 phases independently verifiable. Phase A ships without the index at all.
+- [ ] Source-of-truth contract consistent across §1, D1, D11, §6.1, §8 (digest is durable; the index is index).
 - [ ] All Codex v1 findings answered in §0 with file/section pointer.
 - [ ] Repo surfaces (§4) verified against actual filesystem, not assumed.
 
 ## 11. Open questions (Phase 0 must close)
 
-1. Mem0 custom-LLM registration mechanism — choose subclass-monkey-patch / wrapper façade / fork.
-2. Mem0 custom-embedder factory API.
+1. the index's custom-LLM registration mechanism — choose subclass-monkey-patch / wrapper façade / fork.
+2. the index's custom-embedder factory API.
 3. `Memory.add(infer=False)` exact semantics: storage path, returned ids, embedder use, metadata schema.
-4. Mem0 SQLite history-DB path override mechanism.
-5. `MEM0_TELEMETRY=false` import-time honor vs patching `mem0.memory.telemetry`.
+4. the index's SQLite history-DB path override mechanism.
+5. `INDEX_TELEMETRY=false` import-time honor vs patching `<index>.memory.telemetry`.
 6. Chroma persistent (sqlite3 + HNSW) locking semantics under concurrent PreCompact + SessionEnd (the §6.1 file lock is the belt; need to know if Chroma has its own to skip the suspenders).
 7. `sspower-mem search` latency budget on `hooks/session-start` (target <1s for UX). M2V encode ~10ms warm + Chroma top-k 8 ~5ms = OK in theory; verify on real machine in Phase A.
 
 ## 12. Non-goals / explicit rejections
 
 - No Semble (D9).
-- No graph store (Mem0 neo4j unused).
-- No Mem0 cloud / hosted (D8).
+- No graph store (the index neo4j unused).
+- No the cloud-hosted index service / hosted (D8).
 - No daemon (OpenMemory MCP server).
-- No third memory store. digest.md replaces wiki + auto-memory; Mem0 is the index, not a separate store.
+- No third memory store. digest.md replaces wiki + auto-memory; the index backend IS our index, not a separate store.
 - No multi-machine sync of Chroma. Each machine has its own digest.md + Chroma; sharing across machines uses git-tracked digest.md (out of scope for this spec).
 - **No `skills/session-start/SKILL.md`** introduced. SessionStart context-injection stays hook-only.
