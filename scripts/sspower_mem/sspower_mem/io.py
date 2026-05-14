@@ -41,8 +41,9 @@ def safe_append_strict(path: pathlib.Path, content: str, trust_root: pathlib.Pat
         file_flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
         if hasattr(os, "O_NOFOLLOW"):
             file_flags |= os.O_NOFOLLOW
-        file_fd = os.open(rel.parts[-1], file_flags, mode=0o644, dir_fd=cur_fd)
+        file_fd = os.open(rel.parts[-1], file_flags, mode=0o600, dir_fd=cur_fd)
         try:
+            os.fchmod(file_fd, 0o600)
             data = content.encode("utf-8")
             written = 0
             while written < len(data):
@@ -83,5 +84,48 @@ def safe_makedirs_strict(path: pathlib.Path, parent_anchor: pathlib.Path, mode: 
             next_fd = os.open(part, flags_dir, dir_fd=cur_fd)
             os.close(cur_fd)
             cur_fd = next_fd
+    finally:
+        os.close(cur_fd)
+
+
+def safe_read_strict(path: pathlib.Path, trust_root: pathlib.Path) -> str:
+    """Read `path`, refusing if any path component AT OR BELOW `trust_root`
+    is a symlink. TOCTOU-closed via openat-style relative opens with
+    O_NOFOLLOW."""
+    try:
+        rel = path.relative_to(trust_root)
+    except ValueError as e:
+        raise OSError(f"path {path} not under trust_root {trust_root}") from e
+    if not rel.parts:
+        raise OSError(f"path {path} must name a file below trust_root")
+    for part in rel.parts:
+        if part in ("", ".", ".."):
+            raise OSError(f"path {path} contains traversal component {part!r}")
+
+    flags_dir = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags_dir |= os.O_NOFOLLOW
+
+    cur_fd = os.open(trust_root, flags_dir)
+    try:
+        for part in rel.parts[:-1]:
+            next_fd = os.open(part, flags_dir, dir_fd=cur_fd)
+            os.close(cur_fd)
+            cur_fd = next_fd
+
+        file_flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            file_flags |= os.O_NOFOLLOW
+        file_fd = os.open(rel.parts[-1], file_flags, dir_fd=cur_fd)
+        try:
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(file_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8")
+        finally:
+            os.close(file_fd)
     finally:
         os.close(cur_fd)

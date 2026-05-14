@@ -20,7 +20,7 @@ import pathlib
 import re
 from typing import Iterator
 
-from sspower_mem.io import safe_append_strict, safe_makedirs_strict
+from sspower_mem.io import safe_append_strict, safe_makedirs_strict, safe_read_strict
 
 
 _HEADER_RE = re.compile(
@@ -28,6 +28,10 @@ _HEADER_RE = re.compile(
 )
 _META_RE = re.compile(r"^\[meta\] (.+)$")
 _SEPARATOR = "\n---\n\n"
+_BLOCK_BOUNDARY_RE = re.compile(
+    r"\n---\n\n(?=## \S+ · [^·]+? · [^·]+? · \S+\s*(?:\n|$)|\s*\Z)"
+)
+_RESERVED_BOUNDARY_RE = re.compile(r"(?:^|\n)---\n\n## ")
 
 
 def compute_id(scope: str, layer: str, content: str) -> str:
@@ -47,7 +51,13 @@ def format_block(
     meta: dict,
     content: str,
 ) -> str:
-    """Render one block. Caller appends to digest.md atomically."""
+    """Render one block. Caller appends to digest.md atomically.
+
+    Callers must scrub or escape content containing the reserved digest boundary
+    before passing it here.
+    """
+    if _RESERVED_BOUNDARY_RE.search(content):
+        raise ValueError("content contains reserved digest boundary pattern; refusing to append")
     body = content.rstrip("\n")
     meta_line = "[meta] " + json.dumps(meta, separators=(",", ":"), sort_keys=True)
     return f"## {ts} · {scope} · {layer} · {block_id}\n{meta_line}\n{body}{_SEPARATOR}"
@@ -58,7 +68,7 @@ def parse_blocks(text: str) -> Iterator[dict]:
 
     Tolerant: skips malformed blocks rather than raising.
     """
-    raw_blocks = text.split(_SEPARATOR)
+    raw_blocks = _BLOCK_BOUNDARY_RE.split(text)
     for raw in raw_blocks:
         raw = raw.strip("\n")
         if not raw:
@@ -92,10 +102,12 @@ def parse_blocks(text: str) -> Iterator[dict]:
 
 def _existing_blocks_by_base(digest_path: pathlib.Path) -> dict[str, list[dict]]:
     """Map base_id (with any _dup<N> stripped) to blocks already present."""
-    if not digest_path.exists():
+    try:
+        text = safe_read_strict(digest_path, digest_path.parent)
+    except FileNotFoundError:
         return {}
     by_base: dict[str, list[dict]] = {}
-    for blk in parse_blocks(digest_path.read_text(encoding="utf-8")):
+    for blk in parse_blocks(text):
         bid = blk["id"]
         base = bid.split("_dup", 1)[0]
         by_base.setdefault(base, []).append(blk)
@@ -164,9 +176,11 @@ def _tokenize(query: str) -> list[str]:
 def _load_all_blocks(digest_paths: list[pathlib.Path]) -> list[dict]:
     blocks: list[dict] = []
     for p in digest_paths:
-        if not p.exists():
+        try:
+            text = safe_read_strict(p, p.parent)
+        except FileNotFoundError:
             continue
-        blocks.extend(parse_blocks(p.read_text(encoding="utf-8")))
+        blocks.extend(parse_blocks(text))
     return blocks
 
 

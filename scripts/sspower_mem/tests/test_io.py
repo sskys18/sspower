@@ -1,9 +1,11 @@
 import os
 import pathlib
 import pytest
+import stat
 
 from sspower_mem.io import safe_append_strict
 from sspower_mem.io import safe_makedirs_strict
+from sspower_mem.io import safe_read_strict
 
 
 def test_safe_append_strict_refuses_symlinked_final_file(trust_root, tmp_path):
@@ -25,6 +27,33 @@ def test_safe_append_strict_writes_content(trust_root):
     safe_append_strict(path, "hello\n", trust_root)
     safe_append_strict(path, "world\n", trust_root)
     assert path.read_text() == "hello\nworld\n"
+
+
+def test_safe_append_strict_creates_file_at_0600(trust_root):
+    path = trust_root / "digest.md"
+    safe_append_strict(path, "secret\n", trust_root)
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_safe_read_strict_refuses_symlinked_final_file(trust_root, tmp_path):
+    path = trust_root / "digest.md"
+    safe_append_strict(path, "trusted\n", trust_root)
+    path.unlink()
+    outside = tmp_path / "outside.md"
+    outside.write_text("attacker-controlled\n")
+    os.symlink(outside, path)
+
+    with pytest.raises(OSError):
+        safe_read_strict(path, trust_root)
+
+
+def test_safe_read_strict_round_trip(trust_root):
+    path = trust_root / "digest.md"
+    safe_append_strict(path, "hello\n", trust_root)
+    safe_append_strict(path, "world\n", trust_root)
+
+    assert safe_read_strict(path, trust_root) == "hello\nworld\n"
 
 
 def test_safe_append_strict_rejects_traversal(trust_root):

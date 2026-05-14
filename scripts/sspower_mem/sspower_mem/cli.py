@@ -16,6 +16,7 @@ import sys
 
 from sspower_mem.digest import append_block_or_skip, grep_search, parse_blocks, recent
 from sspower_mem.doctor import bootstrap, health
+from sspower_mem.io import safe_read_strict
 from sspower_mem.lock import acquire_lock
 from sspower_mem.scope import (
     canonicalize_cwd,
@@ -78,18 +79,25 @@ def cmd_add(args: argparse.Namespace) -> int:
 
     try:
         with acquire_lock(lock_path):
-            eff_id, was_new = append_block_or_skip(
-                digest_path=dpath,
-                trust_root=troot,
-                parent_anchor=panchor,
-                scope=sc_id,
-                layer=args.layer,
-                content=content,
-                meta=meta,
-            )
+            try:
+                eff_id, was_new = append_block_or_skip(
+                    digest_path=dpath,
+                    trust_root=troot,
+                    parent_anchor=panchor,
+                    scope=sc_id,
+                    layer=args.layer,
+                    content=content,
+                    meta=meta,
+                )
+            except OSError as e:
+                print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
+                return 20
+            except ValueError as e:
+                print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
+                return 20
     except OSError as e:
-        print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
-        return 20
+        print(f"sspower-mem: lock unavailable: {e}", file=sys.stderr)
+        return 30
 
     result = {
         "id": eff_id,
@@ -123,13 +131,17 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     layer_filter = args.layer.split(",") if args.layer else None
 
-    if args.mode == "recent":
-        hits = recent(paths, top_k=args.top_k, layer_filter=layer_filter)
-    elif args.query:
-        hits = grep_search(paths, args.query, top_k=args.top_k, layer_filter=layer_filter)
-    else:
-        print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
-        return 30
+    try:
+        if args.mode == "recent":
+            hits = recent(paths, top_k=args.top_k, layer_filter=layer_filter)
+        elif args.query:
+            hits = grep_search(paths, args.query, top_k=args.top_k, layer_filter=layer_filter)
+        else:
+            print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
+            return 30
+    except OSError as e:
+        print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+        return 20
 
     if args.json:
         print(json.dumps(hits, indent=2))
@@ -166,7 +178,9 @@ def cmd_digest(args: argparse.Namespace) -> int:
         return 20
 
     dpath = digest_path(args.scope, cwd)
-    if not dpath.exists():
+    try:
+        digest_text = safe_read_strict(dpath, dpath.parent)
+    except FileNotFoundError:
         print(
             json.dumps(
                 {
@@ -179,8 +193,11 @@ def cmd_digest(args: argparse.Namespace) -> int:
             )
         )
         return 0
+    except OSError as e:
+        print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+        return 20
 
-    blocks = list(parse_blocks(dpath.read_text(encoding="utf-8")))
+    blocks = list(parse_blocks(digest_text))
     by_layer: dict[str, int] = {}
     for block in blocks:
         by_layer[block["layer"]] = by_layer.get(block["layer"], 0) + 1
