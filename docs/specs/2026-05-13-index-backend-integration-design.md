@@ -212,7 +212,8 @@ Subcommands:
 #                  falls back to os.getcwd(), which is correct for interactive shell use only.
 
 sspower-mem add    --scope <project|user> --layer <episodic|decision|gotcha|user-global>
-                   --content @<file>|<text> [--cwd <path>] [--meta k=v ...] [--no-llm]
+                   (--content <text> | --content-file <path>) [--cwd <path>] [--meta k=v ...] [--no-llm]
+                   # v10: --content is always literal; explicit --content-file avoids @-path LFI risk.
                    # --no-llm: skip step 3 (the index's `infer=True` / Codex extraction).
 sspower-mem search --scope <project|user|project,user> [--cwd <path>] [--layer <l1,l2,...>]
                    (--query <text> | --mode recent) [--top-k 8] [--json] [--idx-only]

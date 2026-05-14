@@ -56,15 +56,26 @@ def _parse_meta(meta_args: list[str]) -> dict:
     return out
 
 
-def _read_content(arg: str) -> str:
-    if arg.startswith("@"):
-        return pathlib.Path(arg[1:]).read_text(encoding="utf-8")
-    return arg
+def _read_content_file(path: str) -> str:
+    return pathlib.Path(path).read_text(encoding="utf-8")
+
+
+def _validate_layer_for_scope(scope: str, layer: str) -> str | None:
+    allowed_layers = PROJECT_LAYERS if scope == "project" else USER_LAYERS
+    if layer in allowed_layers:
+        return None
+
+    if layer in PROJECT_LAYERS:
+        return f"layer {layer} is only valid with --scope project"
+    if layer in USER_LAYERS:
+        return f"layer {layer} is only valid with --scope user"
+    return f"unknown layer {layer}"
 
 
 def cmd_add(args: argparse.Namespace) -> int:
-    if args.scope == "project" and args.layer == "user-global":
-        print("sspower-mem: layer user-global is only valid with --scope user", file=sys.stderr)
+    layer_error = _validate_layer_for_scope(args.scope, args.layer)
+    if layer_error:
+        print(f"sspower-mem: {layer_error}", file=sys.stderr)
         return 30
 
     try:
@@ -77,7 +88,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     troot = trust_root(args.scope, cwd)
     panchor = parent_anchor(args.scope, cwd)
     dpath = digest_path(args.scope, cwd)
-    content = _read_content(args.content)
+    content = args.content if args.content is not None else _read_content_file(args.content_file)
     meta = _parse_meta(args.meta)
     if args.no_llm:
         meta = {**meta, "no_llm": True}
@@ -123,6 +134,13 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 
 def cmd_search(args: argparse.Namespace) -> int:
+    if args.idx_only:
+        print(
+            "sspower-mem: --idx-only requires the Phase C index backend; Phase A always uses digest",
+            file=sys.stderr,
+        )
+        return 30
+
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
     sources: list[DigestSource] = []
@@ -262,7 +280,9 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         choices=["episodic", "decision", "gotcha", "user-global"],
     )
-    add.add_argument("--content", required=True)
+    content_group = add.add_mutually_exclusive_group(required=True)
+    content_group.add_argument("--content")
+    content_group.add_argument("--content-file")
     add.add_argument("--cwd")
     add.add_argument("--meta", action="append", default=[])
     add.add_argument("--no-llm", action="store_true")

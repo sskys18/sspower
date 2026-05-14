@@ -106,6 +106,109 @@ def test_cli_bootstrap_then_add_then_search(monkeypatch, tmp_path):
     assert hits[0]["source"] == "digest-recent"
 
 
+def test_cli_add_content_literal_does_not_resolve_at_path(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content",
+        "@/etc/hosts",
+    )
+    assert rc == 0, err
+    assert json.loads(out)["new"] is True
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "user",
+        "--mode",
+        "recent",
+        "--json",
+    )
+    assert rc == 0, err
+    hits = json.loads(out)
+    assert hits[0]["content"] == "@/etc/hosts"
+
+
+def test_cli_add_content_file_reads_path(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    content_file = tmp_path / "memory.txt"
+    content_file.write_text("content read from file", encoding="utf-8")
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content-file",
+        str(content_file),
+    )
+    assert rc == 0, err
+    assert json.loads(out)["new"] is True
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "user",
+        "--mode",
+        "recent",
+        "--json",
+    )
+    assert rc == 0, err
+    hits = json.loads(out)
+    assert hits[0]["content"] == "content read from file"
+
+
+def test_cli_add_requires_exactly_one_content_source(monkeypatch, tmp_path):
+    content_file = tmp_path / "memory.txt"
+    content_file.write_text("content read from file", encoding="utf-8")
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+    )
+    assert rc == 2
+    assert out == ""
+    assert "one of the arguments --content --content-file is required" in err
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content",
+        "literal content",
+        "--content-file",
+        str(content_file),
+    )
+    assert rc == 2
+    assert out == ""
+    assert "not allowed with argument" in err
+
+
 def test_cli_add_rejects_boundary_injection_returns_20(monkeypatch, tmp_path):
     rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
     assert rc == 0
@@ -255,6 +358,26 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     assert "required" in err or "requires --query or --mode recent" in err
 
 
+def test_cli_search_idx_only_rejected_in_phase_a(monkeypatch, tmp_path):
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "user",
+        "--query",
+        "hello",
+        "--idx-only",
+    )
+
+    assert rc == 30
+    assert out == ""
+    assert (
+        "sspower-mem: --idx-only requires the Phase C index backend; "
+        "Phase A always uses digest"
+    ) in err
+
+
 def test_cli_add_rejects_user_global_layer_for_project(monkeypatch, tmp_path):
     rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
     assert rc == 0
@@ -278,6 +401,25 @@ def test_cli_add_rejects_user_global_layer_for_project(monkeypatch, tmp_path):
     assert rc == 30
     assert out == ""
     assert "layer user-global is only valid with --scope user" in err
+
+
+def test_cli_add_rejects_project_layer_for_user_scope(monkeypatch, tmp_path):
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "episodic",
+        "--content",
+        "bad user layer",
+    )
+
+    assert rc == 30
+    assert out == ""
+    assert "layer episodic is only valid with --scope project" in err
+    assert "lock missing" not in err
 
 
 def test_cli_digest_summary(monkeypatch, tmp_path):
