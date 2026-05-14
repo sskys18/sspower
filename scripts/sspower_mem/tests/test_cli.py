@@ -201,6 +201,39 @@ def test_cli_add_content_file_refuses_symlinked_input(monkeypatch, tmp_path):
     assert not (tmp_path / "home" / ".claude" / "sspower" / "digest.md").exists()
 
 
+def test_cli_search_text_output_strips_ansi(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "add",
+        "--scope",
+        "user",
+        "--layer",
+        "user-global",
+        "--content",
+        "before\x1b[2Jafter",
+    )
+    assert rc == 0, err
+    assert json.loads(out)["new"] is True
+
+    rc, out, err = _run(
+        monkeypatch,
+        tmp_path,
+        "search",
+        "--scope",
+        "user",
+        "--mode",
+        "recent",
+    )
+
+    assert rc == 0, err
+    assert "\x1b" not in out
+    assert "before?[2Jafter" in out
+
+
 def test_cli_add_requires_exactly_one_content_source(monkeypatch, tmp_path):
     content_file = tmp_path / "memory.txt"
     content_file.write_text("content read from file", encoding="utf-8")

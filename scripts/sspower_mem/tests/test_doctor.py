@@ -1,3 +1,4 @@
+import os
 import pathlib
 
 import pytest
@@ -20,6 +21,26 @@ def test_bootstrap_creates_user_sspower_dir(monkeypatch, tmp_path):
 
     # Idempotent -- second call must not raise.
     bootstrap()
+
+
+def test_bootstrap_refuses_symlinked_user_sspower_dir(monkeypatch, tmp_path):
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: fake_home))
+
+    claude = fake_home / ".claude"
+    claude.mkdir()
+    target = tmp_path / "target"
+    target.mkdir()
+    os.symlink(target, claude / "sspower")
+
+    with pytest.raises(OSError):
+        bootstrap()
+
+    assert not (target / "idx").exists()
+    assert not (target / "idx" / ".lock").exists()
+    assert not (target / "idx" / "config.json").exists()
 
 
 def test_health_reports_ok_after_bootstrap(monkeypatch, tmp_path):

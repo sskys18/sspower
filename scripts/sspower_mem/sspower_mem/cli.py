@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 
 from sspower_mem.digest import (
@@ -35,6 +36,11 @@ from sspower_mem.scope import (
 
 PROJECT_LAYERS = frozenset({"episodic", "decision", "gotcha"})
 USER_LAYERS = frozenset({"user-global"})
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _sanitize_for_terminal(s: str) -> str:
+    return _CONTROL_RE.sub("?", s)
 
 
 def _resolve_cwd(args: argparse.Namespace) -> pathlib.Path | None:
@@ -215,7 +221,7 @@ def cmd_search(args: argparse.Namespace) -> int:
                 f"[{hit['source']} {hit['score']:.3f}] "
                 f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}"
             )
-            print(hit["content"])
+            print(_sanitize_for_terminal(hit["content"]))
             print("---")
     return 0
 

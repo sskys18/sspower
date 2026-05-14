@@ -759,7 +759,7 @@ Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. R
   # In hook script body — `$CLAUDE_HOOK_CWD` is the user project cwd from the hook JSON payload.
   # Hooks MUST pass --cwd explicitly; do NOT rely on $PWD or os.getcwd() (the hook process cwd
   # is often the plugin dir or $HOME, not the user project).
-  sspower_mem_call add --cwd "$CLAUDE_HOOK_CWD" --scope project --layer episodic --content @"$summary_file"
+  sspower_mem_call add --cwd "$CLAUDE_HOOK_CWD" --scope project --layer episodic --content-file "$summary_file"
   case "$SSP_RC" in
     0|10|30) : ;;       # continue, treat as success at hook level
     20)      exit 20 ;; # propagate HARD failure (digest unwritable = data-loss event)

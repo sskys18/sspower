@@ -5,38 +5,37 @@ import json
 import os
 import pathlib
 
-from sspower_mem.io import safe_makedirs_strict
+from sspower_mem.io import safe_append_strict, safe_makedirs_strict, safe_write_strict
 from sspower_mem.scope import user_sspower_dir
 
 
 def bootstrap() -> dict:
     """Create ~/.claude/sspower/idx/{.lock,config.json}. Idempotent."""
+    home = pathlib.Path.home()
     base = user_sspower_dir()
-    base.parent.mkdir(parents=True, exist_ok=True)
-    base.mkdir(mode=0o700, exist_ok=True)
-
     idx = base / "idx"
-    safe_makedirs_strict(idx, base)
+    safe_makedirs_strict(idx, home)
 
     lock = idx / ".lock"
-    if not lock.exists():
-        lock.touch(mode=0o600)
+    safe_append_strict(lock, "", base, home)
 
     config = idx / "config.json"
-    if not config.exists():
-        config.write_text(
-            json.dumps(
-                {
-                    "version": "0.1.0",
-                    "phase": "A",
-                    "index": {
-                        "enabled": False,
-                        "note": "Phase A: digest-only, no index backend",
-                    },
+    safe_write_strict(
+        config,
+        json.dumps(
+            {
+                "version": "0.1.0",
+                "phase": "A",
+                "index": {
+                    "enabled": False,
+                    "note": "Phase A: digest-only, no index backend",
                 },
-                indent=2,
-            )
-        )
+            },
+            indent=2,
+        ),
+        base,
+        home,
+    )
 
     return {"status": "ok", "base": str(base)}
 
