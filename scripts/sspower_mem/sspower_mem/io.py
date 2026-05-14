@@ -54,3 +54,34 @@ def safe_append_strict(path: pathlib.Path, content: str, trust_root: pathlib.Pat
             os.close(file_fd)
     finally:
         os.close(cur_fd)
+
+
+def safe_makedirs_strict(path: pathlib.Path, parent_anchor: pathlib.Path, mode: int = 0o700) -> None:
+    """Create `path` and missing intermediate dirs UNDER `parent_anchor`, using
+    openat-style mkdirat. Rejects symlink components below `parent_anchor`.
+    `parent_anchor` itself must already exist and not be a symlink."""
+    try:
+        rel = path.relative_to(parent_anchor)
+    except ValueError as e:
+        raise OSError(f"path {path} not under parent_anchor {parent_anchor}") from e
+
+    for part in rel.parts:
+        if part in ("", ".", ".."):
+            raise OSError(f"traversal component {part!r} in {path}")
+
+    flags_dir = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags_dir |= os.O_NOFOLLOW
+
+    cur_fd = os.open(parent_anchor, flags_dir)
+    try:
+        for part in rel.parts:
+            try:
+                os.mkdir(part, mode=mode, dir_fd=cur_fd)
+            except FileExistsError:
+                pass  # already exists; open below verifies it is not a symlink
+            next_fd = os.open(part, flags_dir, dir_fd=cur_fd)
+            os.close(cur_fd)
+            cur_fd = next_fd
+    finally:
+        os.close(cur_fd)
