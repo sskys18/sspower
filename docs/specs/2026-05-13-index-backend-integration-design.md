@@ -78,7 +78,7 @@
 - **D1 inverted** to resolve Codex misunderstanding #1 — digest.md is now the **source of truth**, the index is an **indexed semantic cache** built from digest.md. Justification: user constraint "dont make it fail" + the no-rollback argument both require a plaintext durable surface. "Single backend" still holds: the legacy wiki/{sessions,decisions,gotchas}.md + auto-memory/*.md surfaces are replaced by **one** plaintext substrate (digest.md per scope) + the index as its index. No third store.
 - New **§7.1 Phase 0** — read the index-backend source + write a provider-registration mini-plan **before** committing to the LLM/embedder adapter strategy. Codex source check (factory.py) found no public `provider: custom` key. Phase 0 must produce a verified mechanism (subclass / monkey-patch / fork / wrapper façade) before Phase C is unblocked.
 - §6.3 rewrites the LLM/embedder strategy: every `add` now does **(a) digest write → (b) the index's `infer=False` raw add → (c) the index's `infer=True` extraction**, in that order. (b) guarantees Chroma always has the raw embedding even when Codex bridge LLM is unavailable. Resolves Codex misunderstanding #3.
-- §5 pins the index's SQLite history under `~/.claude/sspower/idx/history.db` and sets `INDEX_TELEMETRY=false` before import. Resolves Codex missing #4.
+- §5 pins the index's SQLite history under `~/.claude/sspower/idx/history.db` and disables upstream telemetry before any index-library import (exact env-var/module-patch identifier verified by Phase 0; D8 locks the privacy invariant, not a guessed name). Resolves Codex missing #4.
 - §6.1 adds a **file lock** (`fcntl.flock` on `~/.claude/sspower/idx/.lock`) around the full add path, as a Phase A requirement. Resolves Codex missing #5.
 - §6.5 (digest format) cites and reuses the existing `wiki-archive.py` symlink-safe helpers (`_has_symlink_component`, `_safe_writability_probe`, `resolve_out_dir`, `_safe_write_text`, `_safe_append_text`). Resolves Codex missing #6.
 - §6.1 defines the exact scope syntax → index filter mapping. Resolves Codex missing #1.
@@ -88,6 +88,8 @@
 - §12 dropped the contradictory "auto-memory md as source-of-truth" line. The user-global auto-memory is replaced by digest.md scope `user:global`. Resolves Codex misunderstanding #4.
 
 ## 1. Goal
+
+> **Glossary.** Throughout this spec, `<index>` and "the index" / "the indexer" / "the index library" refer to the upstream OSS project at **https://github.com/mem0ai/mem0**. The library identifier is intentionally omitted from prose for branding reasons; the URL is the canonical reference for Phase 0 source verification. Concrete API surface (Python import root, factory class names, env var names, source-file paths under `<index>/...`) MUST be resolved against that upstream repo before being treated as load-bearing — see §7.1 Phase 0.
 
 Replace sspower's two current memory surfaces — project wiki (`<cwd>/.claude/wiki/`) and global auto-memory (`~/.claude/projects/<slug>/memory/`) — with **a single plaintext substrate** (per-scope `digest.md`, written through symlink-safe helpers) plus **the index** (self-hosted, the upstream OSS index project) as a semantic cache over that substrate.
 
@@ -124,7 +126,7 @@ One write path (`sspower-mem add`) appends to digest.md first, then writes to th
 | D5 | Vector store = **Chroma local-embedded** at `~/.claude/sspower/idx/chroma/`. | This spec. |
 | D6 | Graph store = off. | This spec. |
 | D7 | Memory layers (metadata-only, not separate index collections): `episodic`, `decision`, `gotcha`, `user-global`. | Handoff. |
-| D8 | Self-hosted only; **never the cloud-hosted index service**; `INDEX_TELEMETRY=false` before import. | Privacy. |
+| D8 | Self-hosted only; **never the cloud-hosted index service**; **upstream telemetry MUST be disabled before any index-library import**. Exact opt-out mechanism (env var name, module patch, or both) verified in Phase 0 (§7.1 Q5) — D8 locks the privacy invariant, NOT a specific identifier. | Privacy. |
 | D9 | No Semble. | User 2026-05-13. |
 | D10 | brainstorming HARD-GATE: no implementation code until this spec passes self-review + Codex spec-review + user approval. | Handoff. |
 | D11 | One write critical section: file lock → (digest append) → (the index's `infer=False` raw add) → (the index's `infer=True` extract) → release. Failures in steps 2/3 do not roll back step 1; the digest line is authoritative. | v2 (resolves Codex missing #5 + misunderstanding #3). |
@@ -147,7 +149,7 @@ Unknowns deferred to **Phase 0** (must resolve before Phase C; see §7.1):
 - the index's custom-embedder factory registration.
 - the index's `Memory.add(infer=False)` exact semantics (storage path, returned ids, metadata schema).
 - the index's SQLite `history.db` path override mechanism.
-- Whether the index's telemetry honors `INDEX_TELEMETRY=false` or requires a different opt-out.
+- Whether upstream telemetry honors an env-var opt-out (exact name TBD by reading upstream source) or requires a runtime module patch.
 
 ## 5. Architecture & storage layout
 
@@ -629,7 +631,7 @@ There is no `skills/session-start/SKILL.md` and this spec does not introduce one
 2. Exact `LlmFactory` / `EmbedderFactory` API surface in current index-library main.
 3. `Memory.add(infer=False)` storage path: does it write to the same collection as `infer=True`? What metadata does it return? Does it embed via the configured embedder?
 4. How to override the index's history-DB path (env var? config key? subclass?).
-5. Whether `INDEX_TELEMETRY=false` honors at import time, or telemetry requires patching `<index>.memory.telemetry`.
+5. Upstream telemetry opt-out: exact env-var name (read upstream source — does NOT assume any particular identifier) and/or runtime module patch (`<index>.memory.telemetry` or equivalent). Phase 0 picks one and freezes the variable name into the implementation.
 6. **the index's v3 entity-linking / entity-store behavior** (resolves v3 missing #4): does the current OSS index algorithm lazily create extra Chroma collections (entity store) even when graph is off? If yes, what is the collection name, where is it persisted, and can it be disabled? Sources to check: `<index>/memory/main.py` (entity-store init), (upstream index migration docs). Spec assumption ("Chroma stores exactly the configured `memories` collection + nothing else") must be verified or revised.
 7. **`Memory.add(infer=True)` metadata + failure semantics** (resolves v4 missing #5): does the index preserve caller-supplied metadata (`raw_id`, `kind=extracted`, `id`, `layer`, `scope`, `ts`) when extraction yields multiple facts (1-to-N)? What is the resolution under ADD/UPDATE/NONE actions — does UPDATE replace metadata? Does the LLM adapter raising an exception surface to the caller, or does the index swallow it and return `[]`? Step 3 (§6.1) relies on (a) `raw_id` correlation surviving extraction, (b) failures being observable (so the wrapper sets `extracted="skipped-failed"`, not `"ok"`). If the index swallows the failure, we must wrap `Memory.add(infer=True)` with our own pre-check (e.g., timing the call + comparing the post-add count) or fork the relevant method. Source to check: `<index>/memory/main.py:add` + `_add_to_vector_store`.
 8. **the index's metadata-filter API surface** (resolves v7 missing #9): does the index's `Memory.search` (or a sibling like `Memory.get`/`Memory.list`) accept arbitrary `metadata.<key>` filters (e.g., `metadata.id == "<block_id>" AND metadata.kind == "raw"`)? §6.1 dedup pre-search requires this. If the index only filters by the top-level `user_id` + a fixed `run_id`/`agent_id` set, we must implement dedup by: (a) maintaining our own SQLite dedup table at `~/.claude/sspower/idx/dedup.db` (block_id+kind → idx_record_id), or (b) issuing a broad search + filtering metadata client-side, or (c) forking. Output of Phase 0 must pick one. Source to check: `<index>/memory/main.py:search` and `<index>/vector_stores/chroma.py` (or equivalent) for the filter pass-through.
@@ -664,7 +666,7 @@ After Phase F green-checkpoint, archive legacy `wiki/sessions/`, `wiki/decisions
 | Model2Vec / chromadb / index-library import fails inside `add` | lazy import raises after digest append | exit **10** (NOT 30). Digest line is already durable; only the index's raw+extract are skipped. `errors.jsonl` logged. Lazy-import policy: the upstream index library + chromadb + model2vec are imported INSIDE `add` AFTER step 1 (digest append), so a missing or broken Python dep cannot bypass the digest write. This preserves D2/D11 against dep regression. | `sspower-mem doctor --bootstrap`; if model fetch fails, smaller pinned model in config.json. |
 | Model2Vec model load fails at CLI startup (before `add` begins) | `doctor --bootstrap` only — `add` never imports m2v at startup | exit 30 from doctor; `add` is unaffected because it doesn't import m2v until after digest append. | re-bootstrap with smaller model. |
 | `uv` / `uvx` missing | hook wrapper `command -v uvx` check | exit 30 (from wrapper, before invoking sspower-mem). Hook no-ops with hint. Legacy belt still runs. | `brew install uv`. |
-| Lock file unwritable | `fcntl.flock` raises | exit 30. Same as uv-missing path. | check `~/.claude/sspower/idx/` permissions; fall back to `~/.cache/sspower/idx/`. |
+| Lock file unwritable | `fcntl.flock` raises | exit 30. Same as uv-missing path. No alternate-location fallback — D5/D11 pin storage to `~/.claude/sspower/idx/` and a split lock would silently fragment the substrate. | fix permissions on `~/.claude/sspower/idx/` (or its parent); rerun `sspower-mem doctor --bootstrap`. |
 | index returns wrong/garbage facts on search | not auto-detected | digest grep fallback never sees garbage facts. Manual inspection of `search --json` shows source ids. | `sspower-mem migrate --reextract <id>` re-runs extraction on a known-good block; or set `--no-llm` per-add to skip extraction for that block. |
 | Chroma history-db growth | `doctor` reports size | not blocking; informational only. | manual `vacuum`/`reset` via `chromadb` CLI. |
 
@@ -696,7 +698,7 @@ Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. R
 - [ ] Implement `CodexBridgeLLM` and `Model2VecEmbedder` per the mechanism chosen in Phase 0 (§6.3 candidates 1/2/3).
 - [ ] Wire `infer=False` (raw) → `infer=True` (extract) two-step add inside the lock, using stable `block_id` + `raw_id` metadata correlation (§6.1 D11). Idempotent upsert per §6.1.
 - [ ] `doctor --bootstrap` extended: download M2V model (`potion-base-8M`), init chromadb at `~/.claude/sspower/idx/chroma/`, run round-trip add+search, run `complete --json` round-trip against Codex bridge. Warm `uvx` cache.
-- [ ] Set `INDEX_TELEMETRY=false` in CLI entry before any `the-index` import (mechanism verified in Phase 0 question 5 — env var vs telemetry-module patch).
+- [ ] Disable upstream telemetry in CLI entry before any index-library import. The exact mechanism (env var name + value, and/or runtime module patch) is the Phase 0 Q5 deliverable — wire whatever Phase 0 selects, do NOT hard-code a guessed identifier.
 - [ ] Pin the index's history.db to `~/.claude/sspower/idx/history.db` (mechanism from Phase 0 question 4 — env var vs config key vs subclass).
 - [ ] Tests: round-trip add → search; idempotency (same content added twice = single record per kind); error injections per §8 (chroma corrupt, bridge timeout, m2v load fail).
 
@@ -826,7 +828,7 @@ Deliverable: `docs/specs/2026-05-13-index-provider-registration.md` per §7.1. R
 2. the index's custom-embedder factory API.
 3. `Memory.add(infer=False)` exact semantics: storage path, returned ids, embedder use, metadata schema.
 4. the index's SQLite history-DB path override mechanism.
-5. `INDEX_TELEMETRY=false` import-time honor vs patching `<index>.memory.telemetry`.
+5. Upstream telemetry opt-out: exact env-var name (verified by reading upstream source, NOT guessed) and whether import-time honor is sufficient or runtime module patch (`<index>.memory.telemetry` or equivalent) is required.
 6. Chroma persistent (sqlite3 + HNSW) locking semantics under concurrent PreCompact + SessionEnd (the §6.1 file lock is the belt; need to know if Chroma has its own to skip the suspenders).
 7. `sspower-mem search` latency budget on `hooks/session-start` (target <1s for UX). M2V encode ~10ms warm + Chroma top-k 8 ~5ms = OK in theory; verify on real machine in Phase A.
 

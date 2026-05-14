@@ -516,7 +516,13 @@ import pathlib
 
 import pytest
 
-from sspower_mem.scope import canonicalize_cwd, scope_id, project_wiki_dir, user_sspower_dir
+from sspower_mem.scope import (
+    canonicalize_cwd,
+    parent_anchor,
+    project_wiki_dir,
+    scope_id,
+    user_sspower_dir,
+)
 
 
 def test_canonicalize_cwd_resolves_symlinks(tmp_path):
@@ -554,6 +560,21 @@ def test_paths_helpers(tmp_path):
     assert project_wiki_dir(tmp_path) == tmp_path / ".claude" / "wiki"
     home = pathlib.Path.home()
     assert user_sspower_dir() == home / ".claude" / "sspower"
+
+
+def test_parent_anchor_returns_trusted_preexisting_path(tmp_path):
+    """parent_anchor returns the trusted pre-existing path for openat-walk
+    trust-root creation. Per spec §6.4 the only valid anchors are $HOME and
+    the user-supplied --cwd."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    cwd = canonicalize_cwd(str(proj))
+    assert parent_anchor("project", cwd) == cwd
+    assert parent_anchor("user", None) == pathlib.Path.home()
+    with pytest.raises(ValueError):
+        parent_anchor("project", None)
+    with pytest.raises(ValueError):
+        parent_anchor("bogus", None)
 ```
 
 - [ ] **Step 2: Run — fail with ModuleNotFoundError**
@@ -637,12 +658,28 @@ def trust_root(scope: str, cwd: pathlib.Path | None) -> pathlib.Path:
     if scope == "user":
         return user_sspower_dir()
     raise ValueError(f"unknown scope: {scope}")
+
+
+def parent_anchor(scope: str, cwd: pathlib.Path | None) -> pathlib.Path:
+    """Trusted pre-existing path that anchors openat walks for trust-root creation.
+
+    Per spec §6.4: the only paths assumed pre-existing and trusted are $HOME and
+    the user-supplied --cwd value. Callers pass the result to safe_makedirs_strict
+    when they need to create the trust root (e.g., first project-scope add against
+    a fresh repo where <cwd>/.claude/wiki/ does not yet exist)."""
+    if scope == "project":
+        if cwd is None:
+            raise ValueError("project scope requires cwd")
+        return cwd  # already canonicalized realpath
+    if scope == "user":
+        return pathlib.Path.home()
+    raise ValueError(f"unknown scope: {scope}")
 ```
 
 - [ ] **Step 2: Run scope tests**
 
 Run: `cd scripts/sspower_mem && uv run --with pytest pytest tests/test_scope.py -v`
-Expected: 5 passed
+Expected: 6 passed
 
 - [ ] **Step 3: Commit**
 
@@ -954,13 +991,26 @@ def append_block_or_skip(
     content: str,
     meta: dict,
     ts: str | None = None,
+    *,
+    parent_anchor: pathlib.Path | None = None,
 ) -> tuple[str, bool]:
     """Append a block, applying §6.1 collision-safe id logic.
+
+    `parent_anchor`: trusted pre-existing path under which `trust_root` should be
+    created if missing. Per spec §6.4, the only valid anchors are $HOME and the
+    user-supplied --cwd value (see scope.parent_anchor()). When None, assumes
+    `trust_root` already exists (test setup; legacy callers).
 
     Returns (effective_id, was_new). was_new=False means an identical block
     already existed (dedup hit, no write).
     """
-    safe_makedirs_strict(digest_path.parent, trust_root.parent)
+    if parent_anchor is not None:
+        # Create the trust root itself (e.g., first project-scope add on a fresh
+        # <cwd>/.claude/wiki/) by walking openat from the trusted anchor down to
+        # trust_root. Idempotent: existing components are accepted as long as
+        # they are not symlinks.
+        safe_makedirs_strict(trust_root, parent_anchor)
+    # If no anchor, trust_root MUST already exist; otherwise the open below fails.
     base_id = compute_id(scope, layer, content)
     existing = _existing_blocks_by_base(digest_path)
     for blk in existing.get(base_id, []):
@@ -1364,10 +1414,17 @@ import os
 import pathlib
 import sys
 
-from sspower_mem.digest import append_block_or_skip, grep_search, recent
+from sspower_mem.digest import append_block_or_skip, grep_search, parse_blocks, recent
 from sspower_mem.doctor import bootstrap, health
 from sspower_mem.lock import acquire_lock
-from sspower_mem.scope import canonicalize_cwd, digest_path, scope_id, trust_root, user_sspower_dir
+from sspower_mem.scope import (
+    canonicalize_cwd,
+    digest_path,
+    parent_anchor,
+    scope_id,
+    trust_root,
+    user_sspower_dir,
+)
 
 
 def _resolve_cwd(args) -> pathlib.Path | None:
@@ -1403,6 +1460,7 @@ def cmd_add(args) -> int:
         return 20
     sc_id = scope_id(args.scope, cwd)
     troot = trust_root(args.scope, cwd)
+    panchor = parent_anchor(args.scope, cwd)
     dpath = digest_path(args.scope, cwd)
     content = _read_content(args.content)
     meta = _parse_meta(args.meta)
@@ -1419,6 +1477,7 @@ def cmd_add(args) -> int:
         with acquire_lock(lock_path):
             eff_id, was_new = append_block_or_skip(
                 digest_path=dpath, trust_root=troot,
+                parent_anchor=panchor,
                 scope=sc_id, layer=args.layer, content=content, meta=meta,
             )
     except OSError as e:
@@ -1485,6 +1544,41 @@ def cmd_doctor(args) -> int:
     return 0
 
 
+def cmd_digest(args) -> int:
+    """Phase A: print summary of in-scope digest.md (block count, per-layer counts,
+    latest ts). The spec §6.1 `digest --rebuild-chroma` flag is reserved for
+    Phase C — it requires the index backend; Phase A rejects it explicitly so a
+    worker doesn't silently no-op a recovery command."""
+    if args.rebuild_chroma:
+        print("sspower-mem: --rebuild-chroma is reserved for Phase C (no index "
+              "backend in Phase A); rerun after Phase C lands",
+              file=sys.stderr)
+        return 30
+    try:
+        cwd = _resolve_cwd(args) if args.scope == "project" else None
+    except FileNotFoundError as e:
+        print(f"sspower-mem: {e}", file=sys.stderr)
+        return 20
+    dpath = digest_path(args.scope, cwd)
+    if not dpath.exists():
+        print(json.dumps({"path": str(dpath), "exists": False, "blocks": 0,
+                          "by_layer": {}, "latest_ts": None}))
+        return 0
+    blocks = parse_blocks(dpath.read_text(encoding="utf-8"))
+    by_layer: dict[str, int] = {}
+    for b in blocks:
+        by_layer[b["layer"]] = by_layer.get(b["layer"], 0) + 1
+    summary = {
+        "path": str(dpath),
+        "exists": True,
+        "blocks": len(blocks),
+        "by_layer": by_layer,
+        "latest_ts": blocks[-1]["ts"] if blocks else None,
+    }
+    print(json.dumps(summary))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sspower-mem")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1511,6 +1605,15 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--idx-only", action="store_true")  # Phase A: accepted, no-op
     search.set_defaults(func=cmd_search)
 
+    dig = sub.add_parser("digest", help="Print digest summary or rebuild index")
+    dig.add_argument("--scope", required=True, choices=["project", "user"])
+    dig.add_argument("--cwd")
+    dig.add_argument("--rebuild-chroma", action="store_true",
+                     help="Reserved for Phase C; Phase A rejects with rc=30")
+    dig.add_argument("--no-llm", action="store_true",
+                     help="Reserved for Phase C; no-op in Phase A")
+    dig.set_defaults(func=cmd_digest)
+
     doc = sub.add_parser("doctor", help="Health + bootstrap")
     doc.add_argument("--bootstrap", action="store_true")
     doc.set_defaults(func=cmd_doctor)
@@ -1535,14 +1638,16 @@ cd scripts/sspower_mem
 uv run python -m sspower_mem doctor --bootstrap
 uv run python -m sspower_mem add --scope user --layer user-global --content "test"
 uv run python -m sspower_mem search --scope user --mode recent --top-k 5 --json
+uv run python -m sspower_mem digest --scope user
+uv run python -m sspower_mem digest --scope user --rebuild-chroma  # expect rc=30
 ```
-Expected: each command exits 0; the add prints `{"id": "...", "new": true, ...}`; search prints the just-added block as JSON.
+Expected: doctor/add/search/`digest --scope user` all exit 0; the add prints `{"id": "...", "new": true, ...}`; search prints the just-added block as JSON; `digest --scope user` prints `{"path": "...", "exists": true, "blocks": 1, "by_layer": {"user-global": 1}, "latest_ts": "..."}`; `digest --rebuild-chroma` exits 30 with the "reserved for Phase C" stderr message.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add scripts/sspower_mem/sspower_mem/cli.py
-git commit -m "feat(sspower-mem): CLI with add/search/doctor + exit-code contract"
+git commit -m "feat(sspower-mem): CLI with add/search/digest/doctor + exit-code contract"
 ```
 
 ---
@@ -1616,12 +1721,59 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     # which our wrapper would normalize at the bash layer. Direct invocation
     # surfaces argparse's own rc=2.
     assert rc in (2, 30)
+
+
+def test_cli_digest_summary(monkeypatch, tmp_path):
+    """Phase A `digest` subcommand: prints block count + per-layer summary.
+    Resolves Codex v8-rev finding: spec §9 Phase A requires add/search/digest/doctor."""
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, _, _ = _run(monkeypatch, tmp_path,
+                    "add", "--scope", "user", "--layer", "user-global",
+                    "--content", "block one")
+    assert rc == 0
+    rc, out, _ = _run(monkeypatch, tmp_path, "digest", "--scope", "user")
+    assert rc == 0
+    body = json.loads(out)
+    assert body["exists"] is True
+    assert body["blocks"] == 1
+    assert body["by_layer"]["user-global"] == 1
+    assert body["latest_ts"] is not None
+
+
+def test_cli_digest_rebuild_chroma_reserved_phase_c(monkeypatch, tmp_path):
+    """`--rebuild-chroma` requires the index backend; Phase A rejects with rc=30
+    rather than silently no-op a recovery command."""
+    _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    rc, _, err = _run(monkeypatch, tmp_path,
+                      "digest", "--scope", "user", "--rebuild-chroma")
+    assert rc == 30
+    assert "Phase C" in err or "reserved" in err
+
+
+def test_cli_add_project_fresh_repo_creates_trust_root(monkeypatch, tmp_path):
+    """First project-scope add against a fresh repo (no <cwd>/.claude/ yet) MUST
+    create the trust root by openat-walk from the user-supplied --cwd anchor.
+    Resolves Codex v8-rev finding: prior plan called safe_makedirs_strict with
+    trust_root.parent (= <cwd>/.claude) as anchor, which fails when .claude is
+    absent."""
+    _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    fresh_repo = tmp_path / "fresh-project"
+    fresh_repo.mkdir()  # <cwd> exists; <cwd>/.claude does NOT
+    rc, out, err = _run(monkeypatch, tmp_path,
+                        "add", "--scope", "project", "--layer", "episodic",
+                        "--content", "first block in fresh repo",
+                        "--cwd", str(fresh_repo))
+    assert rc == 0, f"fresh-repo add failed: rc={rc} stderr={err}"
+    assert (fresh_repo / ".claude" / "wiki" / "digest.md").exists()
+    body = json.loads(out)
+    assert body["new"] is True
 ```
 
 - [ ] **Step 2: Run CLI tests**
 
 Run: `cd scripts/sspower_mem && uv run --with pytest pytest tests/test_cli.py -v`
-Expected: 4 passed
+Expected: 7 passed
 
 - [ ] **Step 3: Commit**
 
