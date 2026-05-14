@@ -1,126 +1,53 @@
 # Session Handoff
-> Generated: 2026-05-04 KST
+> Generated: 2026-05-14 21:00 KST
 
 ## Task
-Real enforcement for the 3 SKILL.md HARD-GATEs that previously relied
-on the model to honor codex-review prose. Replaced with PreToolUse:Bash
-hooks that gate `git commit` (plan files), `git push`, `git merge`,
-`gh pr create|ready` via Codex `review` and block on verdict.
+Ship `sspower-mem` Phase C: wire Mem0 as semantic-index backend with client-side LLM extraction. Phase 0 + A + B already merged; v11 spec amendment landed on `phase-c` branch (no code yet).
 
 ## Status
 
-### Completed (13 commits, all on origin/main)
-- `hooks/auto-spec-gate.sh` — PreToolUse:Bash. Detects `git commit`,
-  uses `git commit --dry-run --porcelain --no-verify` as the oracle for
-  "what files will this commit record", filters to `docs/plans/*.md`,
-  runs Codex `review`, denies on non-approve verdict. Worktree symlinks
-  + index symlinks (mode 120000) BLOCK with deny payload (not silent
-  skip). Honours `git -C` / `--git-dir` / `--work-tree`. Refuses chains
-  (segments_count > 1).
-- `hooks/auto-review.sh` — PreToolUse:Bash. Same chain refusal. Detects
-  `git push|merge` and `gh pr create|ready`. Octopus-merge safe
-  (iterates `git diff HEAD...$src` per source). Reads from `-C` repo.
-- `hooks/_parse-git-cmd.py` — Python `shlex(punctuation_chars=True)`
-  tokenizer. Splits on shell operators. Per-segment: strips env
-  prefixes (`env [-i] [VAR=val]`, `command`, `exec`, bare assignments,
-  `\git`, `/usr/bin/git`), parses git-level flags, returns
-  `{invocations: [...], segments_count}`. Emits `commit_uses_worktree`
-  for the gate's index-vs-worktree source decision.
-- `hooks/hooks.json` — both hooks registered under PreToolUse:Bash
-  (auto-spec-gate before auto-review).
-- `tests/hooks/auto-review-detect.sh` — 94 parser/detection assertions.
-- `tests/hooks/auto-spec-gate-e2e.sh` — 21 end-to-end assertions with
-  a stub bridge (`scripts/codex-bridge.mjs` mock that records calls
-  and replays a configurable verdict).
-- 3 SKILL.md HARD-GATE blocks softened to point at the now-automated
-  hooks: `writing-plans`, `subagent-driven-development`,
-  `finishing-a-development-branch`.
-- `.sspower-skip-auto-review` per-repo bypass file (touch to disable
-  one push window). In `.gitignore`. Used to break the 12-round
-  review-its-own-design loop.
-- `docs/auto-review-followups.md` — documents the architecture pivot
-  (git-as-oracle), 3 known gaps (`commit -i` mixed source,
-  `--git-dir`/`--work-tree` split, `gh pr merge`), and Path B
-  (per-repo `.git/hooks` installer) as the structural follow-up.
+### Completed (on `origin/main` @ `c8f2d53`)
+- **Phase 0**: `docs/specs/2026-05-13-index-provider-registration.md` — upstream Mem0 OSS API verification @ SHA `70bc9e51`. Pinned 9 decisions.
+- **Phase A v0.1.0**: `scripts/sspower_mem/` — digest-only stdlib backend, 21 plan tasks, 67/67 tests. 8 Codex review rounds. CLI: `add`, `search`, `digest`, `doctor` with `--scope`, `--cwd`, `--content`, `--content-file`. Exit codes 0/10/20/30.
+- **Phase A v0.1.1**: 4 post-merge fixes — trailing-newline preservation, strict-anchored lock open, bounded reads (64MB digest, 8MB content-file), trust-root confinement re-enforced. 75/75 tests.
+- **Phase B**: `scripts/codex-bridge.mjs complete --json` subcommand. 14 bridge tests. OpenAI-shape envelope; `--sandbox read-only`, hard system directive, `reasoning.effort=minimal`, 60s timeout.
 
-### In Progress
-None. All shipped to `origin/main`.
+### In Progress (on `origin/phase-c` @ `fe35a25`, plus handoff commit `8aee8db` on phase-c not yet on main)
+- `docs/specs/2026-05-13-index-backend-integration-design.md` v11 amendment: client-side extraction supersedes infer=True. Body sections (§3 D11/D13/D14, §6.1 Step 3a/3b, §6.1.5 prompt contract, §6.3 factory, §8 failure rows) rewritten + changelog aligned. Codex re-review confirmed 5 prior issues closed (3 in initial re-review + 2 stragglers in last commit).
 
 ## Resume Here
-1. **Path B implementation** — write `scripts/install-git-hooks.sh`
-   that drops three executable hooks into `.git/hooks/` of the
-   current repo:
-   - `pre-commit`: stage check → spec-review on plan files → block
-     non-zero exit if verdict ≠ approve.
-   - `pre-merge-commit`: same pattern on incoming diff.
-   - `pre-push`: stdin gives `<local-ref> <local-sha> <remote-ref>
-     <remote-sha>` per pushed ref → run `review` on each diff.
-   Each hook reuses `scripts/codex-bridge.mjs` directly. Plus an
-   uninstaller and a README section. See
-   `docs/auto-review-followups.md` "Path B" for the rationale.
-2. **Decide fate of the bash-parser hooks** after Path B lands. Either
-   keep as defense-in-depth (catches bash invocations from sessions
-   where git-hooks weren't installed) or remove the bash hooks +
-   `_parse-git-cmd.py` + 115 tests entirely.
-3. **Squash the 13 fix commits on main**? They're ahead of `b400dd1`
-   (PR #1 merge) by a long arc that's mostly "fix codex finding from
-   previous push". A future reader might prefer one commit per major
-   feature (chokepoint hook, dry-run pivot, chain block, parser, e2e
-   tests, gaps doc). Optional; not blocking anything.
+1. `git checkout phase-c` (v11 spec lives there, plus this handoff's twin).
+2. Invoke `sspower:writing-plans` skill: "Write Phase C plan from v11 spec at `docs/specs/2026-05-13-index-backend-integration-design.md` §6.1/6.1.5/6.3/8 + Phase 0 deliverable. Output: `docs/plans/2026-05-13-sspower-mem-phase-c.md`."
+3. Commit plan on `phase-c` (auto-spec-gate fires on plan files — may iterate).
+4. Switch to `sspower:subagent-driven-development` for implementation. Pattern from Phase A: Codex implement per task (sandbox blocks `.git` — main thread commits); tight prompts via `--prompt @/tmp/sdd-task-N.md`; per-task TaskCreate tracking.
+5. Push `phase-c` periodically; expect Codex auto-review iterations (target: converge in 1-3 rounds, not the 8 Phase A took).
+6. Merge `phase-c → main` via PR when 3 consecutive clean reviews. Then Phase D (migration).
 
 ## Decisions (do NOT revisit)
-- **Bash parser via shlex+segments**: chosen over regex (broke on
-  quotes) and over invoking bash itself (security risk). Limit
-  acknowledged; Path B is the structural exit.
-- **Git-as-oracle for commit semantics**: `git commit --dry-run
-  --porcelain --no-verify` instead of predicting `-a` / `-i` / `-o` /
-  pathspec / glob / dir behaviour. Pivoted at round 7 after each
-  prediction-based fix invited a new bypass.
-- **Chain refusal (segments_count > 1 → DENY)**: pre-execution hooks
-  cannot see state changes from earlier segments. Chosen over a
-  heuristic ("if previous segment is harmless, allow") because the
-  heuristic surface is unbounded too. Restrictive but correct.
-- **Symlink refusals BLOCK, not skip**: silent skip on a refused
-  plan symlink let unreviewed commits through (the loop ended with
-  `ANY_FAIL=0`). Refusals now append to the deny payload.
-- **`spec-review` (compliant/non-compliant) NOT used for plan
-  critique**: schema is built for spec-vs-impl comparison. Use
-  `review` (approve/needs-attention) for standalone plan reviews.
-- **`.sspower-skip-auto-review` file bypass**: env-var bypass
-  (`SSPOWER_AUTO_REVIEW=off`) only works when set in Claude Code's
-  session env, not as a command prefix (the prefix is parsed away
-  as a wrapper). File-based switch is unambiguous.
+- **Sync in-lock extraction (v8 D11 amended)** — `lock → digest → Mem0 raw infer=False → codex-bridge complete → Mem0 extracted × N infer=False → release`. Async queue (option B) and detached subprocess (option C) rejected: too many moving parts for v0; hook latency 5-30s acceptable since hooks run between user actions.
+- **Client-side extraction, never `Memory.add(infer=True)`** — Phase 0 Q6 found infer=True activates Chroma entity-store collections that can't be disabled. Q7 found it swallows LLM exceptions and only emits ADD (no UPDATE/NONE). We control extraction via Phase B's `codex-bridge complete` so failures are observable and entity-store stays dormant.
+- **Mem0 as backend (not DIY chromadb wrapper)** — user choice 2026-05-14. Despite using ~5% of Mem0's API after Phase 0 constraints, sticking with the library trades upfront simplicity for ongoing maintenance against upstream changes.
+- **Factory registration via class-path STRINGS** — `LlmFactory.register_provider("sspower-noop", "sspower_mem.mem.noop.NoOpLLM", BaseLlmConfig)` + `EmbedderFactory.provider_to_class["sspower-model2vec"] = "sspower_mem.mem.embedder.Model2VecEmbedder"`. Phase 0 Q1+Q2 verified. NO class objects, NO other monkey-patches.
+- **Extraction wire contract pinned** — Codex `--json` envelope; `choices[0].message.content` parses as JSON object `{"facts": ["..."]}`. Empty success = `{"facts": []}`. Invalid JSON → `extracted="skipped-failed"`, rc=10. Hard caps: 32 facts × 512 chars per fact.
+- **Fact identity** — every extracted Mem0 record has `metadata = {kind: "extracted", raw_id, fact_index, fact_hash=sha1(raw_id+":"+fact)[:16], layer, scope, ts}`. `--rebuild-chroma --reextract <raw_id>` deletes all matching `raw_id+kind=extracted` records then replays Step 3a+3b deterministically.
 
 ## Gotchas
-- **Bash 3.2 + `set -u` + empty array**: `"${ARR[@]}"` on an empty
-  array is "unbound variable". `git_in_repo` in both hooks guards
-  with `[ ${#GIT_OPTS[@]} -gt 0 ]` before expanding. macOS default
-  bash is still 3.2 — don't assume bash 4+ syntax.
-- **jq `// empty` swallows `false`**: `commit_uses_worktree // empty`
-  yields "" for the boolean false. Use explicit `if . == null then
-  "" else . end` when reading possibly-null booleans.
-- **shlex without `punctuation_chars`**: glues `(git` and `commit)`
-  into single tokens, hiding chained commands. The parser sets
-  `punctuation_chars=True` for shell-operator splitting.
-- **`git commit --dry-run` runs pre-commit hooks unless
-  `--no-verify`**: the hook always passes `--no-verify` to keep the
-  oracle side-effect-free.
-- **The hooks were the subject of their own enforcement.** 12 rounds
-  of codex review found real bugs each round, with the auto-review
-  hook itself blocking pushes of fixes to the auto-review hook.
-  Future deep changes to `_parse-git-cmd.py` will likely retrigger
-  this; use `.sspower-skip-auto-review` to break the loop deliberately
-  (don't forget to remove it after).
+- **Codex sandbox blocks `.git` writes**. Codex implement creates files; main thread commits. Do NOT instruct Codex to `git add`/`git commit`.
+- **Auto-review converges slowly on security-sensitive code** — Phase A took 8 rounds. Don't be surprised if Phase C takes 3-5. File bypass `.sspower-skip-auto-review` is the unambiguous switch; remove after push. Env-var `SSPOWER_AUTO_REVIEW=off` as a command prefix does NOT work (parsed as wrapper).
+- **Working tree is shared between parallel agents.** When dispatching a background Codex implement, expect HEAD movement. Phase B + v0.1.1 collided during this session — recovered via stash/checkout dance. Prefer `git worktree add` for true parallelism. Or run sequentially.
+- **`uv` cache permission issues in sandbox** — Codex usually needs `UV_CACHE_DIR=/private/tmp/sspower-uv-cache` for tests. Inline in test commands.
+- **Spec-gate filters to `docs/plans/*.md` only** — spec edits don't trigger Codex review at commit; auto-review fires on push.
+- **v0.1.2 followups queued (defer until Phase C green)**: (a) collision dedup still ignores trailing newlines in id comparison, (b) search text output emits unsanitized digest metadata to terminal, (c) plan §Task 19 has been synced once but more drift may accrue, (d) CLAUDE.md still lists `scripts/` as only bridge + registry (now also `sspower_mem/`).
+- **Auto-review iteration cap = 3 rounds per branch** at `.git/sspower-review-rounds-<branch>`. `rm` the file to reset. Track cumulatively via review verdict cache at `~/.cache/sspower/verdicts/`.
+- **Background agents finishing while main thread is mid-edit**: Codex implement's last action sometimes re-checks out a different branch. Always `git rev-parse HEAD && git branch --show-current` before staging.
 
 ## Context
-- **Branch**: `main` at `8111437` (origin in sync).
-- **Tests**: 115/115 passing — `bash tests/hooks/auto-review-detect.sh`
-  (94) and `bash tests/hooks/auto-spec-gate-e2e.sh` (21). No CI yet.
-- **Bridge model**: `gpt-5.5` + `xhigh` reasoning (default in
-  `scripts/codex-bridge.mjs`). Codex CLI must be installed +
-  authenticated locally for the hooks to do real reviews.
+- **Branch**: `phase-c` @ `8aee8db` (origin in sync up to `fe35a25`; the 8aee8db handoff commit is local-only on phase-c, also being committed to main as this same file). `main` @ `c8f2d53`.
+- **Tests**: 75/75 `scripts/sspower_mem/` (Phase A) + 14 `tests/codex-bridge/test-complete.sh` (Phase B). Run via `cd scripts/sspower_mem && UV_CACHE_DIR=/private/tmp/sspower-uv-cache uv run --with pytest pytest -v` and `bash tests/codex-bridge/test-complete.sh`.
+- **Bridge model**: `gpt-5.5` + `xhigh` reasoning default; Phase B `complete` overrides to `minimal` effort, 60s wall cap.
 - **Unknowns** (verify before acting):
-  - `gh pr diff <num>` exact output format if Path B wants to gate
-    `gh pr merge`.
-  - Whether other devs/projects rely on the env-var bypass; if so,
-    keep it documented when shipping the file-bypass.
+  - Mem0 import-time side effects in pytest environment — never run real Mem0 init in tests yet.
+  - Chroma persistence-dir cleanup semantics in test isolation — use `tmp_path` with explicit teardown.
+  - Whether `Memory.add(infer=False)` returns the auto-generated record id or our supplied metadata.id — Phase 0 Q3 said "returned ids: see source" — read `mem0/memory/main.py:add` once before wiring.
+  - Real Codex extraction prompt latency on full session-summary text — Phase B integration smoke deferred (Phase B test uses a stub).
+- **Plugins repo path**: `/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower/` (working tree is also the marketplace cache; install consumers pull from `~/.claude/plugins/cache/sskys18/sspower/<version>/`).
