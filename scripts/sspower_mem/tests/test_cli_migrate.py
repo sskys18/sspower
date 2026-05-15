@@ -114,3 +114,33 @@ def test_cli_migrate_idempotent_second_run_no_writes(monkeypatch, tmp_path):
     assert all(not r["new"] for r in summary2["results"]), (
         "Some blocks reported new=True on second run — dedup broken"
     )
+
+
+def test_cli_migrate_user_global_path(monkeypatch, tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    # Seed user-global memory dir.
+    fake_home = tmp_path / "home"
+    proj = fake_home / ".claude" / "projects" / "px" / "memory"
+    proj.mkdir(parents=True)
+    (proj / "MEMORY.md").write_text("idx\n", encoding="utf-8")
+    (proj / "feedback_a.md").write_text(
+        "---\ntype: feedback\n---\nBe terse.\n", encoding="utf-8"
+    )
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    rc, out, err = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc in (0, 10), f"rc={rc} stderr={err!r}"
+    lines = [ln for ln in out.splitlines() if ln.strip().startswith("{")]
+    summary = json.loads(lines[-1])
+    assert summary["totals"]["user_global"] == 1
+    assert summary["totals"]["project_episodic"] == 0
+
+    # User digest now exists.
+    udigest = fake_home / ".claude" / "sspower" / "digest.md"
+    assert udigest.exists()
+    text = udigest.read_text(encoding="utf-8")
+    assert "user-global" in text
+    assert "feedback_a.md" in text  # via migrated_from meta
+    assert "MEMORY.md" not in text  # index skipped
