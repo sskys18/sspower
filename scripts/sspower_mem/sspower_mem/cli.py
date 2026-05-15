@@ -134,36 +134,139 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
         return 30
 
+    raw_status = "n/a"
+    extracted_status = "n/a"
+    eff_id = ""
+    was_new = False
+    overall_rc = 0
     try:
         with acquire_lock(lock_path, parent_anchor=parent_anchor("user", None)):
+            # Step 1 — durable digest append.
             try:
                 eff_id, was_new = append_block_or_skip(
-                    digest_path=dpath,
-                    trust_root=troot,
-                    parent_anchor=panchor,
-                    scope=sc_id,
-                    layer=args.layer,
-                    content=content,
-                    meta=meta,
+                    digest_path=dpath, trust_root=troot, parent_anchor=panchor,
+                    scope=sc_id, layer=args.layer, content=content, meta=meta,
                 )
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
                 return 20
-            except ValueError as e:
-                print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
-                return 20
+
+            # Step 2 — lazy import + raw upsert.
+            mem_obj, raw_ok = _try_raw_upsert(sc_id, eff_id, args.layer, content, meta)
+            if not raw_ok:
+                raw_status = "skipped"
+                extracted_status = (
+                    "skipped-intentional" if args.no_llm else "skipped-failed"
+                )
+                overall_rc = 10
+            else:
+                raw_status = "ok"
+                if args.no_llm:
+                    extracted_status = "skipped-intentional"
+                else:
+                    extracted_status = _try_extract_and_write(
+                        mem_obj, sc_id, eff_id, args.layer, content, meta,
+                    )
+                    if extracted_status != "ok":
+                        overall_rc = 10
     except OSError as e:
         print(f"sspower-mem: lock unavailable: {e}", file=sys.stderr)
         return 30
 
-    result = {
-        "id": eff_id,
-        "new": was_new,
-        "raw": "n/a",
-        "extracted": "n/a",
+    print(json.dumps({
+        "id": eff_id, "new": was_new,
+        "raw": raw_status, "extracted": extracted_status,
+    }))
+    return overall_rc
+
+
+def _try_raw_upsert(scope_id_str, eff_id, layer, content, meta):
+    """Returns (Memory|None, ok: bool). Lazy-import all Mem0 deps inside."""
+    try:
+        import sspower_mem.mem  # noqa: F401 — telemetry shield runs here
+        from sspower_mem.mem.factory import build_memory
+        from sspower_mem.mem.idx import raw_upsert
+    except ImportError as e:
+        _log_errors_jsonl({"stage": "step2_import", "err": str(e)})
+        return None, False
+
+    idx_dir = user_sspower_dir() / "idx"
+    chroma_dir = idx_dir / "chroma"
+    history_db = idx_dir / "history.db"
+    try:
+        mem = build_memory(
+            scope_id=scope_id_str, idx_dir=idx_dir,
+            chroma_dir=chroma_dir, history_db_path=history_db,
+        )
+        block_meta = {
+            "block_id": eff_id, "layer": layer, "scope": scope_id_str,
+            "ts": _iso_now(),
+            **{k: v for k, v in meta.items() if k != "kind"},
+        }
+        raw_upsert(mem, content, block_meta, user_id=scope_id_str)
+        return mem, True
+    except Exception as e:
+        _log_errors_jsonl({"stage": "step2_index", "err": str(e)})
+        return None, False
+
+
+def _try_extract_and_write(mem, scope_id_str, eff_id, layer, content, meta):
+    """Returns one of: "ok", "skipped-failed", "skipped-partial"."""
+    try:
+        from sspower_mem.mem.extract import ExtractFailed, bridge_extract_facts
+        from sspower_mem.mem.idx import extracted_upsert
+    except ImportError as e:
+        _log_errors_jsonl({"stage": "step3_import", "err": str(e)})
+        return "skipped-failed"
+
+    try:
+        facts = bridge_extract_facts(content)
+    except ExtractFailed as e:
+        _log_errors_jsonl({"stage": "step3a_extract", "err": str(e)})
+        return "skipped-failed"
+
+    import hashlib
+    block_meta = {
+        "block_id": eff_id, "layer": layer, "scope": scope_id_str, "ts": _iso_now(),
+        **{k: v for k, v in meta.items() if k != "kind"},
     }
-    print(json.dumps(result))
-    return 0
+    for fact_index, fact_text in enumerate(facts):
+        fact_hash = hashlib.sha1(f"{eff_id}:{fact_text}".encode()).hexdigest()[:16]
+        fact_meta = {
+            **block_meta, "raw_id": eff_id,
+            "fact_index": fact_index, "fact_hash": fact_hash,
+        }
+        try:
+            extracted_upsert(mem, fact_text, fact_meta, user_id=scope_id_str)
+        except Exception as e:
+            _log_errors_jsonl({
+                "stage": "step3b_index", "err": str(e),
+                "raw_id": eff_id, "fact_index": fact_index,
+            })
+            return "skipped-partial"
+    return "ok"
+
+
+def _iso_now():
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _log_errors_jsonl(record: dict):
+    """Append a single JSON line to ~/.claude/sspower/idx/errors.jsonl.
+    Never raises — failure to log must not break the add path."""
+    try:
+        from sspower_mem.io import safe_append_strict
+        idx_dir = user_sspower_dir() / "idx"
+        errors = idx_dir / "errors.jsonl"
+        safe_append_strict(
+            errors,
+            json.dumps({"ts": _iso_now(), **record}) + "\n",
+            user_sspower_dir(),
+            pathlib.Path.home(),
+        )
+    except Exception:
+        pass
 
 
 def cmd_search(args: argparse.Namespace) -> int:
