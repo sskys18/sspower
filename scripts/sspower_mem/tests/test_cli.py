@@ -12,11 +12,26 @@ from sspower_mem.scope import scope_id
 _PACKAGE_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
+_FAKE_BRIDGE = _PACKAGE_ROOT / "tests" / "fixtures" / "fake_bridge.sh"
+_EMPTY_FACTS_ENVELOPE = (
+    '{"id":"x","object":"chat.completion","choices":[{"index":0,'
+    '"message":{"role":"assistant","content":"{\\"facts\\":[]}"}}],'
+    '"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}'
+)
+
+
 def _run(monkeypatch, tmp_path, *args) -> tuple[int, str, str]:
     fake_home = tmp_path / "home"
     fake_home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(fake_home))
     env = os.environ.copy()
+    env["HOME"] = str(fake_home)
+    # Phase C: cmd_add invokes codex-bridge complete --json for extraction.
+    # Default Phase A tests to a benign stub (empty facts) so they don't hit
+    # real Codex; they assert digest-layer behavior regardless of extraction.
+    env.setdefault("SSPOWER_BRIDGE_PATH", str(_FAKE_BRIDGE))
+    env.setdefault("SSPOWER_FAKE_BRIDGE_RESPONSE", _EMPTY_FACTS_ENVELOPE)
+    env.setdefault("SSPOWER_FAKE_BRIDGE_EXIT", "0")
     cmd = [sys.executable, "-m", "sspower_mem", *args]
     cp = subprocess.run(
         cmd,
@@ -473,24 +488,15 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     assert "required" in err or "requires --query or --mode recent" in err
 
 
-def test_cli_search_idx_only_rejected_in_phase_a(monkeypatch, tmp_path):
-    rc, out, err = _run(
-        monkeypatch,
-        tmp_path,
-        "search",
-        "--scope",
-        "user",
-        "--query",
-        "hello",
-        "--idx-only",
+def test_cli_search_idx_only_index_empty_returns_rc0(monkeypatch, tmp_path):
+    """Phase C: --idx-only with empty index returns rc=0 + []."""
+    _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    rc, out, _err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--query", "missing", "--idx-only", "--json",
     )
-
-    assert rc == 30
-    assert out == ""
-    assert (
-        "sspower-mem: --idx-only requires the Phase C index backend; "
-        "Phase A always uses digest"
-    ) in err
+    assert rc == 0
+    assert json.loads(out) == []
 
 
 def test_cli_add_rejects_user_global_layer_for_project(monkeypatch, tmp_path):
@@ -562,18 +568,19 @@ def test_cli_digest_summary(monkeypatch, tmp_path):
     assert body["latest_ts"] is not None
 
 
-def test_cli_digest_rebuild_chroma_reserved_phase_c(monkeypatch, tmp_path):
+def test_cli_digest_rebuild_chroma_empty_digest(monkeypatch, tmp_path):
+    """Phase C: --rebuild-chroma on empty/missing digest returns rc=0 with no-op payload."""
     _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
-    rc, _, err = _run(
-        monkeypatch,
-        tmp_path,
-        "digest",
-        "--scope",
-        "user",
-        "--rebuild-chroma",
+    rc, out, _err = _run(
+        monkeypatch, tmp_path,
+        "digest", "--scope", "user", "--rebuild-chroma",
     )
-    assert rc == 30
-    assert "Phase C" in err or "reserved" in err
+    assert rc == 0
+    body = json.loads(out)
+    assert body["rebuilt"] in (False, True)
+    if body["rebuilt"]:
+        assert body["raw_blocks"] == 0
+        assert body["extracted_facts"] == 0
 
 
 def test_cli_digest_symlinked_project_ancestor_exits_20(monkeypatch, tmp_path):

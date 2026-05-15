@@ -134,46 +134,142 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
         return 30
 
+    raw_status = "n/a"
+    extracted_status = "n/a"
+    eff_id = ""
+    was_new = False
+    overall_rc = 0
     try:
         with acquire_lock(lock_path, parent_anchor=parent_anchor("user", None)):
+            # Step 1 — durable digest append.
             try:
                 eff_id, was_new = append_block_or_skip(
-                    digest_path=dpath,
-                    trust_root=troot,
-                    parent_anchor=panchor,
-                    scope=sc_id,
-                    layer=args.layer,
-                    content=content,
-                    meta=meta,
+                    digest_path=dpath, trust_root=troot, parent_anchor=panchor,
+                    scope=sc_id, layer=args.layer, content=content, meta=meta,
                 )
-            except OSError as e:
+            except (OSError, ValueError) as e:
                 print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
                 return 20
-            except ValueError as e:
-                print(f"sspower-mem: digest write failed: {e}", file=sys.stderr)
-                return 20
+
+            # Step 2 — lazy import + raw upsert.
+            mem_obj, raw_ok = _try_raw_upsert(sc_id, eff_id, args.layer, content, meta)
+            if not raw_ok:
+                raw_status = "skipped"
+                extracted_status = (
+                    "skipped-intentional" if args.no_llm else "skipped-failed"
+                )
+                overall_rc = 10
+            else:
+                raw_status = "ok"
+                if args.no_llm:
+                    extracted_status = "skipped-intentional"
+                else:
+                    extracted_status = _try_extract_and_write(
+                        mem_obj, sc_id, eff_id, args.layer, content, meta,
+                    )
+                    if extracted_status != "ok":
+                        overall_rc = 10
     except OSError as e:
         print(f"sspower-mem: lock unavailable: {e}", file=sys.stderr)
         return 30
 
-    result = {
-        "id": eff_id,
-        "new": was_new,
-        "raw": "n/a",
-        "extracted": "n/a",
+    print(json.dumps({
+        "id": eff_id, "new": was_new,
+        "raw": raw_status, "extracted": extracted_status,
+    }))
+    return overall_rc
+
+
+def _try_raw_upsert(scope_id_str, eff_id, layer, content, meta):
+    """Returns (Memory|None, ok: bool). Lazy-import all Mem0 deps inside."""
+    try:
+        import sspower_mem.mem  # noqa: F401 — telemetry shield runs here
+        from sspower_mem.mem.factory import build_memory
+        from sspower_mem.mem.idx import raw_upsert
+    except ImportError as e:
+        _log_errors_jsonl({"stage": "step2_import", "err": str(e)})
+        return None, False
+
+    idx_dir = user_sspower_dir() / "idx"
+    chroma_dir = idx_dir / "chroma"
+    history_db = idx_dir / "history.db"
+    try:
+        mem = build_memory(
+            scope_id=scope_id_str, idx_dir=idx_dir,
+            chroma_dir=chroma_dir, history_db_path=history_db,
+        )
+        block_meta = {
+            "block_id": eff_id, "layer": layer, "scope": scope_id_str,
+            "ts": _iso_now(),
+            **{k: v for k, v in meta.items() if k != "kind"},
+        }
+        raw_upsert(mem, content, block_meta, user_id=scope_id_str)
+        return mem, True
+    except Exception as e:
+        _log_errors_jsonl({"stage": "step2_index", "err": str(e)})
+        return None, False
+
+
+def _try_extract_and_write(mem, scope_id_str, eff_id, layer, content, meta):
+    """Returns one of: "ok", "skipped-failed", "skipped-partial"."""
+    try:
+        from sspower_mem.mem.extract import ExtractFailed, bridge_extract_facts
+        from sspower_mem.mem.idx import extracted_upsert
+    except ImportError as e:
+        _log_errors_jsonl({"stage": "step3_import", "err": str(e)})
+        return "skipped-failed"
+
+    try:
+        facts = bridge_extract_facts(content)
+    except ExtractFailed as e:
+        _log_errors_jsonl({"stage": "step3a_extract", "err": str(e)})
+        return "skipped-failed"
+
+    import hashlib
+    block_meta = {
+        "block_id": eff_id, "layer": layer, "scope": scope_id_str, "ts": _iso_now(),
+        **{k: v for k, v in meta.items() if k != "kind"},
     }
-    print(json.dumps(result))
-    return 0
+    for fact_index, fact_text in enumerate(facts):
+        fact_hash = hashlib.sha1(f"{eff_id}:{fact_text}".encode()).hexdigest()[:16]
+        fact_meta = {
+            **block_meta, "raw_id": eff_id,
+            "fact_index": fact_index, "fact_hash": fact_hash,
+        }
+        try:
+            extracted_upsert(mem, fact_text, fact_meta, user_id=scope_id_str)
+        except Exception as e:
+            _log_errors_jsonl({
+                "stage": "step3b_index", "err": str(e),
+                "raw_id": eff_id, "fact_index": fact_index,
+            })
+            return "skipped-partial"
+    return "ok"
+
+
+def _iso_now():
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _log_errors_jsonl(record: dict):
+    """Append a single JSON line to ~/.claude/sspower/idx/errors.jsonl.
+    Never raises — failure to log must not break the add path."""
+    try:
+        from sspower_mem.io import safe_append_strict
+        idx_dir = user_sspower_dir() / "idx"
+        errors = idx_dir / "errors.jsonl"
+        safe_append_strict(
+            errors,
+            json.dumps({"ts": _iso_now(), **record}) + "\n",
+            user_sspower_dir(),
+            pathlib.Path.home(),
+        )
+    except Exception:
+        pass
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    if args.idx_only:
-        print(
-            "sspower-mem: --idx-only requires the Phase C index backend; Phase A always uses digest",
-            file=sys.stderr,
-        )
-        return 30
-
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
     sources: list[DigestSource] = []
@@ -206,46 +302,147 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     layer_filter = args.layer.split(",") if args.layer else None
 
-    try:
-        if args.mode == "recent":
+    # --mode recent → digest-only (no semantic op).
+    if args.mode == "recent":
+        try:
             hits = recent(sources, top_k=args.top_k, layer_filter=layer_filter)
-        elif args.query:
-            hits = grep_search(sources, args.query, top_k=args.top_k, layer_filter=layer_filter)
-        else:
-            print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
-            return 30
+        except OSError as e:
+            print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+            return 20
+        _emit_search(hits, args.json)
+        return 0
+
+    if not args.query:
+        print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
+        return 30
+
+    # --query path: try Mem0 index; fall back to grep on exception or empty (unless --idx-only).
+    index_hits, index_raised = _try_index_search(
+        scope_ids=[s[2] for s in sources],
+        query=args.query, top_k=args.top_k, layer_filter=layer_filter,
+    )
+
+    if args.idx_only:
+        if index_raised:
+            print("sspower-mem: index search raised under --idx-only", file=sys.stderr)
+            return 10
+        _emit_search(index_hits, args.json)
+        return 0
+
+    if index_hits:
+        _emit_search(index_hits, args.json)
+        return 0
+
+    # Index empty or raised → grep fallback.
+    try:
+        grep_hits = grep_search(sources, args.query, top_k=args.top_k, layer_filter=layer_filter)
     except OSError as e:
         print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
         return 20
-
-    if args.json:
-        print(json.dumps(hits, indent=2))
-    else:
-        for hit in hits:
-            print(
-                f"[{hit['source']} {hit['score']:.3f}] "
-                f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}"
-            )
-            print(_sanitize_for_terminal(hit["content"]))
-            print("---")
+    _emit_search(grep_hits, args.json)
     return 0
 
 
-def cmd_digest(args: argparse.Namespace) -> int:
-    """Print an in-scope digest summary.
+def _try_index_search(scope_ids, query, top_k, layer_filter):
+    """Run Memory.search per scope, min-max normalize per scope, merge.
 
-    The --rebuild-chroma flag is reserved for Phase C, when the index backend
-    exists. Phase A rejects it explicitly so recovery commands do not silently
-    no-op.
+    Returns (merged_hits: list[dict], index_raised: bool).
     """
-    if args.rebuild_chroma:
-        print(
-            "sspower-mem: --rebuild-chroma is reserved for Phase C (no index "
-            "backend in Phase A); rerun after Phase C lands",
-            file=sys.stderr,
-        )
-        return 30
+    try:
+        import sspower_mem.mem  # noqa: F401
+        from sspower_mem.mem.factory import build_memory
+    except ImportError:
+        return [], True
 
+    idx_dir = user_sspower_dir() / "idx"
+    try:
+        mem = build_memory(
+            scope_id=scope_ids[0], idx_dir=idx_dir,
+            chroma_dir=idx_dir / "chroma",
+            history_db_path=idx_dir / "history.db",
+        )
+    except Exception:
+        return [], True
+
+    all_normalized: list[dict] = []
+    for sid in scope_ids:
+        try:
+            filters = {"user_id": sid}
+            if layer_filter:
+                filters["OR"] = [{"layer": lf} for lf in layer_filter]
+            resp = mem.search(query=query, filters=filters, top_k=top_k, threshold=0.0)
+        except Exception:
+            return [], True
+        scope_hits = resp.get("results", []) or []
+        if not scope_hits:
+            continue
+        scores = [float(h.get("score", 0.0)) for h in scope_hits]
+        smin, smax = min(scores), max(scores)
+        for h in scope_hits:
+            raw = float(h.get("score", 0.0))
+            norm = 1.0 if smin == smax else (raw - smin) / (smax - smin)
+            md = h.get("metadata", {}) or {}
+            kind = md.get("kind", "")
+            corr_id = md.get("raw_id") or md.get("block_id") or h.get("id")
+            all_normalized.append({
+                "id": corr_id,
+                "source": "index",
+                "score": norm,
+                "content": h.get("memory") or h.get("text") or "",
+                "scope": md.get("scope") or sid,
+                "layer": md.get("layer", ""),
+                "ts": md.get("ts", ""),
+                "_kind": kind,
+            })
+
+    all_normalized = _dedupe_index_hits(all_normalized)
+    all_normalized.sort(key=lambda h: (-h["score"], -_ts_key(h["ts"]) if h["ts"] else 0, h["id"] or ""))
+    return all_normalized[:top_k], False
+
+
+def _dedupe_index_hits(hits):
+    """Collapse raw/extracted duplicates: when multiple hits share the same
+    raw_id (or block_id when raw_id absent), keep kind=extracted, drop kind=raw.
+
+    Spec §6.1 read path.
+    """
+    seen: dict[str, dict] = {}
+    for h in hits:
+        key = h.get("id") or ""
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = h
+            continue
+        existing_kind = existing.get("_kind", "")
+        new_kind = h.get("_kind", "")
+        if new_kind == "extracted" and existing_kind != "extracted":
+            seen[key] = h
+    return list(seen.values())
+
+
+def _emit_search(hits, as_json):
+    cleaned = [{k: v for k, v in h.items() if not k.startswith("_")} for h in hits]
+    if as_json:
+        print(json.dumps(cleaned, indent=2))
+        return
+    for hit in cleaned:
+        print(f"[{hit['source']} {hit['score']:.3f}] "
+              f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}")
+        print(_sanitize_for_terminal(hit["content"]))
+        print("---")
+
+
+def _ts_key(ts: str) -> int:
+    import datetime
+    try:
+        return int(datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+                   .replace(tzinfo=datetime.timezone.utc).timestamp())
+    except (ValueError, TypeError):
+        return 0
+
+
+def cmd_digest(args: argparse.Namespace) -> int:
+    """Print digest summary or rebuild Chroma from digest.md (Phase C)."""
     try:
         cwd = _resolve_cwd(args) if args.scope == "project" else None
     except FileNotFoundError as e:
@@ -256,6 +453,14 @@ def cmd_digest(args: argparse.Namespace) -> int:
     panchor = parent_anchor(args.scope, cwd)
     sc_id = scope_id(args.scope, cwd)
     allowed_layers = PROJECT_LAYERS if args.scope == "project" else USER_LAYERS
+
+    if args.rebuild_chroma:
+        return _do_rebuild_chroma(
+            scope_id_str=sc_id, dpath=dpath, panchor=panchor,
+            allowed_layers=allowed_layers,
+            reextract=args.reextract, no_llm_flag=args.no_llm,
+        )
+
     try:
         safe_read_strict(dpath, panchor)
         blocks = _load_all_blocks([(dpath, panchor, sc_id, allowed_layers)])
@@ -289,6 +494,165 @@ def cmd_digest(args: argparse.Namespace) -> int:
     }
     print(json.dumps(summary))
     return 0
+
+
+def _do_rebuild_chroma(*, scope_id_str, dpath, panchor, allowed_layers,
+                       reextract, no_llm_flag):
+    """Rebuild Mem0 from digest.md authoritatively.
+
+    No --reextract: clear sspower_memories collection, replay every block as
+                    raw + extracted (skipping Step 3a/3b on no_llm=true blocks).
+    --reextract <raw_id>: delete extracted records for raw_id only, re-run Step 3a/3b.
+    --reextract all: delete ALL extracted records, retain raw, re-run Step 3a/3b on every block.
+    --no-llm: force-skip Step 3a/3b for every block.
+    """
+    try:
+        safe_read_strict(dpath, panchor)
+        blocks = _load_all_blocks([(dpath, panchor, scope_id_str, allowed_layers)])
+    except FileNotFoundError:
+        print(json.dumps({"rebuilt": False, "reason": "no digest"}))
+        return 0
+    except OSError as e:
+        print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+        return 20
+
+    try:
+        import sspower_mem.mem  # noqa: F401
+        from sspower_mem.mem.factory import build_memory
+        from sspower_mem.mem.idx import extracted_upsert, raw_upsert
+        from sspower_mem.mem.extract import ExtractFailed, bridge_extract_facts
+    except ImportError as e:
+        print(f"sspower-mem: index deps missing: {e}", file=sys.stderr)
+        return 10
+
+    idx_dir = user_sspower_dir() / "idx"
+    chroma_dir = idx_dir / "chroma"
+
+    raw_count = 0
+    fact_count = 0
+    skipped_no_llm = 0
+    reextract_target = reextract if reextract not in (None, "all") else None
+
+    # Build Mem0 first so we reuse its chroma client (Chroma enforces singleton-per-path).
+    try:
+        mem = build_memory(
+            scope_id=scope_id_str, idx_dir=idx_dir,
+            chroma_dir=chroma_dir,
+            history_db_path=idx_dir / "history.db",
+        )
+    except Exception as e:
+        print(f"sspower-mem: Memory init failed: {e}", file=sys.stderr)
+        return 10
+
+    # Clear via Mem0's chromadb client (chromadb direct enumeration; not Mem0.search).
+    if reextract is None:
+        _clear_collection_via(mem)
+    elif reextract == "all":
+        _clear_extracted_only_via(mem)
+    elif reextract_target is not None:
+        _clear_extracted_for_raw_via(mem, reextract_target)
+
+    # After full-collection delete, rebuild Memory so its handle points at the new collection.
+    if reextract is None:
+        try:
+            mem = build_memory(
+                scope_id=scope_id_str, idx_dir=idx_dir,
+                chroma_dir=chroma_dir,
+                history_db_path=idx_dir / "history.db",
+            )
+        except Exception as e:
+            print(f"sspower-mem: Memory rebuild failed: {e}", file=sys.stderr)
+            return 10
+
+    import hashlib
+
+    for blk in blocks:
+        if reextract_target is not None and blk["id"] != reextract_target:
+            continue
+
+        block_meta = {
+            "block_id": blk["id"], "layer": blk["layer"], "scope": blk["scope"],
+            "ts": blk["ts"],
+            **{k: v for k, v in blk.get("meta", {}).items() if k != "kind"},
+        }
+        is_no_llm = bool(blk.get("meta", {}).get("no_llm"))
+
+        if reextract is None:
+            try:
+                raw_upsert(mem, blk["content"], block_meta, user_id=scope_id_str)
+                raw_count += 1
+            except Exception as e:
+                _log_errors_jsonl({"stage": "rebuild_raw", "err": str(e), "raw_id": blk["id"]})
+                continue
+        else:
+            raw_count += 1  # retained on extracted-only rebuild
+
+        # Skip extraction when --no-llm flag set OR when block was --no-llm originally
+        # AND we're not specifically targeting it.
+        if no_llm_flag or (is_no_llm and blk["id"] != reextract_target):
+            if is_no_llm:
+                skipped_no_llm += 1
+            continue
+
+        try:
+            facts = bridge_extract_facts(blk["content"])
+        except ExtractFailed:
+            _log_errors_jsonl({"stage": "rebuild_extract", "raw_id": blk["id"]})
+            continue
+        for fact_index, fact_text in enumerate(facts):
+            fh = hashlib.sha1(f'{blk["id"]}:{fact_text}'.encode()).hexdigest()[:16]
+            fm = {**block_meta, "raw_id": blk["id"], "fact_index": fact_index, "fact_hash": fh}
+            try:
+                extracted_upsert(mem, fact_text, fm, user_id=scope_id_str)
+                fact_count += 1
+            except Exception as e:
+                _log_errors_jsonl({
+                    "stage": "rebuild_extract_write",
+                    "raw_id": blk["id"], "fact_index": fact_index, "err": str(e),
+                })
+
+    print(json.dumps({
+        "rebuilt": True, "raw_blocks": raw_count,
+        "extracted_facts": fact_count,
+        "skipped_no_llm_blocks": skipped_no_llm,
+        "reextract_target": reextract_target,
+    }))
+    return 0
+
+
+def _clear_collection_via(mem):
+    """Delete the entire sspower_memories Chroma collection (reuses Mem0's client)."""
+    client = mem.vector_store.client
+    try:
+        client.delete_collection("sspower_memories")
+    except Exception:
+        pass
+
+
+def _clear_extracted_only_via(mem):
+    """Delete only kind=extracted records via collection.get() (full enumeration)."""
+    client = mem.vector_store.client
+    try:
+        coll = client.get_collection("sspower_memories")
+    except Exception:
+        return
+    rows = coll.get(where={"kind": "extracted"}, limit=None)
+    ids = rows.get("ids", [])
+    if ids:
+        coll.delete(ids=ids)
+
+
+def _clear_extracted_for_raw_via(mem, raw_id):
+    """Delete kind=extracted records for one raw_id."""
+    client = mem.vector_store.client
+    try:
+        coll = client.get_collection("sspower_memories")
+    except Exception:
+        return
+    rows = coll.get(where={"$and": [{"raw_id": raw_id}, {"kind": "extracted"}]}, limit=None)
+    ids = rows.get("ids", [])
+    if ids:
+        coll.delete(ids=ids)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -339,7 +703,15 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument(
         "--rebuild-chroma",
         action="store_true",
-        help="Reserved for Phase C; Phase A rejects with rc=30",
+        help="Replay digest blocks into Chroma (clears existing collection).",
+    )
+    digest.add_argument(
+        "--reextract",
+        nargs="?",
+        const="all",
+        default=None,
+        help="Optional <raw_id> or 'all'. With --rebuild-chroma, retains raw "
+             "and re-runs extraction only.",
     )
     digest.add_argument(
         "--no-llm",
