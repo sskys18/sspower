@@ -1,9 +1,16 @@
 [project]
 name = "sspower-mem"
-version = "0.1.0"
-description = "sspower plaintext memory backend (Phase A)"
+version = "0.2.0"
+description = "sspower memory backend: digest source-of-truth + Mem0 semantic index (Phase C)"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    # Mem0 OSS pinned to Phase 0 verification SHA via [tool.uv.sources] below.
+    # Private-API surface (EmbedderFactory.provider_to_class) verified at that SHA.
+    "mem0ai",
+    # Exact pins — Phase 0 §2 caveat 2 (private dict API may rename on minor bumps).
+    "chromadb==1.5.9",
+    "model2vec==0.8.1",
+]
 
 [project.scripts]
 sspower-mem = "sspower_mem.cli:main"
@@ -17,3 +24,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["sspower_mem"]
+
+[tool.uv.sources]
+mem0ai = { git = "https://github.com/mem0ai/mem0.git", rev = "70bc9e51d57fe005d02b7b6d81b56476bade3cb3" }
