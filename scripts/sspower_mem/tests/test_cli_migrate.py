@@ -180,3 +180,70 @@ def test_cli_migrate_reextract_after_failed_bridge(monkeypatch, tmp_path):
         if '"rebuilt":' in ln
     ]
     assert rebuilds, f"no rebuild summary lines in stdout: {out2!r}"
+
+
+import random
+
+
+def test_cli_migrate_sample_compare_round_trip(monkeypatch, tmp_path):
+    """Acceptance per spec §9 Phase D bullet 3: sample-compare 10 random
+    legacy .md blocks vs migrated state.
+
+    Phase D's contract is that the migrator ingests every legacy block;
+    semantic-search ranking is a Phase C embedder concern. This test
+    therefore verifies round-trip fidelity (every block is recoverable
+    from the migrated digest+index) rather than embedder ranking quality:
+
+      1. Generate 12 source .md files with unique distinctive content.
+      2. Migrate.
+      3. Enumerate via `search --mode recent --top-k 20` (digest-only,
+         deterministic).
+      4. Assert each of 10 sampled source blocks is present in enumeration.
+      5. Additionally smoke-test idx by grep-style query for one block;
+         require only that the search call succeeds (rc=0).
+    """
+    cwd = tmp_path / "repo"
+    sessions = cwd / ".claude" / "wiki" / "sessions"
+    sessions.mkdir(parents=True)
+    rng = random.Random(42)
+    expected: dict[str, str] = {}  # basename → unique snippet
+    for i in range(12):
+        snippet = f"unique-payload-line-{i:02d}-{rng.randint(10000, 99999)}"
+        basename = f"260501_{i:02d}-00_SessionEnd"
+        (sessions / f"{basename}.md").write_text(
+            f"# Session {basename}\n\nPayload marker: {snippet}\n"
+            f"Body text for entry number {i}.\n",
+            encoding="utf-8",
+        )
+        expected[basename] = snippet
+
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, _, err = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc in (0, 10), f"migrate stderr={err!r}"
+
+    # Enumerate every migrated block via the deterministic recent path.
+    rc, out, err = _run(
+        monkeypatch, tmp_path, "search",
+        "--scope", "project", "--cwd", str(cwd),
+        "--mode", "recent", "--top-k", "20", "--json",
+    )
+    assert rc == 0, f"search stderr={err!r}"
+    enumerated = json.loads(out)
+    all_content = "\n".join((h.get("content") or "") for h in enumerated)
+
+    sample = rng.sample(sorted(expected), k=10)
+    misses = [bn for bn in sample if expected[bn] not in all_content]
+    assert not misses, (
+        f"sample-compare round-trip miss: {misses}; got {len(enumerated)} blocks"
+    )
+
+    # Idx smoke: any of the snippets queried via --query must succeed (rc=0),
+    # without strict ranking assertion (embedder ranking is Phase C scope).
+    probe_snip = expected[sample[0]]
+    rc, _, _ = _run(
+        monkeypatch, tmp_path, "search",
+        "--scope", "project", "--cwd", str(cwd),
+        "--query", probe_snip, "--top-k", "5", "--json",
+    )
+    assert rc == 0
