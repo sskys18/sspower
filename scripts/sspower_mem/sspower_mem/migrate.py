@@ -170,3 +170,31 @@ def iter_doc_blocks(cwd: pathlib.Path) -> Iterator[Block]:
     wiki = cwd / ".claude" / "wiki"
     yield from _iter_split_file(wiki / "decisions.md", "decision")
     yield from _iter_split_file(wiki / "gotchas.md", "gotcha")
+
+
+def iter_user_global_blocks() -> Iterator[Block]:
+    """Enumerate ~/.claude/projects/*/memory/*.md (skipping MEMORY.md index).
+
+    Uses os.path.expanduser to resolve $HOME so tests can monkeypatch it.
+    """
+    home = pathlib.Path(os.path.expanduser("~"))
+    projects_root = home / ".claude" / "projects"
+    if not projects_root.is_dir():
+        return
+    for proj_dir in sorted(projects_root.iterdir()):
+        mem_dir = proj_dir / "memory"
+        if not mem_dir.is_dir():
+            continue
+        for md in sorted(mem_dir.glob("*.md")):
+            if md.name in _MEMORY_INDEX_SKIP:
+                continue
+            if not md.is_file():
+                continue
+            yield Block(
+                layer="user-global",
+                content=_read_text(md),
+                meta=_stringify_meta(
+                    {"migrated_from": str(md), "original_mtime": _iso_mtime(md)}
+                ),
+                source_path=md,
+            )

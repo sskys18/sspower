@@ -220,3 +220,50 @@ def test_iter_doc_blocks_missing_files(tmp_path):
     cwd = tmp_path / "repo"
     cwd.mkdir()
     assert list(iter_doc_blocks(cwd)) == []
+
+
+def test_iter_user_global_blocks_skips_memory_index(tmp_path, monkeypatch):
+    from sspower_mem.migrate import iter_user_global_blocks
+
+    fake_home = tmp_path / "home"
+    proj = fake_home / ".claude" / "projects" / "-Users-x-some-project" / "memory"
+    proj.mkdir(parents=True)
+    (proj / "MEMORY.md").write_text(
+        "- [feedback](feedback_x.md) — index entry\n", encoding="utf-8"
+    )
+    (proj / "feedback_x.md").write_text(
+        "---\nname: feedback-x\ntype: feedback\n---\nBody A\n", encoding="utf-8"
+    )
+    (proj / "user_role.md").write_text("Body B\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    blocks = list(iter_user_global_blocks())
+    assert len(blocks) == 2
+    sources = {b["source_path"].name for b in blocks}
+    assert sources == {"feedback_x.md", "user_role.md"}
+    assert all(b["layer"] == "user-global" for b in blocks)
+    # MEMORY.md is the index — skipped.
+    assert "MEMORY.md" not in sources
+
+
+def test_iter_user_global_blocks_no_projects_dir(tmp_path, monkeypatch):
+    from sspower_mem.migrate import iter_user_global_blocks
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert list(iter_user_global_blocks()) == []
+
+
+def test_iter_user_global_blocks_multiple_projects(tmp_path, monkeypatch):
+    from sspower_mem.migrate import iter_user_global_blocks
+
+    fake_home = tmp_path / "home"
+    for name in ("project_a", "project_b"):
+        d = fake_home / ".claude" / "projects" / name / "memory"
+        d.mkdir(parents=True)
+        (d / "MEMORY.md").write_text("idx\n", encoding="utf-8")
+        (d / "note.md").write_text(f"Note from {name}\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    blocks = list(iter_user_global_blocks())
+    contents = sorted(b["content"] for b in blocks)
+    assert contents == ["Note from project_a\n", "Note from project_b\n"]
