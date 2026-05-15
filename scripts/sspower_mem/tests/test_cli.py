@@ -568,18 +568,19 @@ def test_cli_digest_summary(monkeypatch, tmp_path):
     assert body["latest_ts"] is not None
 
 
-def test_cli_digest_rebuild_chroma_reserved_phase_c(monkeypatch, tmp_path):
+def test_cli_digest_rebuild_chroma_empty_digest(monkeypatch, tmp_path):
+    """Phase C: --rebuild-chroma on empty/missing digest returns rc=0 with no-op payload."""
     _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
-    rc, _, err = _run(
-        monkeypatch,
-        tmp_path,
-        "digest",
-        "--scope",
-        "user",
-        "--rebuild-chroma",
+    rc, out, _err = _run(
+        monkeypatch, tmp_path,
+        "digest", "--scope", "user", "--rebuild-chroma",
     )
-    assert rc == 30
-    assert "Phase C" in err or "reserved" in err
+    assert rc == 0
+    body = json.loads(out)
+    assert body["rebuilt"] in (False, True)
+    if body["rebuilt"]:
+        assert body["raw_blocks"] == 0
+        assert body["extracted_facts"] == 0
 
 
 def test_cli_digest_symlinked_project_ancestor_exits_20(monkeypatch, tmp_path):

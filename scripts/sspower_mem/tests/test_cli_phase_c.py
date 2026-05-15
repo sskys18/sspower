@@ -187,6 +187,64 @@ def test_search_dedups_raw_and_extracted_for_same_block(env, capsys):
     assert len(block_ids) == len(set(block_ids)), f"duplicate ids in result: {block_ids}"
 
 
+def test_digest_rebuild_chroma_replays(env, capsys):
+    """--rebuild-chroma clears collection and replays raw + extracted from digest.md."""
+    from sspower_mem.cli import main
+    _set_bridge_resp(env, _ok_envelope(["fact 1"]))
+    main(["add", "--scope", "user", "--layer", "user-global", "--content", "first body"])
+    capsys.readouterr()
+    _set_bridge_resp(env, _ok_envelope(["fact 2"]))
+    main(["add", "--scope", "user", "--layer", "user-global", "--content", "second body"])
+    capsys.readouterr()
+
+    rc = main(["digest", "--scope", "user", "--rebuild-chroma"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["rebuilt"] is True
+    assert payload["raw_blocks"] == 2
+    assert payload["extracted_facts"] == 2
+
+
+def test_digest_rebuild_chroma_no_llm_skips_bridge(env, capsys, tmp_path):
+    """--rebuild-chroma --no-llm replays raw only, MUST NOT invoke the bridge."""
+    from sspower_mem.cli import main
+
+    _set_bridge_resp(env, _ok_envelope(["unused"]))
+    main(["add", "--scope", "user", "--layer", "user-global", "--content", "body"])
+    capsys.readouterr()
+
+    sentinel = tmp_path / "no_llm_rebuild_sentinel"
+    env["monkeypatch"].setenv("SSPOWER_FAKE_BRIDGE_SENTINEL", str(sentinel))
+    if sentinel.exists():
+        sentinel.unlink()
+
+    rc = main(["digest", "--scope", "user", "--rebuild-chroma", "--no-llm"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["raw_blocks"] == 1
+    assert payload["extracted_facts"] == 0
+    assert not sentinel.exists(), "bridge invoked under --rebuild-chroma --no-llm"
+
+
+def test_digest_rebuild_reextract_all_retains_raw(env, capsys):
+    """--reextract all clears extracted only, retains raw, re-runs Step 3a/3b on every block."""
+    from sspower_mem.cli import main
+
+    _set_bridge_resp(env, _ok_envelope(["fact a"]))
+    main(["add", "--scope", "user", "--layer", "user-global", "--content", "body one"])
+    capsys.readouterr()
+    _set_bridge_resp(env, _ok_envelope(["fact b"]))
+    main(["add", "--scope", "user", "--layer", "user-global", "--content", "body two"])
+    capsys.readouterr()
+
+    _set_bridge_resp(env, _ok_envelope(["new fact 1", "new fact 2"]))
+    rc = main(["digest", "--scope", "user", "--rebuild-chroma", "--reextract", "all"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["raw_blocks"] == 2  # retained
+    assert payload["extracted_facts"] == 4  # 2 blocks × 2 new facts
+
+
 def test_add_mem0_import_failure_keeps_digest_durable(env, capsys, monkeypatch):
     """Spec §6.1/§8 lazy-import policy: broken Mem0 import inside cmd_add
     MUST NOT bypass the digest write. Step 1 completes, Step 2 import fails,

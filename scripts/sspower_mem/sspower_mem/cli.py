@@ -442,20 +442,7 @@ def _ts_key(ts: str) -> int:
 
 
 def cmd_digest(args: argparse.Namespace) -> int:
-    """Print an in-scope digest summary.
-
-    The --rebuild-chroma flag is reserved for Phase C, when the index backend
-    exists. Phase A rejects it explicitly so recovery commands do not silently
-    no-op.
-    """
-    if args.rebuild_chroma:
-        print(
-            "sspower-mem: --rebuild-chroma is reserved for Phase C (no index "
-            "backend in Phase A); rerun after Phase C lands",
-            file=sys.stderr,
-        )
-        return 30
-
+    """Print digest summary or rebuild Chroma from digest.md (Phase C)."""
     try:
         cwd = _resolve_cwd(args) if args.scope == "project" else None
     except FileNotFoundError as e:
@@ -466,6 +453,14 @@ def cmd_digest(args: argparse.Namespace) -> int:
     panchor = parent_anchor(args.scope, cwd)
     sc_id = scope_id(args.scope, cwd)
     allowed_layers = PROJECT_LAYERS if args.scope == "project" else USER_LAYERS
+
+    if args.rebuild_chroma:
+        return _do_rebuild_chroma(
+            scope_id_str=sc_id, dpath=dpath, panchor=panchor,
+            allowed_layers=allowed_layers,
+            reextract=args.reextract, no_llm_flag=args.no_llm,
+        )
+
     try:
         safe_read_strict(dpath, panchor)
         blocks = _load_all_blocks([(dpath, panchor, sc_id, allowed_layers)])
@@ -499,6 +494,165 @@ def cmd_digest(args: argparse.Namespace) -> int:
     }
     print(json.dumps(summary))
     return 0
+
+
+def _do_rebuild_chroma(*, scope_id_str, dpath, panchor, allowed_layers,
+                       reextract, no_llm_flag):
+    """Rebuild Mem0 from digest.md authoritatively.
+
+    No --reextract: clear sspower_memories collection, replay every block as
+                    raw + extracted (skipping Step 3a/3b on no_llm=true blocks).
+    --reextract <raw_id>: delete extracted records for raw_id only, re-run Step 3a/3b.
+    --reextract all: delete ALL extracted records, retain raw, re-run Step 3a/3b on every block.
+    --no-llm: force-skip Step 3a/3b for every block.
+    """
+    try:
+        safe_read_strict(dpath, panchor)
+        blocks = _load_all_blocks([(dpath, panchor, scope_id_str, allowed_layers)])
+    except FileNotFoundError:
+        print(json.dumps({"rebuilt": False, "reason": "no digest"}))
+        return 0
+    except OSError as e:
+        print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+        return 20
+
+    try:
+        import sspower_mem.mem  # noqa: F401
+        from sspower_mem.mem.factory import build_memory
+        from sspower_mem.mem.idx import extracted_upsert, raw_upsert
+        from sspower_mem.mem.extract import ExtractFailed, bridge_extract_facts
+    except ImportError as e:
+        print(f"sspower-mem: index deps missing: {e}", file=sys.stderr)
+        return 10
+
+    idx_dir = user_sspower_dir() / "idx"
+    chroma_dir = idx_dir / "chroma"
+
+    raw_count = 0
+    fact_count = 0
+    skipped_no_llm = 0
+    reextract_target = reextract if reextract not in (None, "all") else None
+
+    # Build Mem0 first so we reuse its chroma client (Chroma enforces singleton-per-path).
+    try:
+        mem = build_memory(
+            scope_id=scope_id_str, idx_dir=idx_dir,
+            chroma_dir=chroma_dir,
+            history_db_path=idx_dir / "history.db",
+        )
+    except Exception as e:
+        print(f"sspower-mem: Memory init failed: {e}", file=sys.stderr)
+        return 10
+
+    # Clear via Mem0's chromadb client (chromadb direct enumeration; not Mem0.search).
+    if reextract is None:
+        _clear_collection_via(mem)
+    elif reextract == "all":
+        _clear_extracted_only_via(mem)
+    elif reextract_target is not None:
+        _clear_extracted_for_raw_via(mem, reextract_target)
+
+    # After full-collection delete, rebuild Memory so its handle points at the new collection.
+    if reextract is None:
+        try:
+            mem = build_memory(
+                scope_id=scope_id_str, idx_dir=idx_dir,
+                chroma_dir=chroma_dir,
+                history_db_path=idx_dir / "history.db",
+            )
+        except Exception as e:
+            print(f"sspower-mem: Memory rebuild failed: {e}", file=sys.stderr)
+            return 10
+
+    import hashlib
+
+    for blk in blocks:
+        if reextract_target is not None and blk["id"] != reextract_target:
+            continue
+
+        block_meta = {
+            "block_id": blk["id"], "layer": blk["layer"], "scope": blk["scope"],
+            "ts": blk["ts"],
+            **{k: v for k, v in blk.get("meta", {}).items() if k != "kind"},
+        }
+        is_no_llm = bool(blk.get("meta", {}).get("no_llm"))
+
+        if reextract is None:
+            try:
+                raw_upsert(mem, blk["content"], block_meta, user_id=scope_id_str)
+                raw_count += 1
+            except Exception as e:
+                _log_errors_jsonl({"stage": "rebuild_raw", "err": str(e), "raw_id": blk["id"]})
+                continue
+        else:
+            raw_count += 1  # retained on extracted-only rebuild
+
+        # Skip extraction when --no-llm flag set OR when block was --no-llm originally
+        # AND we're not specifically targeting it.
+        if no_llm_flag or (is_no_llm and blk["id"] != reextract_target):
+            if is_no_llm:
+                skipped_no_llm += 1
+            continue
+
+        try:
+            facts = bridge_extract_facts(blk["content"])
+        except ExtractFailed:
+            _log_errors_jsonl({"stage": "rebuild_extract", "raw_id": blk["id"]})
+            continue
+        for fact_index, fact_text in enumerate(facts):
+            fh = hashlib.sha1(f'{blk["id"]}:{fact_text}'.encode()).hexdigest()[:16]
+            fm = {**block_meta, "raw_id": blk["id"], "fact_index": fact_index, "fact_hash": fh}
+            try:
+                extracted_upsert(mem, fact_text, fm, user_id=scope_id_str)
+                fact_count += 1
+            except Exception as e:
+                _log_errors_jsonl({
+                    "stage": "rebuild_extract_write",
+                    "raw_id": blk["id"], "fact_index": fact_index, "err": str(e),
+                })
+
+    print(json.dumps({
+        "rebuilt": True, "raw_blocks": raw_count,
+        "extracted_facts": fact_count,
+        "skipped_no_llm_blocks": skipped_no_llm,
+        "reextract_target": reextract_target,
+    }))
+    return 0
+
+
+def _clear_collection_via(mem):
+    """Delete the entire sspower_memories Chroma collection (reuses Mem0's client)."""
+    client = mem.vector_store.client
+    try:
+        client.delete_collection("sspower_memories")
+    except Exception:
+        pass
+
+
+def _clear_extracted_only_via(mem):
+    """Delete only kind=extracted records via collection.get() (full enumeration)."""
+    client = mem.vector_store.client
+    try:
+        coll = client.get_collection("sspower_memories")
+    except Exception:
+        return
+    rows = coll.get(where={"kind": "extracted"}, limit=None)
+    ids = rows.get("ids", [])
+    if ids:
+        coll.delete(ids=ids)
+
+
+def _clear_extracted_for_raw_via(mem, raw_id):
+    """Delete kind=extracted records for one raw_id."""
+    client = mem.vector_store.client
+    try:
+        coll = client.get_collection("sspower_memories")
+    except Exception:
+        return
+    rows = coll.get(where={"$and": [{"raw_id": raw_id}, {"kind": "extracted"}]}, limit=None)
+    ids = rows.get("ids", [])
+    if ids:
+        coll.delete(ids=ids)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -549,7 +703,15 @@ def build_parser() -> argparse.ArgumentParser:
     digest.add_argument(
         "--rebuild-chroma",
         action="store_true",
-        help="Reserved for Phase C; Phase A rejects with rc=30",
+        help="Replay digest blocks into Chroma (clears existing collection).",
+    )
+    digest.add_argument(
+        "--reextract",
+        nargs="?",
+        const="all",
+        default=None,
+        help="Optional <raw_id> or 'all'. With --rebuild-chroma, retains raw "
+             "and re-runs extraction only.",
     )
     digest.add_argument(
         "--no-llm",
