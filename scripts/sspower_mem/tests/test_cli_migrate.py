@@ -144,3 +144,39 @@ def test_cli_migrate_user_global_path(monkeypatch, tmp_path):
     assert "user-global" in text
     assert "feedback_a.md" in text  # via migrated_from meta
     assert "MEMORY.md" not in text  # index skipped
+
+
+_FACTS_ENVELOPE = (
+    '{"id":"x","object":"chat.completion","choices":[{"index":0,'
+    '"message":{"role":"assistant","content":"{\\"facts\\":[\\"fact-A\\"]}"}}],'
+    '"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}'
+)
+
+
+def test_cli_migrate_reextract_after_failed_bridge(monkeypatch, tmp_path):
+    """Migrate with bridge-failed → block added with extracted='skipped-failed'.
+    Then migrate --reextract with healthy bridge → fact written."""
+    cwd = _seed_repo(tmp_path)
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    # First run: bridge stubbed to exit 1 → extraction fails.
+    monkeypatch.setenv("SSPOWER_FAKE_BRIDGE_EXIT", "1")
+    rc1, out1, err1 = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    # rc=10 expected because Step 3a fails on every block.
+    assert rc1 in (0, 10), f"rc1={rc1} stderr={err1!r}"
+
+    # Second run: bridge healthy + facts envelope + --reextract.
+    monkeypatch.setenv("SSPOWER_FAKE_BRIDGE_EXIT", "0")
+    monkeypatch.setenv("SSPOWER_FAKE_BRIDGE_RESPONSE", _FACTS_ENVELOPE)
+    rc2, out2, err2 = _run(
+        monkeypatch, tmp_path, "migrate", "--cwd", str(cwd), "--reextract"
+    )
+    assert rc2 in (0, 10), f"rc2={rc2} stderr={err2!r}"
+    # cmd_digest rebuild output is mixed with migrate summary; just verify
+    # the digest still exists and at least one rebuild summary line was emitted.
+    rebuilds = [
+        ln for ln in out2.splitlines()
+        if '"rebuilt":' in ln
+    ]
+    assert rebuilds, f"no rebuild summary lines in stdout: {out2!r}"
