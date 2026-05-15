@@ -101,3 +101,72 @@ def iter_session_blocks(cwd: pathlib.Path) -> Iterator[Block]:
             meta=_stringify_meta(meta),
             source_path=md,
         )
+
+
+_H2_LINE_RE = re.compile(r"^## [^#]", re.MULTILINE)
+_HR_LINE_RE = re.compile(r"^---$", re.MULTILINE)
+
+
+def _split_blocks(text: str) -> Iterator[str]:
+    """Split a decisions.md / gotchas.md body per decision §3.
+
+    Priority:
+      1. If any ^## (H2) line present: split on H2 boundaries; each block is
+         the H2 heading + body up to the next H2 (or EOF). Pre-H2 content
+         (e.g. an H1 preamble) is dropped.
+      2. Else if any ^---$ HR line present: split on HR boundaries; blocks
+         are inter-rule text segments with whitespace stripped. Pre-first-HR
+         content is dropped.
+      3. Else: yield nothing.
+    """
+    if not text:
+        return
+    if _H2_LINE_RE.search(text):
+        lines = text.split("\n")
+        cur: list[str] = []
+        in_block = False
+        for ln in lines:
+            if ln.startswith("## ") and not ln.startswith("###"):
+                if in_block and cur:
+                    yield "\n".join(cur).rstrip()
+                cur = [ln]
+                in_block = True
+            elif in_block:
+                cur.append(ln)
+        if in_block and cur:
+            yield "\n".join(cur).rstrip()
+        return
+    if _HR_LINE_RE.search(text):
+        parts = re.split(r"(?m)^---$", text)
+        # parts[0] is pre-first-HR — drop. Remainder: inter-rule segments.
+        for seg in parts[1:]:
+            stripped = seg.strip()
+            if stripped:
+                yield stripped
+        return
+    return
+
+
+def _iter_split_file(
+    path: pathlib.Path, layer: str
+) -> Iterator[Block]:
+    if not path.is_file():
+        return
+    text = _read_text(path)
+    mtime = _iso_mtime(path)
+    for content in _split_blocks(text):
+        yield Block(
+            layer=layer,
+            content=content,
+            meta=_stringify_meta(
+                {"migrated_from": str(path), "original_mtime": mtime}
+            ),
+            source_path=path,
+        )
+
+
+def iter_doc_blocks(cwd: pathlib.Path) -> Iterator[Block]:
+    """Enumerate decision + gotcha blocks from <cwd>/.claude/wiki/."""
+    wiki = cwd / ".claude" / "wiki"
+    yield from _iter_split_file(wiki / "decisions.md", "decision")
+    yield from _iter_split_file(wiki / "gotchas.md", "gotcha")

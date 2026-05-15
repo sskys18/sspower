@@ -124,3 +124,99 @@ def test_iter_session_blocks_skips_orphan_json(tmp_path):
     sessions.mkdir(parents=True)
     (sessions / "orphan.json").write_text(json.dumps({"meta": {"x": 1}}), encoding="utf-8")
     assert list(iter_session_blocks(cwd)) == []
+
+
+def test_split_h2_blocks_basic(tmp_path):
+    from sspower_mem.migrate import _split_blocks
+
+    text = (
+        "# Decisions\n\nIntro paragraph dropped.\n\n"
+        "## Use Postgres\nReason: ACID needed.\n\n"
+        "## Use Redis\nReason: cache layer.\n"
+    )
+    blocks = list(_split_blocks(text))
+    assert blocks == [
+        "## Use Postgres\nReason: ACID needed.",
+        "## Use Redis\nReason: cache layer.",
+    ]
+
+
+def test_split_hr_blocks_basic(tmp_path):
+    from sspower_mem.migrate import _split_blocks
+
+    text = (
+        "# Gotchas\n\nPreamble dropped.\n\n"
+        "---\n\nFirst gotcha body.\n\n"
+        "---\n\nSecond gotcha body.\n"
+    )
+    blocks = list(_split_blocks(text))
+    assert blocks == ["First gotcha body.", "Second gotcha body."]
+
+
+def test_split_h2_wins_when_both_present(tmp_path):
+    from sspower_mem.migrate import _split_blocks
+
+    text = "## Heading\nBody with --- inside text.\n"
+    blocks = list(_split_blocks(text))
+    assert blocks == ["## Heading\nBody with --- inside text."]
+
+
+def test_split_stub_file_no_separator_yields_zero_blocks(tmp_path):
+    from sspower_mem.migrate import _split_blocks
+
+    text = "# Decisions\n\nDescriptive header only, no entries yet.\n"
+    assert list(_split_blocks(text)) == []
+
+
+def test_split_empty_file(tmp_path):
+    from sspower_mem.migrate import _split_blocks
+
+    assert list(_split_blocks("")) == []
+
+
+def test_iter_doc_blocks_decisions_and_gotchas(tmp_path):
+    from sspower_mem.migrate import iter_doc_blocks
+
+    wiki = tmp_path / "repo" / ".claude" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "decisions.md").write_text(
+        "# Decisions\n## D1\nbody1\n## D2\nbody2\n", encoding="utf-8"
+    )
+    (wiki / "gotchas.md").write_text(
+        "# Gotchas\n---\nG1 body\n---\nG2 body\n", encoding="utf-8"
+    )
+
+    blocks = list(iter_doc_blocks(tmp_path / "repo"))
+    by_layer: dict[str, list[str]] = {}
+    for b in blocks:
+        by_layer.setdefault(b["layer"], []).append(b["content"])
+    assert by_layer["decision"] == ["## D1\nbody1", "## D2\nbody2"]
+    assert by_layer["gotcha"] == ["G1 body", "G2 body"]
+    # provenance + mtime present
+    for b in blocks:
+        assert b["meta"]["migrated_from"].endswith((".md",))
+        assert b["meta"]["original_mtime"].endswith("Z")
+
+
+def test_iter_doc_blocks_stub_repo_yields_nothing(tmp_path):
+    """Regression: this repo's decisions.md / gotchas.md are H1-only stubs.
+    Migrate must no-op cleanly without writing the H1 preamble."""
+    from sspower_mem.migrate import iter_doc_blocks
+
+    wiki = tmp_path / "repo" / ".claude" / "wiki"
+    wiki.mkdir(parents=True)
+    (wiki / "decisions.md").write_text(
+        "# Decisions\n\nArchitectural calls go here.\n", encoding="utf-8"
+    )
+    (wiki / "gotchas.md").write_text(
+        "# Gotchas\n\nFootguns go here.\n", encoding="utf-8"
+    )
+    assert list(iter_doc_blocks(tmp_path / "repo")) == []
+
+
+def test_iter_doc_blocks_missing_files(tmp_path):
+    from sspower_mem.migrate import iter_doc_blocks
+
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    assert list(iter_doc_blocks(cwd)) == []
