@@ -488,24 +488,15 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     assert "required" in err or "requires --query or --mode recent" in err
 
 
-def test_cli_search_idx_only_rejected_in_phase_a(monkeypatch, tmp_path):
-    rc, out, err = _run(
-        monkeypatch,
-        tmp_path,
-        "search",
-        "--scope",
-        "user",
-        "--query",
-        "hello",
-        "--idx-only",
+def test_cli_search_idx_only_index_empty_returns_rc0(monkeypatch, tmp_path):
+    """Phase C: --idx-only with empty index returns rc=0 + []."""
+    _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    rc, out, _err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--query", "missing", "--idx-only", "--json",
     )
-
-    assert rc == 30
-    assert out == ""
-    assert (
-        "sspower-mem: --idx-only requires the Phase C index backend; "
-        "Phase A always uses digest"
-    ) in err
+    assert rc == 0
+    assert json.loads(out) == []
 
 
 def test_cli_add_rejects_user_global_layer_for_project(monkeypatch, tmp_path):

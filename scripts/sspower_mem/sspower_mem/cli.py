@@ -270,13 +270,6 @@ def _log_errors_jsonl(record: dict):
 
 
 def cmd_search(args: argparse.Namespace) -> int:
-    if args.idx_only:
-        print(
-            "sspower-mem: --idx-only requires the Phase C index backend; Phase A always uses digest",
-            file=sys.stderr,
-        )
-        return 30
-
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
     sources: list[DigestSource] = []
@@ -309,29 +302,143 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     layer_filter = args.layer.split(",") if args.layer else None
 
-    try:
-        if args.mode == "recent":
+    # --mode recent → digest-only (no semantic op).
+    if args.mode == "recent":
+        try:
             hits = recent(sources, top_k=args.top_k, layer_filter=layer_filter)
-        elif args.query:
-            hits = grep_search(sources, args.query, top_k=args.top_k, layer_filter=layer_filter)
-        else:
-            print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
-            return 30
+        except OSError as e:
+            print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
+            return 20
+        _emit_search(hits, args.json)
+        return 0
+
+    if not args.query:
+        print("sspower-mem: search requires --query or --mode recent", file=sys.stderr)
+        return 30
+
+    # --query path: try Mem0 index; fall back to grep on exception or empty (unless --idx-only).
+    index_hits, index_raised = _try_index_search(
+        scope_ids=[s[2] for s in sources],
+        query=args.query, top_k=args.top_k, layer_filter=layer_filter,
+    )
+
+    if args.idx_only:
+        if index_raised:
+            print("sspower-mem: index search raised under --idx-only", file=sys.stderr)
+            return 10
+        _emit_search(index_hits, args.json)
+        return 0
+
+    if index_hits:
+        _emit_search(index_hits, args.json)
+        return 0
+
+    # Index empty or raised → grep fallback.
+    try:
+        grep_hits = grep_search(sources, args.query, top_k=args.top_k, layer_filter=layer_filter)
     except OSError as e:
         print(f"sspower-mem: digest read failed: {e}", file=sys.stderr)
         return 20
-
-    if args.json:
-        print(json.dumps(hits, indent=2))
-    else:
-        for hit in hits:
-            print(
-                f"[{hit['source']} {hit['score']:.3f}] "
-                f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}"
-            )
-            print(_sanitize_for_terminal(hit["content"]))
-            print("---")
+    _emit_search(grep_hits, args.json)
     return 0
+
+
+def _try_index_search(scope_ids, query, top_k, layer_filter):
+    """Run Memory.search per scope, min-max normalize per scope, merge.
+
+    Returns (merged_hits: list[dict], index_raised: bool).
+    """
+    try:
+        import sspower_mem.mem  # noqa: F401
+        from sspower_mem.mem.factory import build_memory
+    except ImportError:
+        return [], True
+
+    idx_dir = user_sspower_dir() / "idx"
+    try:
+        mem = build_memory(
+            scope_id=scope_ids[0], idx_dir=idx_dir,
+            chroma_dir=idx_dir / "chroma",
+            history_db_path=idx_dir / "history.db",
+        )
+    except Exception:
+        return [], True
+
+    all_normalized: list[dict] = []
+    for sid in scope_ids:
+        try:
+            filters = {"user_id": sid}
+            if layer_filter:
+                filters["OR"] = [{"layer": lf} for lf in layer_filter]
+            resp = mem.search(query=query, filters=filters, top_k=top_k, threshold=0.0)
+        except Exception:
+            return [], True
+        scope_hits = resp.get("results", []) or []
+        if not scope_hits:
+            continue
+        scores = [float(h.get("score", 0.0)) for h in scope_hits]
+        smin, smax = min(scores), max(scores)
+        for h in scope_hits:
+            raw = float(h.get("score", 0.0))
+            norm = 1.0 if smin == smax else (raw - smin) / (smax - smin)
+            md = h.get("metadata", {}) or {}
+            kind = md.get("kind", "")
+            corr_id = md.get("raw_id") or md.get("block_id") or h.get("id")
+            all_normalized.append({
+                "id": corr_id,
+                "source": "index",
+                "score": norm,
+                "content": h.get("memory") or h.get("text") or "",
+                "scope": md.get("scope") or sid,
+                "layer": md.get("layer", ""),
+                "ts": md.get("ts", ""),
+                "_kind": kind,
+            })
+
+    all_normalized = _dedupe_index_hits(all_normalized)
+    all_normalized.sort(key=lambda h: (-h["score"], -_ts_key(h["ts"]) if h["ts"] else 0, h["id"] or ""))
+    return all_normalized[:top_k], False
+
+
+def _dedupe_index_hits(hits):
+    """Collapse raw/extracted duplicates: when multiple hits share the same
+    raw_id (or block_id when raw_id absent), keep kind=extracted, drop kind=raw.
+
+    Spec §6.1 read path.
+    """
+    seen: dict[str, dict] = {}
+    for h in hits:
+        key = h.get("id") or ""
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = h
+            continue
+        existing_kind = existing.get("_kind", "")
+        new_kind = h.get("_kind", "")
+        if new_kind == "extracted" and existing_kind != "extracted":
+            seen[key] = h
+    return list(seen.values())
+
+
+def _emit_search(hits, as_json):
+    cleaned = [{k: v for k, v in h.items() if not k.startswith("_")} for h in hits]
+    if as_json:
+        print(json.dumps(cleaned, indent=2))
+        return
+    for hit in cleaned:
+        print(f"[{hit['source']} {hit['score']:.3f}] "
+              f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}")
+        print(_sanitize_for_terminal(hit["content"]))
+        print("---")
+
+
+def _ts_key(ts: str) -> int:
+    import datetime
+    try:
+        return int(datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+                   .replace(tzinfo=datetime.timezone.utc).timestamp())
+    except (ValueError, TypeError):
+        return 0
 
 
 def cmd_digest(args: argparse.Namespace) -> int:

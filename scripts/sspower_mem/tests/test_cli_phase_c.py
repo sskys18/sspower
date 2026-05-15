@@ -148,6 +148,45 @@ def test_add_no_llm_step2_failed_still_rc10(env, capsys, monkeypatch):
     assert payload["extracted"] == "skipped-intentional"
 
 
+def test_search_index_hit_after_add(env, capsys):
+    """Add a block with extracted facts; search by query returns index hits."""
+    from sspower_mem.cli import main
+    _set_bridge_resp(env, _ok_envelope(["alpha apples are fruit"]))
+    main(["add", "--scope", "user", "--layer", "user-global",
+          "--content", "alpha apples are nutritious fruit"])
+    capsys.readouterr()
+    rc = main(["search", "--scope", "user", "--query", "apples", "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out, "expected at least one hit"
+    assert any(h["source"] == "index" for h in out)
+
+
+def test_search_idx_only_empty_returns_empty_rc0(env, capsys):
+    """--idx-only with empty index returns rc=0 and []."""
+    from sspower_mem.cli import main
+    rc = main(["search", "--scope", "user", "--query", "nothing", "--idx-only", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_search_dedups_raw_and_extracted_for_same_block(env, capsys):
+    """Spec §6.1 read path: when raw + extracted hits share correlation key,
+    keep only the extracted hit."""
+    from sspower_mem.cli import main
+    # Add a block whose content AND fact share the word "elephant".
+    _set_bridge_resp(env, _ok_envelope(["elephants live in africa"]))
+    main(["add", "--scope", "user", "--layer", "user-global",
+          "--content", "elephants are large animals living in africa"])
+    capsys.readouterr()
+    rc = main(["search", "--scope", "user", "--query", "elephant", "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    # raw record (block_id=X) + extracted (raw_id=X) → dedup collapses to one.
+    block_ids = [h["id"] for h in out]
+    assert len(block_ids) == len(set(block_ids)), f"duplicate ids in result: {block_ids}"
+
+
 def test_add_mem0_import_failure_keeps_digest_durable(env, capsys, monkeypatch):
     """Spec §6.1/§8 lazy-import policy: broken Mem0 import inside cmd_add
     MUST NOT bypass the digest write. Step 1 completes, Step 2 import fails,
