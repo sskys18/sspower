@@ -198,3 +198,70 @@ def iter_user_global_blocks() -> Iterator[Block]:
                 ),
                 source_path=md,
             )
+
+
+def _iter_all_blocks(cwd: pathlib.Path) -> Iterator[tuple[str, Block]]:
+    """Yield (scope, block) pairs across all three sources."""
+    for blk in iter_session_blocks(cwd):
+        yield "project", blk
+    for blk in iter_doc_blocks(cwd):
+        yield "project", blk
+    for blk in iter_user_global_blocks():
+        yield "user", blk
+
+
+def _plan_entry(scope: str, blk: Block) -> dict:
+    return {
+        "scope": scope,
+        "layer": blk["layer"],
+        "source": str(blk["source_path"]),
+        "content_bytes": len(blk["content"].encode("utf-8")),
+        "preview": blk["content"][:80].replace("\n", " "),
+    }
+
+
+def run_migrate(
+    *,
+    cwd: pathlib.Path,
+    dry_run: bool = False,
+    add_fn=None,
+) -> dict:
+    """Orchestrate migration. Returns a JSON-serializable summary.
+
+    Parameters:
+      cwd       — project root (already canonicalized by caller).
+      dry_run   — when True, no state writes; returns plan only.
+      add_fn    — injection seam for tests; default uses real cmd_add.
+                  Signature: add_fn(scope, layer, content, meta, cwd) -> (rc, eff_id, was_new)
+                  Returns rc=0/10 on success-paths; rc=20/30 on hard failure.
+    """
+    totals = {
+        "project_episodic": 0,
+        "project_decision": 0,
+        "project_gotcha": 0,
+        "user_global": 0,
+    }
+    sources: list[dict] = []
+    results: list[dict] = []
+
+    for scope, blk in _iter_all_blocks(cwd):
+        # Normalize bucket name: user-global block uses "user_global" bucket.
+        bucket = "user_global" if blk["layer"] == "user-global" else f"project_{blk['layer']}"
+        totals[bucket] = totals.get(bucket, 0) + 1
+        sources.append(_plan_entry(scope, blk))
+        if dry_run:
+            continue
+        if add_fn is None:  # pragma: no cover — defensive; real callers always supply
+            raise RuntimeError("add_fn required when dry_run=False")
+        rc, eff_id, was_new = add_fn(scope, blk["layer"], blk["content"], blk["meta"], cwd)
+        results.append({
+            "source": str(blk["source_path"]),
+            "scope": scope, "layer": blk["layer"],
+            "rc": rc, "block_id": eff_id, "new": was_new,
+        })
+
+    out = {"totals": totals, "sources": sources}
+    if not dry_run:
+        out["results"] = results
+        out["rc"] = max((r["rc"] for r in results), default=0)
+    return out

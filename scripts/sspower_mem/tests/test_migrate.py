@@ -267,3 +267,51 @@ def test_iter_user_global_blocks_multiple_projects(tmp_path, monkeypatch):
     blocks = list(iter_user_global_blocks())
     contents = sorted(b["content"] for b in blocks)
     assert contents == ["Note from project_a\n", "Note from project_b\n"]
+
+
+def test_run_migrate_dry_run_returns_plan(tmp_path, monkeypatch):
+    from sspower_mem.migrate import run_migrate
+
+    cwd = tmp_path / "repo"
+    sessions = cwd / ".claude" / "wiki" / "sessions"
+    _make_session_pair(sessions, "260427_18-57_SessionEnd", with_json=True)
+    (cwd / ".claude" / "wiki" / "decisions.md").write_text(
+        "## D1\nbody\n", encoding="utf-8"
+    )
+    (cwd / ".claude" / "wiki" / "gotchas.md").write_text(
+        "# Gotchas\n", encoding="utf-8"  # stub — no blocks
+    )
+
+    fake_home = tmp_path / "home"
+    proj = fake_home / ".claude" / "projects" / "px" / "memory"
+    proj.mkdir(parents=True)
+    (proj / "MEMORY.md").write_text("idx\n", encoding="utf-8")
+    (proj / "note.md").write_text("hello\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    plan = run_migrate(cwd=cwd, dry_run=True)
+    assert plan["totals"] == {
+        "project_episodic": 1,
+        "project_decision": 1,
+        "project_gotcha": 0,
+        "user_global": 1,
+    }
+    # No writes anywhere
+    assert not (cwd / ".claude" / "wiki" / "digest.md").exists()
+    assert not (fake_home / ".claude" / "sspower").exists()
+    assert "sources" in plan and len(plan["sources"]) == 3  # 3 source-blocks reported
+
+
+def test_run_migrate_dry_run_handles_empty_repo(tmp_path, monkeypatch):
+    from sspower_mem.migrate import run_migrate
+
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    plan = run_migrate(cwd=cwd, dry_run=True)
+    assert plan["totals"] == {
+        "project_episodic": 0,
+        "project_decision": 0,
+        "project_gotcha": 0,
+        "user_global": 0,
+    }
