@@ -66,3 +66,51 @@ def test_cli_migrate_dry_run_no_bootstrap_required(monkeypatch, tmp_path):
     sspower_dir = tmp_path / "home" / ".claude" / "sspower"
     # bootstrap NOT required for dry-run; sspower dir should not exist.
     assert not sspower_dir.exists()
+
+
+def test_cli_migrate_live_first_run_writes_blocks(monkeypatch, tmp_path):
+    cwd = _seed_repo(tmp_path)
+    # Bootstrap (creates lock + chroma + history.db).
+    rc, _, err = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0, f"bootstrap stderr={err!r}"
+
+    # First migrate.
+    rc, out, err = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc in (0, 10), f"rc={rc} stderr={err!r}"
+    # Final JSON is the run_migrate summary.
+    lines = [ln for ln in out.splitlines() if ln.strip().startswith("{")]
+    summary = json.loads(lines[-1])
+    assert summary["totals"]["project_episodic"] == 1
+    assert summary["totals"]["project_decision"] == 2
+    # Every result was new on first run.
+    assert all(r["new"] for r in summary["results"])
+
+    # Project digest now exists with 3 blocks (1 episodic + 2 decision).
+    pdigest = cwd / ".claude" / "wiki" / "digest.md"
+    assert pdigest.exists()
+    text = pdigest.read_text(encoding="utf-8")
+    assert text.count("\n## ") >= 3  # at least 3 block headers
+
+
+def test_cli_migrate_idempotent_second_run_no_writes(monkeypatch, tmp_path):
+    cwd = _seed_repo(tmp_path)
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    # First migrate.
+    rc1, out1, _ = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc1 in (0, 10)
+    pdigest = cwd / ".claude" / "wiki" / "digest.md"
+    bytes1 = pdigest.read_bytes()
+
+    # Second migrate — should yield identical digest (every block was_new=False).
+    rc2, out2, _ = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc2 in (0, 10)
+    bytes2 = pdigest.read_bytes()
+    assert bytes1 == bytes2, "digest.md mutated on second migrate — not idempotent"
+
+    lines = [ln for ln in out2.splitlines() if ln.strip().startswith("{")]
+    summary2 = json.loads(lines[-1])
+    assert all(not r["new"] for r in summary2["results"]), (
+        "Some blocks reported new=True on second run — dedup broken"
+    )
