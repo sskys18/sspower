@@ -25,6 +25,7 @@ from sspower_mem.digest import (
 from sspower_mem.doctor import bootstrap, health
 from sspower_mem.io import _assert_regular_private_file, safe_read_strict
 from sspower_mem.lock import acquire_lock
+from sspower_mem.migrate import run_migrate
 from sspower_mem.scope import (
     canonicalize_cwd,
     digest_path,
@@ -548,7 +549,7 @@ def _do_rebuild_chroma(*, scope_id_str, dpath, panchor, allowed_layers,
     if reextract is None:
         _clear_collection_via(mem)
     elif reextract == "all":
-        _clear_extracted_only_via(mem)
+        _clear_extracted_only_via(mem, scope_id_str)
     elif reextract_target is not None:
         _clear_extracted_for_raw_via(mem, reextract_target)
 
@@ -629,14 +630,23 @@ def _clear_collection_via(mem):
         pass
 
 
-def _clear_extracted_only_via(mem):
-    """Delete only kind=extracted records via collection.get() (full enumeration)."""
+def _clear_extracted_only_via(mem, scope_id_str: str):
+    """Delete kind=extracted records for the given scope only.
+
+    Phase D bug fix: the unscoped variant wiped extracted facts for ALL scopes,
+    so re-extracting one scope dropped the other scope's facts on the floor.
+    All `kind=extracted` records carry a `scope` metadata field (written by
+    cmd_add Step 3b and rebuild path), so an exact-match filter is sufficient.
+    """
     client = mem.vector_store.client
     try:
         coll = client.get_collection("sspower_memories")
     except Exception:
         return
-    rows = coll.get(where={"kind": "extracted"}, limit=None)
+    rows = coll.get(
+        where={"$and": [{"kind": "extracted"}, {"scope": scope_id_str}]},
+        limit=None,
+    )
     ids = rows.get("ids", [])
     if ids:
         coll.delete(ids=ids)
@@ -664,6 +674,87 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     result = health()
     print(json.dumps(result))
     return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Phase D — one-shot migration of legacy wiki + user-global memory.
+
+    Routes each enumerated block through cmd_add (same lock, same dedup,
+    same Step 2/3a/3b pipeline). --dry-run skips all writes.
+    --reextract delegates to cmd_digest --rebuild-chroma --reextract all
+    after the migrate add-pass completes.
+    """
+    try:
+        cwd = canonicalize_cwd(args.cwd) if args.cwd else canonicalize_cwd(os.getcwd())
+    except FileNotFoundError as e:
+        print(f"sspower-mem: {e}", file=sys.stderr)
+        return 20
+
+    if args.dry_run:
+        plan = run_migrate(cwd=cwd, dry_run=True)
+        print(json.dumps(plan))
+        return 0
+
+    # Fail-fast: live migrate requires the bootstrap lock to exist. Without
+    # this check, every per-block cmd_add call would emit its own rc=30
+    # stderr line — spammy and slow on real-world inputs (~50+ blocks).
+    lock_path = user_sspower_dir() / "idx" / ".lock"
+    if not lock_path.exists():
+        print(
+            f"sspower-mem: lock missing at {lock_path}; run `sspower-mem doctor --bootstrap`",
+            file=sys.stderr,
+        )
+        return 30
+
+    # Live path: route each block through cmd_add.
+    def _add_fn(scope_name: str, layer: str, content: str, meta: dict, cwd_path):
+        add_args = argparse.Namespace(
+            scope=scope_name,
+            layer=layer,
+            content=content,
+            content_file=None,
+            cwd=str(cwd_path) if scope_name == "project" else None,
+            meta=[f"{k}={v}" for k, v in meta.items()],
+            no_llm=args.no_llm,
+        )
+        # Capture printed JSON so we can return (rc, eff_id, was_new).
+        # Re-use cmd_add directly; it prints one JSON line on success.
+        import io as _io
+        buf = _io.StringIO()
+        real_stdout = sys.stdout
+        sys.stdout = buf
+        try:
+            rc = cmd_add(add_args)
+        finally:
+            sys.stdout = real_stdout
+        line = buf.getvalue().strip()
+        if not line:
+            return rc, "", False
+        try:
+            payload = json.loads(line)
+            return rc, payload.get("id", ""), bool(payload.get("new", False))
+        except json.JSONDecodeError:
+            return rc, "", False
+
+    summary = run_migrate(cwd=cwd, dry_run=False, add_fn=_add_fn)
+    overall_rc = summary.get("rc", 0)
+
+    if args.reextract:
+        # Delegate to cmd_digest --rebuild-chroma --reextract all per scope.
+        for scope_name in ("project", "user"):
+            rextract_args = argparse.Namespace(
+                scope=scope_name,
+                cwd=str(cwd) if scope_name == "project" else None,
+                rebuild_chroma=True,
+                reextract="all",
+                no_llm=False,
+            )
+            r_rc = cmd_digest(rextract_args)
+            if r_rc != 0:
+                overall_rc = max(overall_rc, r_rc)
+
+    print(json.dumps(summary))
+    return overall_rc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -723,6 +814,25 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Health + bootstrap")
     doctor.add_argument("--bootstrap", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
+
+    migrate = sub.add_parser("migrate", help="Phase D one-shot migration of legacy wiki + user-global memory")
+    migrate.add_argument(
+        "--cwd",
+        help="Project root for project-scope inputs. Defaults to os.getcwd().",
+    )
+    migrate.add_argument(
+        "--dry-run", action="store_true",
+        help="Enumerate inputs and print plan; no writes.",
+    )
+    migrate.add_argument(
+        "--reextract", action="store_true",
+        help="After migrate, run cmd_digest --rebuild-chroma --reextract all per scope.",
+    )
+    migrate.add_argument(
+        "--no-llm", action="store_true",
+        help="Pass --no-llm to every cmd_add call; skip Step 3a/3b extraction.",
+    )
+    migrate.set_defaults(func=cmd_migrate)
 
     return parser
 

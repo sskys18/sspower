@@ -1,7 +1,7 @@
 [project]
 name = "sspower-mem"
-version = "0.2.0"
-description = "sspower memory backend: digest source-of-truth + Mem0 semantic index (Phase C)"
+version = "0.3.0"
+description = "sspower memory backend: digest source-of-truth + Mem0 semantic index (Phase D)"
 requires-python = ">=3.11"
 dependencies = [
     # Mem0 OSS pinned to Phase 0 verification SHA via [tool.uv.sources] below.
