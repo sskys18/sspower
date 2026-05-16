@@ -44,7 +44,7 @@ const COMMAND_EFFORT = {
   "spec-review": "high",
   rescue: "high",        // targeted fix
   resume: "high",        // session continuation
-  implement: "xhigh",    // keep deep for code generation
+  implement: "high",     // user pref — high enough, avoid xhigh stalls
   complete: "minimal",   // single-turn extractor — no deliberation
 };
 const ENRICH_EFFORT = "minimal";  // back-compat alias

@@ -153,7 +153,7 @@ When the round counter hits 3 without converging, the hook emits a deny pointing
 
 Direct integration with the Codex CLI (`@openai/codex`). Skills, agents, and the auto-review hook all dispatch through this bridge — no separate Claude Code plugin involved.
 
-Defaults: `gpt-5.5` model, `xhigh` reasoning effort. Override per-call with `--model` / `--effort`.
+Defaults: `gpt-5.5` model, `high` reasoning effort (subcommands `review` / `spec-review` / `rescue` / `resume` / `implement` all pinned `high` — `xhigh` caused stalls; see `scripts/codex-bridge.mjs:38-47`). Override per-call with `--model` / `--effort`. `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
 
 ### Subcommands
 
