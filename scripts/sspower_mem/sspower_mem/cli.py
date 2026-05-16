@@ -549,7 +549,7 @@ def _do_rebuild_chroma(*, scope_id_str, dpath, panchor, allowed_layers,
     if reextract is None:
         _clear_collection_via(mem)
     elif reextract == "all":
-        _clear_extracted_only_via(mem)
+        _clear_extracted_only_via(mem, scope_id_str)
     elif reextract_target is not None:
         _clear_extracted_for_raw_via(mem, reextract_target)
 
@@ -630,14 +630,23 @@ def _clear_collection_via(mem):
         pass
 
 
-def _clear_extracted_only_via(mem):
-    """Delete only kind=extracted records via collection.get() (full enumeration)."""
+def _clear_extracted_only_via(mem, scope_id_str: str):
+    """Delete kind=extracted records for the given scope only.
+
+    Phase D bug fix: the unscoped variant wiped extracted facts for ALL scopes,
+    so re-extracting one scope dropped the other scope's facts on the floor.
+    All `kind=extracted` records carry a `scope` metadata field (written by
+    cmd_add Step 3b and rebuild path), so an exact-match filter is sufficient.
+    """
     client = mem.vector_store.client
     try:
         coll = client.get_collection("sspower_memories")
     except Exception:
         return
-    rows = coll.get(where={"kind": "extracted"}, limit=None)
+    rows = coll.get(
+        where={"$and": [{"kind": "extracted"}, {"scope": scope_id_str}]},
+        limit=None,
+    )
     ids = rows.get("ids", [])
     if ids:
         coll.delete(ids=ids)
@@ -685,6 +694,17 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         plan = run_migrate(cwd=cwd, dry_run=True)
         print(json.dumps(plan))
         return 0
+
+    # Fail-fast: live migrate requires the bootstrap lock to exist. Without
+    # this check, every per-block cmd_add call would emit its own rc=30
+    # stderr line — spammy and slow on real-world inputs (~50+ blocks).
+    lock_path = user_sspower_dir() / "idx" / ".lock"
+    if not lock_path.exists():
+        print(
+            f"sspower-mem: lock missing at {lock_path}; run `sspower-mem doctor --bootstrap`",
+            file=sys.stderr,
+        )
+        return 30
 
     # Live path: route each block through cmd_add.
     def _add_fn(scope_name: str, layer: str, content: str, meta: dict, cwd_path):

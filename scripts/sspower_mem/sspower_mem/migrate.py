@@ -103,7 +103,8 @@ def iter_session_blocks(cwd: pathlib.Path) -> Iterator[Block]:
         )
 
 
-_H2_LINE_RE = re.compile(r"^## [^#]", re.MULTILINE)
+_H2_LINE_RE = re.compile(r"^## \S", re.MULTILINE)
+_H2_PREFIX_RE = re.compile(r"^## \S")
 _HR_LINE_RE = re.compile(r"^---$", re.MULTILINE)
 
 
@@ -126,7 +127,10 @@ def _split_blocks(text: str) -> Iterator[str]:
         cur: list[str] = []
         in_block = False
         for ln in lines:
-            if ln.startswith("## ") and not ln.startswith("###"):
+            # `## \S` — H2 heading with at least one non-whitespace char after
+            # the space. Skips H3+ (`### `) AND empty `## ` lines (which would
+            # otherwise yield a junk one-line block of just the heading).
+            if _H2_PREFIX_RE.match(ln):
                 if in_block and cur:
                     yield "\n".join(cur).rstrip()
                 cur = [ln]
@@ -201,7 +205,13 @@ def iter_user_global_blocks() -> Iterator[Block]:
 
 
 def _iter_all_blocks(cwd: pathlib.Path) -> Iterator[tuple[str, Block]]:
-    """Yield (scope, block) pairs across all three sources."""
+    """Yield (scope, block) pairs across all three sources.
+
+    Order invariant: sessions → decisions → gotchas → user-global. Each
+    source uses sorted(glob) so the within-source order is deterministic.
+    Total order affects digest line order and therefore byte-identity for
+    the idempotency contract — do not reorder casually.
+    """
     for blk in iter_session_blocks(cwd):
         yield "project", blk
     for blk in iter_doc_blocks(cwd):

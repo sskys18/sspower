@@ -1517,6 +1517,30 @@ If before 2026-05-19 11:27 KST: stop here, document the date in handoff, do NOT 
 
 ---
 
+## Post-implementation amendments (recorded after PR #5 review round 1)
+
+### Task 10 reframe — "top-5 idx recall" → "round-trip via `--mode recent`"
+
+The plan as-written asked Task 10 to assert top-5 idx recall ≥ 9/10 over 10 sampled blocks. Empirical observation during execution: Model2Vec embeddings of synthetic noise tokens (hyphenated alphanumerics) cluster too tightly to discriminate, so the assertion fails 0/10–3/10 even when migration is perfectly correct. Embedder ranking quality is a Phase C concern, not Phase D's contract.
+
+**Phase D's actual contract** (spec §7.2 "idempotent" + §9 Phase D bullet 3 "sample-compare 10 random blocks vs the index's search results") is **migration fidelity** — every legacy block must be recoverable from the migrated state. The reframed test asserts this via `search --mode recent --top-k 20 --json` (deterministic enumeration, no ranking) and additionally smoke-tests `--query` (rc=0 only, no recall assertion).
+
+Do NOT restore the strict-recall variant in future Phase D-style migrators. If recall accuracy needs verification, do it as a separate Phase C eval against a curated real-content fixture, not against synthetic noise tokens.
+
+### Critical bug found in Phase C, fixed in Phase D PR
+
+`_clear_extracted_only_via` (cli.py) wiped `kind=extracted` rows across ALL scopes regardless of which scope's rebuild was running. The Phase D `cmd_migrate --reextract` loop iterates `project` then `user`, so the second iteration silently wiped the first iteration's just-written facts. Fix: scope the chromadb `where` clause to the current `scope_id_str`. Regression test queries Chroma directly post-rebuild and asserts both-scope presence (rebuild-summary counts alone don't catch this — each iter reports its own write count, not survival count).
+
+### Lock fail-fast in `cmd_migrate`
+
+Without prior `doctor --bootstrap`, every per-block `cmd_add` call would emit rc=30 stderr — spammy and slow on real-world inputs. `cmd_migrate` now short-circuits with rc=30 + bootstrap hint before the live path begins.
+
+### `_split_blocks` H2 detection tightened
+
+Regex `^## [^#]` accepted literal `## ` (empty heading) as a block header → yielded one-line junk blocks. Tightened to `^## \S` (non-whitespace required). Regression tests added.
+
+---
+
 ## Self-review checklist (the plan author ran these before declaring "plan done")
 
 1. **Spec coverage:** §7.2 + §9 Phase D bullets each map to ≥ 1 task → Tasks 2,3,4,7,9,10 cover sources + dedup + reextract + acceptance. ✔

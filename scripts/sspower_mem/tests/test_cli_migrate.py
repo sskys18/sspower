@@ -49,6 +49,20 @@ def _seed_repo(tmp_path: pathlib.Path) -> pathlib.Path:
     return cwd
 
 
+def test_cli_migrate_live_without_bootstrap_fails_fast(monkeypatch, tmp_path):
+    """Live migrate without doctor --bootstrap must return rc=30 with hint,
+    NOT iterate every block emitting rc=30 stderr per call."""
+    cwd = _seed_repo(tmp_path)
+    rc, out, err = _run(monkeypatch, tmp_path, "migrate", "--cwd", str(cwd))
+    assert rc == 30
+    assert "lock missing" in err
+    assert "bootstrap" in err
+    # No partial state written.
+    assert not (cwd / ".claude" / "wiki" / "digest.md").exists()
+    # Single error line, not one per block.
+    assert err.count("lock missing") == 1
+
+
 def test_cli_migrate_dry_run_no_bootstrap_required(monkeypatch, tmp_path):
     """Dry-run does NOT touch lock or digest — works without doctor --bootstrap."""
     cwd = _seed_repo(tmp_path)
@@ -151,6 +165,70 @@ _FACTS_ENVELOPE = (
     '"message":{"role":"assistant","content":"{\\"facts\\":[\\"fact-A\\"]}"}}],'
     '"usage":{"prompt_tokens":0,"completion_tokens":0,"total_tokens":0}}'
 )
+
+
+def test_cli_migrate_reextract_preserves_other_scope(monkeypatch, tmp_path):
+    """Regression: cmd_digest --rebuild-chroma --reextract all must clear
+    extracted facts for the CURRENT scope only. Prior implementation wiped
+    every kind=extracted row, so iterating project→user reextract dropped
+    project's extracted facts.
+
+    Seed both scopes; run migrate --reextract; assert each scope retains
+    its own extracted facts.
+    """
+    # Seed project sessions.
+    cwd = _seed_repo(tmp_path)
+    # Seed user-global memory.
+    fake_home = tmp_path / "home"
+    proj = fake_home / ".claude" / "projects" / "px" / "memory"
+    proj.mkdir(parents=True)
+    (proj / "MEMORY.md").write_text("idx\n", encoding="utf-8")
+    (proj / "feedback_a.md").write_text(
+        "---\ntype: feedback\n---\nUser preference body text.\n", encoding="utf-8"
+    )
+
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+
+    # Live migrate with facts-returning bridge — both scopes ingest facts.
+    monkeypatch.setenv("SSPOWER_FAKE_BRIDGE_RESPONSE", _FACTS_ENVELOPE)
+    rc, out, err = _run(
+        monkeypatch, tmp_path, "migrate", "--cwd", str(cwd), "--reextract"
+    )
+    assert rc in (0, 10), f"rc={rc} stderr={err!r}"
+
+    # Inspect rebuild lines — sanity that both scopes ran.
+    rebuilds = [
+        json.loads(ln) for ln in out.splitlines()
+        if ln.strip().startswith("{") and '"rebuilt":' in ln
+    ]
+    assert len(rebuilds) == 2, f"expected 2 rebuilds, got {len(rebuilds)}: {out!r}"
+
+    # Strong assertion: query the LIVE Chroma collection post-rebuild and
+    # confirm extracted records exist for BOTH scopes. The bug we're guarding
+    # against is silent in the rebuild summaries (each iter's count reflects
+    # what THAT iter wrote, not what survives after the next iter wipes it).
+    chroma_dir = fake_home / ".claude" / "sspower" / "idx" / "chroma"
+    assert chroma_dir.exists()
+    # Use chromadb directly via the sspower_mem package's import.
+    import chromadb
+    client = chromadb.PersistentClient(path=str(chroma_dir))
+    coll = client.get_collection("sspower_memories")
+    project_extracted = coll.get(
+        where={"$and": [{"kind": "extracted"}, {"scope": {"$ne": "user:global"}}]},
+        limit=None,
+    )
+    user_extracted = coll.get(
+        where={"$and": [{"kind": "extracted"}, {"scope": "user:global"}]},
+        limit=None,
+    )
+    assert len(project_extracted.get("ids", [])) >= 1, (
+        "project-scope extracted facts wiped by user-scope reextract — "
+        "cross-scope wipe regression"
+    )
+    assert len(user_extracted.get("ids", [])) >= 1, (
+        "user-scope extracted facts missing — reextract did not run for user"
+    )
 
 
 def test_cli_migrate_reextract_after_failed_bridge(monkeypatch, tmp_path):

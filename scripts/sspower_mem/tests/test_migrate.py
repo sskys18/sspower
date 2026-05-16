@@ -174,6 +174,26 @@ def test_split_empty_file(tmp_path):
     assert list(_split_blocks("")) == []
 
 
+def test_split_h2_skips_empty_headings(tmp_path):
+    """`## ` with no heading text (trailing space only) must NOT yield a
+    junk one-line block. Regex `^## \\S` enforces a non-whitespace char."""
+    from sspower_mem.migrate import _split_blocks
+
+    # `## ` is empty heading; `## Real` is valid.
+    text = "## \nignored body\n## Real\nreal body\n"
+    blocks = list(_split_blocks(text))
+    assert blocks == ["## Real\nreal body"]
+
+
+def test_split_h3_ignored(tmp_path):
+    """H3 (`### `) must not be treated as a block separator."""
+    from sspower_mem.migrate import _split_blocks
+
+    text = "## Top\nbody\n### Sub-section\nstill same block\n"
+    blocks = list(_split_blocks(text))
+    assert blocks == ["## Top\nbody\n### Sub-section\nstill same block"]
+
+
 def test_iter_doc_blocks_decisions_and_gotchas(tmp_path):
     from sspower_mem.migrate import iter_doc_blocks
 
