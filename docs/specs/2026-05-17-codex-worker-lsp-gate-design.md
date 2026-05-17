@@ -1,12 +1,23 @@
 # Codex-Worker LSP Quality Gate + Codex Tier/Review Consolidation — Design Spec
 
-> Status: **DRAFT v3** (2026-05-17). Codex spec-review iter 1 (11) + iter 2 (7) applied. **Codex 2-iteration cap reached** (converging: structural→precision). Awaiting user review gate.
+> Status: **DRAFT v4** (2026-05-17). Codex spec-review iter 1 (11) + iter 2 (7) + iter 3 (8, user-requested) applied. **PLATEAU CONFIRMED** — issue count oscillates 7–11/pass (not trending to zero); matches the documented 2026-05-13 precedent (8 passes, never "approve"). Large-surface spec; Codex will keep finding precision nits. **Recommended: stop Codex loop, user-gate the well-specified P0+P1 slice.** Awaiting user decision.
 > Author: Claude (Opus 4.7), 2026-05-17.
 > Supersedes: the "**Semble is out of scope** (user decision 2026-05-13)" note in `docs/specs/2026-05-13-index-backend-integration-design.md`. That decision is **reversed**: `johunsang/semble_rs` was validated on a real repo this session (see §2) and is now in scope as Track B.
 > HARD-GATE: no implementation until this spec is user-approved. Phased delivery; each phase ships independently.
 > **First implementation plan scope: P0 + P1 only** (Cleanup C1–C3/C10 + Track A). P2–P6 (Track B, remaining cleanup) are design intent here but **PROVISIONAL** — re-planned after P1 ships and the spike tools prove out in real use. Mirrors the decomposition precedent in `2026-05-13-index-backend-integration-design.md`.
 
 ## 0. Change log
+
+### v3 → v4 (Codex spec-review iter 3, user-requested: needs-attention, 5 blocking + 3 advisory — addressed; PLATEAU)
+
+1. **Precedence rule fixed** — was self-contradictory ("profile > effort" vs "emit `-c` when effort explicit"). Final rule: **`--profile` supplies field defaults; explicit `--model`/`--effort` override individual fields within that profile** (Codex CLI: explicit `-c` overrides profile). §4.2.
+2. **`--effort` key** — must emit `-c model_reasoning_effort="..."` (NOT `reasoning.effort=` which bridge.mjs:370 currently uses against the wrong key). P1 changes the emitted key. §4.2 + §12 row 6.
+3. **NEW live caller (Codex iter3 #3, missed by iter1/2):** `hooks/prompt-submit:126` calls `enrich`; if disabled-enrich exits 0 with a notice, prompt-submit:140 injects that notice **as the enriched prompt**. §12: disable the enrich call in `hooks/prompt-submit`; disabled `enrich` must echo the **raw prompt verbatim** to stdout, notice to stderr only. D-A2 amended.
+4. **Security allowlist concrete** — no `~`, no `<placeholder>`. Exact expanded absolute paths in §4.4.
+5. **codex-lsp discovery (P3)** — codex-lsp NOT on PATH (cloned to /tmp during spike). P3 must define a vendored/install path + discovery contract. §5.7a.
+6. **P3 wording** — "converges or emits `would-block`; `BLOCKED` only when blocking env enabled". §9.
+7. **Per-command MCP required/optional** — via **bridge-generated `.codex/config.toml`** (resume has no `--profile`; can't be profile-scoped). §5 B1.
+8. (advisory) Track A model confirmed coherent by Codex; only the bridge default-`-m`/`-c` removal (#1/§12 r6) is load-bearing.
 
 ### v2 → v3 (Codex spec-review iter 2: needs-attention, 6 blocking + 1 advisory — all addressed; Codex cap reached)
 
@@ -129,7 +140,11 @@ Rationale: `fast` (priority, burns rate-limit pool) reserved for **rare-but-crit
 
 ### 4.2 Bridge profile routing (`codex-bridge.mjs`)
 
-Add a `--profile` passthrough + default `COMMAND_PROFILE` map: `implement/review/spec-review → normal`; `complete → quick`. **`--effort` parser support is PRESERVED** (not removed) as a compat/override flag — `auto-review.sh:377/385/402` and docs/skills still pass `--effort`; removing it breaks live callers. Precedence: explicit `--profile` > explicit `--effort`/`-c` > `COMMAND_PROFILE` default > config.toml.
+Add a `--profile` passthrough + default `COMMAND_PROFILE` map: `implement/review/spec-review → normal`; `complete → quick`. **`--effort` parser support is PRESERVED** (not removed) as a compat/override flag — `auto-review.sh:377/385/402` and docs/skills still pass `--effort`; removing it breaks live callers.
+
+**Precedence (single rule, Codex iter3 #1):** `--profile` (explicit or `COMMAND_PROFILE` default) supplies the field defaults via `-p`. Explicit `--model`/`--effort` then **override individual fields within that profile** by additionally emitting `-m`/`-c`. They do not "beat" the profile — they patch fields of it (Codex CLI: an explicit `-c` overrides the profile's value for that key only). No `--model`/`--effort` ⇒ profile fields used as-is, nothing emitted.
+
+**`--effort` emits the correct key (Codex iter3 #2):** when `--effort X` is explicit, emit `-c model_reasoning_effort="X"` — NOT `-c reasoning.effort=` (the key bridge.mjs:370 currently uses, which does not match the profile/config key `model_reasoning_effort` and silently no-ops at profile level).
 
 **Critical bridge-semantics change (Codex iter2 #1):** today `cmdImplement/cmdReview/cmdSpecReview/cmdComplete` unconditionally pass `resolveModel(opts.model)` (returns default `gpt-5.5`) and a resolved-effort `-c reasoning.effort=` (bridge.mjs:1033/1235/1288/1302). That **overrides any profile**. P1 must change these to: pass `-p <COMMAND_PROFILE|--profile>` by default, and emit `-m`/`-c reasoning.effort=` **only when the user explicitly supplied** `--model`/`--effort` (track "user-supplied" vs "defaulted" in arg parsing). Otherwise the profile is dead on arrival.
 
@@ -151,7 +166,9 @@ Replace the effort `case` with a profile `case`:
 
 - **Exact behavior (Codex iter2 #2):** MAIN review runs **always**. SECURITY runs **additionally** iff branch is strict (`main|master|prod|release/*`) OR repo path matches `SSPOWER_SECURITY_REPOS`. SANITY default on → **off** (manual only). Otherwise: MAIN only.
 - Codex calls per clean push: **1 normally, 2 on strict/high-risk** (MAIN + SECURITY). Down from 3.
-- `SSPOWER_SECURITY_REPOS` (Codex iter2 #3): colon-separated absolute path-prefix list; a repo is high-risk if its `git rev-parse --show-toplevel` starts with any entry. Default seeded by P1 to: `~/blockwavelabs/custody-dashboard-solution:~/blockwavelabs/danal/pay-chain:~/blockwavelabs/infinite-block/security:<stablecoin repos>`. Installed as a default in `auto-review.sh` (overridable by exporting the env). `SSPOWER_SECURITY_REVIEW=on/off` still forces per-invocation.
+- `SSPOWER_SECURITY_REPOS` (Codex iter2 #3 / iter3 #4): colon-separated **fully-expanded absolute** path-prefix list (NO `~`, NO placeholders — string-prefix-matched against `git rev-parse --show-toplevel`). P1-seeded default in `auto-review.sh`:
+  `/Users/sskys/blockwavelabs/custody-dashboard-solution:/Users/sskys/blockwavelabs/danal/pay-chain:/Users/sskys/blockwavelabs/danal/danalstable-frontend:/Users/sskys/blockwavelabs/danal/danalstablecoin-backend:/Users/sskys/blockwavelabs/infinite-block/security`
+  Overridable by exporting the env. `SSPOWER_SECURITY_REVIEW=on/off` still forces per-invocation.
 - `auto-spec-gate.sh` (D-A5 explicit contract): **remove its entry from `hooks/hooks.json` `PreToolUse:Bash`** (it currently sits at hooks.json:54, commit-driven). Its review logic is repackaged as a callable: `brainstorming/SKILL.md` (after-design step) and `writing-plans/SKILL.md` invoke `codex-bridge.mjs spec-review --cd . --prompt @<plan>` directly at their HARD-GATE. Net: plan/spec review fires **once, inside the planning workflow**, not on every `docs/plans/*` commit. `writing-plans/SKILL.md:56-79` updated to call spec-review explicitly. The standalone `auto-spec-gate.sh` script is retained (for manual `SSPOWER_SPEC_GATE=on` use) but unwired by default.
 
 ### 4.5 Cache
@@ -164,7 +181,8 @@ Verdict cache TTL `600s → 3600s`. Cross-checkpoint diff-hash unification **dro
 
 - Create `~/.codex/lsp-client.json` (typescript/python/rust/go/c_cpp → existing servers on PATH).
 - Register `lsp` MCP in `.codex/config.toml` for the bridge's project root with explicit `env.PATH`/`HOME` (Codex subprocess PATH ≠ Claude PATH).
-- `mcp_servers.lsp.required = true` for implement/resume; optional for review/enrich.
+- **MCP required/optional is bridge-generated, not profile-scoped (Codex iter3 #7):** `resume` has no `--profile`, so required/optional cannot ride profiles. The bridge writes a per-run `.codex/config.toml` fragment setting `mcp_servers.lsp.required = true` for `implement`/`resume` runs and `false`/absent for `review`. One generated config per run, torn down after.
+- **codex-lsp discovery (Codex iter3 #5):** codex-lsp is NOT on PATH (spike cloned to `/tmp`). P3 vendors it at `sspower/tools/codex-lsp/` (committed `dist/cli.js`) or resolves `SSPOWER_CODEX_LSP_CLI` env → explicit path. Bridge/hook fail-open (skip, log) if unresolved. No reliance on PATH.
 - Smoke: `codex exec --sandbox read-only --json "Call lsp.status…"`.
 
 ### Phase B2 — Codex internal self-repair
@@ -275,7 +293,7 @@ Ship alongside Track A (low-risk, high-leverage):
 ## 8. Locked decisions
 
 - **D-A1** All codex tier/effort via `~/.codex/config.toml` profiles. `deep=fast, normal=flex, quick=fast, root=flex`.
-- **D-A2** `enrich` disabled.
+- **D-A2** `enrich` disabled. Disabled `enrich` echoes the **raw prompt verbatim to stdout** (notice → stderr only) so the live `hooks/prompt-submit:126` caller injects the unmodified prompt, not a notice (Codex iter3 #3). `hooks/prompt-submit` enrich call removed in P1.
 - **D-A3** `rescue` subcommand disabled **only after §12 caller migration completes** (last P1 step). `resume` retained (Track B + steer). Callers move to `spec-review` (plan/design review) or `review` (code review) — both already exist.
 - **D-A4** Auto push gate = MAIN review only; sanity off-auto. **Security: hybrid** — auto-ON when repo path matches `SSPOWER_SECURITY_REPOS` (configured high-risk: custody/stablecoin/pay-chain/security paths) OR branch is strict (`main|master|prod|release/*`); manual elsewhere. Review ladder normal→normal→deep, strict→deep. Cache TTL 3600s. Cross-checkpoint dedupe dropped.
 - **D-A6** `--effort` parser support preserved as compat/override; `--profile` added alongside. Precedence: `--profile` > `--effort`/`-c` > `COMMAND_PROFILE` default > config.toml. `resume` has no `--profile` (verified) → root config governs it.
@@ -296,7 +314,7 @@ Ship alongside Track A (low-risk, high-leverage):
 | **P0** | Cleanup C1–C3, C10 | version consistent; orphan gone; canonical bridge documented | first commit |
 | **P1** | Track A (§4) + §12 caller migration | no-flag run spawns `-p <profile>` + no default `-m`/`-c`; `--effort` still parses; clean push = **1 call (2 on strict/high-risk)**; ladder in `sspower-codex.log`; rescue callers migrated then rescue disabled (last) | Track A |
 | **P2** | B1+B2 | `lsp.status` smoke passes; Codex self-repairs a seeded TS error (advisory) | Track B start |
-| **P3** | B3+B4 | bridge `_lsp` correctly **reports would-block (advisory)** for a Codex run that leaves a TS error; repair loop converges ≤2 rounds or BLOCKs per §5.7b. Blocking only when mode env explicitly flipped (D-B6) | core gate |
+| **P3** | B3+B4 | bridge `_lsp.decision` reports `would-block` (advisory) for a Codex run leaving a TS error; repair loop converges (≤2 rounds, `decision=clean`) **or emits `would-block`**; emits `BLOCKED` **only when blocking env enabled** (D-B6) | core gate |
 | **P4** | B5+B6 | Stop gate blocks on remaining errors; rules forbid `git commit` inside Codex | hardening |
 | **P5** | B7 | semble_rs context injected on coding prompts; `ls -R`/`grep -R` rewritten; advisory LSP on Claude edits | context layer |
 | **P6** | C4–C9 | hook integration tests green; remaining debt closed | cleanup tail |
@@ -331,7 +349,8 @@ Ordered. Each row = one file, one change, one verification. P1 step 9 (rescue di
 | **P1 — config** | | | |
 | 5 | `~/.codex/config.toml` | root `service_tier` `fast`→`flex`; `[profiles.normal].service_tier` `fast`→`flex`; ensure `[profiles.quick]`/`[profiles.deep]` keep `fast`; profile key `model_reasoning_effort` | `codex … --profile normal` effective config shows flex |
 | **P1 — bridge** | | | |
-| 6 | `scripts/codex-bridge.mjs` | add `--profile` arg + `-p` passthrough; `COMMAND_PROFILE` map; **default to `-p`, emit `-m`/`-c` ONLY if user explicitly supplied `--model`/`--effort`** (track user-supplied flag in parser; Codex iter2 #1 — else `resolveModel()` default kills the profile at lines 1033/1235/1288/1302); keep `--effort` parser; `enrich`→exit-with-notice (D-A2); `complete`→`quick` | `review` with no flags spawns `-p normal` and **no** `-m`/`-c`; `--effort high` still emits `-c`; `enrich` prints notice + exits |
+| 6 | `scripts/codex-bridge.mjs` | add `--profile`+`-p` passthrough; `COMMAND_PROFILE` map; **default `-p`, emit `-m`/`-c` ONLY if user explicitly supplied `--model`/`--effort`** (track user-supplied in parser; else `resolveModel()` default kills profile at 1033/1235/1288/1302); explicit `--effort X` emits `-c model_reasoning_effort="X"` (NOT `reasoning.effort=`, iter3 #2); keep `--effort` parser; `enrich`→**echo raw prompt to stdout**, notice to stderr (iter3 #3); `complete`→`quick` | no-flag `review` spawns `-p normal`, no `-m`/`-c`; `--effort high`→`-c model_reasoning_effort="high"`; `enrich foo`→stdout==`foo` |
+| 6b | `hooks/prompt-submit` | remove the `node "$BRIDGE" enrich` call (line ~126) + its injection (line ~140); prompt passes through unmodified (iter3 #3) | coding prompt submitted → no enrich call in `sspower-codex.log` |
 | **P1 — hooks** | | | |
 | 7 | `hooks/auto-review.sh` | effort `case`→profile `case` (r0/r1 `normal`, r2 `deep`, strict `deep`); pass `--profile`; cache TTL 600→3600; security gate = path-match `SSPOWER_SECURITY_REPOS` OR strict-branch (else off); sanity off-auto | seed each round; check `sspower-codex.log` `kind=tier_chosen`; security fires only on configured repo/strict |
 | 8 | `hooks/hooks.json` | remove `auto-spec-gate.sh` from `PreToolUse:Bash` (D-A5) | plan commit no longer auto-reviewed |
