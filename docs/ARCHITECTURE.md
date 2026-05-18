@@ -40,7 +40,7 @@ Per-cwd artifacts written by hooks live outside the plugin:
 <cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
 ~/.claude/state/sspower/codex/<id>.json       # Codex session registry
 ~/.claude/state/sspower/codex/<id>.events.jsonl
-~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
+~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (60min TTL)
 ```
 
 ## Skills (22)
@@ -73,7 +73,7 @@ Skills are loaded on demand by Claude Code's skill router. Each is one directory
 |-------|---------|
 | `codex-enrich` | Send a user prompt to Codex, return enriched prompt validated against the codebase. |
 | `codex-tracking` | List / inspect / kill / steer running bridge sessions. |
-| `codex-diagnostics` | Triage `~/.claude/sspower-codex.log` failures. |
+| `codex-diagnostics` | Triage `~/.claude/sspower/codex.log` failures. |
 
 ### Diet mode + tooling
 
@@ -129,31 +129,57 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 | Re-entry | `SSPOWER_REVIEW_IN_FLIGHT=1` set by bridge before spawning codex |
 | Depth | `SSPOWER_REVIEW_DEPTH >= 1` skips |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 10min TTL |
+| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 60min TTL |
 | Round counter | `<repo>/.git/sspower-review-rounds-<branch>`, capped at 3 |
 | Branch tier | `wip/*`, `tmp/*`, `draft/*`, `scratch/*` skip; `main`, `master`, `prod`, `release/*` always strict |
 
 **Tunables** (env):
 
 ```
+# Auto-review (hooks/auto-review.sh)
 SSPOWER_AUTO_REVIEW=off               # Full bypass (emergencies)
 SSPOWER_REVIEW_TIMEOUT=90             # Per-call codex timeout (s)
-SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s)
+SSPOWER_REVIEW_CACHE_TTL=3600         # Verdict cache TTL (s; 60min)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
 SSPOWER_REVIEW_AUTO_APPLY=on          # Auto-apply codex's suggested patches
+SSPOWER_REVIEW_PROFILE                # Override round-aware main-review profile (unset → tier-derived)
 SSPOWER_SECURITY_REVIEW=on            # Run security reviewer in parallel
 SSPOWER_SECURITY_EFFORT=xhigh         # Reasoning effort for security pass
+SSPOWER_SECURITY_REPOS                # ':'-list of repo paths forced to security tier (built-in default list)
+SSPOWER_SANITY_REVIEW=off             # Enable extra sanity pass (set on)
+SSPOWER_SANITY_EFFORT=medium          # Sanity-pass effort (off|low|medium|high|xhigh)
 SSPOWER_REVIEW_SKIP_PATTERN           # Branch-name globs that skip review
 SSPOWER_REVIEW_STRICT_PATTERN         # Branch-name globs forced to xhigh
+
+# LSP gate (scripts/codex-bridge.mjs, .codex/codex-lsp-posttool.sh, scripts/lib/codex-lsp-path.mjs)
+SSPOWER_LSP_GATE_BLOCK=1              # Promote bridge B3/B4 post-run gate would-block → block (default advisory)
+SSPOWER_LSP_SELFREPAIR_BLOCK=1       # Promote B2 self-repair PostToolUse hook to blocking (default advisory)
+SSPOWER_CODEX_LSP_CLI                 # Override codex-lsp CLI path (unset → vendored tools/codex-lsp → fail-open)
+
+# Diet hooks (hooks/diet-*.js)
+SSPOWER_DIET=off                      # Kill switch — diet hooks fully inert
+SSPOWER_DIET_DEFAULT                  # Default diet mode (lite|full|ultra; overrides diet.json)
+
+# Codex log rotation (hooks/_log.sh)
+SSPOWER_LOG_FILE                      # Log path (default ~/.claude/sspower/codex.log)
+SSPOWER_LOG_MAX_LINES=1000            # Rotate when log exceeds this many lines
+SSPOWER_LOG_KEEP_TAIL=500             # Lines retained after rotation
 ```
 
 When the round counter hits 3 without converging, the hook emits a deny pointing to: `rm <repo>/.git/sspower-review-rounds-<branch>` to retry, or `SSPOWER_AUTO_REVIEW=off` to bypass.
 
 ## Codex bridge (`scripts/codex-bridge.mjs`)
 
+> **Canonical source:** Claude Code loads the **marketplace** tree
+> (`~/.claude/plugins/marketplaces/sskys18/plugins/sspower/scripts/codex-bridge.mjs`),
+> registered via `~/.claude/settings.json` (`source_type=local`). The
+> `~/.codex/plugins/cache/sskys18/sspower/<version>/scripts/codex-bridge.mjs`
+> copy is stale dead weight — never edit it, never rely on it. All bridge
+> edits target the marketplace tree (decision D-C1).
+
 Direct integration with the Codex CLI (`@openai/codex`). Skills, agents, and the auto-review hook all dispatch through this bridge — no separate Claude Code plugin involved.
 
-Defaults: `gpt-5.5` model, `high` reasoning effort (subcommands `review` / `spec-review` / `rescue` / `resume` / `implement` all pinned `high` — `xhigh` caused stalls; see `scripts/codex-bridge.mjs:38-47`). Override per-call with `--model` / `--effort`. `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
+Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subcommand to a profile via `COMMAND_PROFILE` (`complete`→`quick`; `implement`/`review`/`spec-review`/`plan-review`→`normal`) and passes `-p <profile>`. **`resume` is excluded — `codex exec resume` has no `--profile`; it inherits root `config.toml` (root `service_tier=flex` is load-bearing) and only emits explicit `--model`/`--effort` overrides.** Explicit `--profile`/`--model`/`--effort` patch individual fields of the selected profile (see `scripts/codex-bridge.mjs` `parseOpts`/`runCodexExec`). `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
 
 ### Subcommands
 
@@ -319,10 +345,146 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Codex CLI defaults | `~/.codex/config.toml` (model, sandbox, profiles, projects.trust_level) |
 | Auto-review tunables | env vars (`SSPOWER_AUTO_REVIEW`, `SSPOWER_REVIEW_*`, `SSPOWER_SECURITY_*`) |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Per-call codex options | `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
+| Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
-| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
-| Bridge log | `~/.claude/sspower-codex.log` (failures/diagnostics) |
+| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (60min TTL) |
+| Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
+
+## Codex LSP self-repair (P2, advisory)
+
+Track B P2 gives Codex worker runs the same language servers and an
+internal LSP self-repair path. **Advisory only** (spec D-B6): nothing
+blocks Codex until an operator explicitly flips the gate after reviewing
+clean runs.
+
+**Two independent paths:**
+
+1. **B1 — LSP MCP server.** `codex-bridge.mjs` registers the vendored
+   `tools/codex-lsp/dist/cli.js mcp` as `mcp_servers.lsp` via per-run
+   `-c mcp_servers.lsp.*` dotted-path overrides on `implement`/`resume`
+   only (never review/spec-review/plan-review/complete). No file is
+   written — Codex 0.130.0 merges only `~/.codex/config.toml` + `-c`
+   overrides + profiles, never a project-local `.codex/config.toml`, so
+   `-c` is the clobber-free mechanism. Fail-open: if codex-lsp is
+   unresolved, nothing is registered and the bridge logs
+   `bridge.lsp kind=codex_lsp_unresolved_skip`, never crashing.
+2. **B2 — PostToolUse hook.** Repo-local `.codex/hooks.json` runs
+   `.codex/codex-lsp-posttool.sh` after Codex edits. In advisory default
+   it strips codex-lsp's `block` decision to `approve`; it passes the
+   `block` through **only** when `SSPOWER_LSP_SELFREPAIR_BLOCK=1`.
+
+**Known boundary — B1 MCP round-trip not functional at P2 (verified
+2026-05-18, evidence chain):**
+
+- Registration **is consumed** by Codex 0.130.0: a `lsp.status` smoke
+  produced `item.mcp_tool_call` events, exit 0, no `service_tier` 400.
+- The tool call **fails**: `status:"failed"`, error `"user cancelled
+  MCP tool call"` — despite no human in the loop.
+- **Sandbox ruled out:** identical failure under `read-only` and
+  `workspace-write`.
+- **`approval_policy=never` ruled out:** identical failure with
+  explicit `-c approval_policy=never` (debug log still shows
+  `ResolveElicitation{ server:"lsp", request_id:
+  "mcp_tool_call_approval_...", decision: Cancel }`).
+- **Granular knobs ruled out:** identical failure with
+  `approval_policy={granular={mcp_elicitations=true,...}}` +
+  `approvals_reviewer=auto_review`.
+- **codex-lsp server is healthy standalone:** `node
+  tools/codex-lsp/dist/cli.js mcp` answers `initialize`
+  (protocolVersion 2024-11-05), `tools/list` (7 tools) AND
+  `tools/call status` (18ms, full result) over newline-delimited
+  JSON-RPC, no stderr.
+- **Confirmed root cause:** Codex 0.130.0 gates every MCP tool call
+  behind a per-call approval/elicitation
+  (`mcp_tool_call_approval_*`) **distinct from `approval_policy`**.
+  In non-interactive `codex exec` it auto-resolves `decision:
+  Cancel`. The ONLY config that lets the round-trip complete is
+  `--dangerously-bypass-approvals-and-sandbox` (verified: tool call
+  `status:"completed"`, full LSP status returned) — which also
+  **disables the sandbox entirely**. No documented per-server trust
+  key, granular flag, or `approvals_reviewer` setting bypasses it
+  without also disabling the sandbox. Not a defect in the vendoring,
+  resolver, hook, or `-c` registration (each verified working).
+
+**This finding validates the planned P3 architecture.** Spec §5.7a /
+Phase B3 (**P3**) specifies `scripts/mcp-lsp-client.mjs` — a
+bridge-side MCP client that queries codex-lsp **directly** (the bridge
+speaks JSON-RPC to `cli.js mcp` itself, post-run, per changed file).
+That path **never traverses Codex's model tool-call approval gate** —
+it is the exact bridge↔codex-lsp channel proven working standalone
+(initialize + tools/list + tools/call status, 18ms). So routing LSP
+through Codex's *model* (B1-via-`-c mcp_servers`) is the dead end;
+routing it through the *bridge* (P3) structurally sidesteps the
+Codex 0.130.0 approval gate. The standalone handshake above **is**
+the P3 re-plan trigger evidence ("codex-lsp `mcp` stdio mode manually
+smoke-tested working").
+
+The bridge-computed `_lsp` is injected into the runtime structured
+result object post-parse; it is deliberately NOT declared in
+`schemas/implementation-output.json` because OpenAI strict
+structured-output (`--output-schema`) forbids optional properties and
+open objects — declaring it 400s the Codex API.
+
+**P2 §9 acceptance:** clause 2 ("Codex self-repairs a seeded TS error
+in advisory mode") is **met** — the B2 hook path repaired `export
+const x: number = "not a number";` → `export const x: number = 0;`,
+advisory, run not blocked. Clause 1 ("lsp.status smoke passes") was
+initially blocked: B1-via-Codex-model registration is consumed and the
+codex-lsp server is healthy, but the Codex-model→MCP round-trip is
+blocked by Codex 0.130.0's per-tool-call approval gate (only
+`--dangerously-bypass-approvals-and-sandbox` overrides it, at
+unacceptable security cost) — **now resolved by the bridge-side gate
+below**, not a bridge approval-bypass.
+
+### B1 resolution — bridge-side LSP gate (B3+B4, shipped)
+
+The bridge no longer asks Codex's *model* to call `lsp.*`. Instead
+`scripts/mcp-lsp-client.mjs` (a minimal newline-delimited
+JSON-RPC-2.0-over-stdio MCP client) is spawned by `codex-bridge.mjs`
+**after** an `implement`/`resume` run completes and queries the
+vendored `codex-lsp mcp` server **directly**, per changed file
+(`diagnostics`, `severity:"error"`). Because this bridge↔codex-lsp
+channel never traverses Codex's model tool-call path, it **structurally
+sidesteps the 0.130.0 per-tool-call approval gate** that blocked
+B1-via-model.
+
+- **Gate** (`runLspGate`): changed files = committed-since-baseHead ∪
+  unstaged ∪ staged ∪ untracked, filtered to LSP-serviceable
+  extensions; result normalized into bridge-injected
+  `result.structured._lsp` (D-B1: bridge truth overrides Codex
+  self-report). `_lsp` is injected post-parse and is **not** in the
+  JSON-Schema file (see strict-output note above).
+- **Repair loop** (`runLspRepairLoop`): ≤2 `codex exec resume` rounds,
+  terminating on the seven §5.7b conditions; `_lsp.decision ∈
+  {clean, would-block, block}`.
+- **Advisory default (D-B6):** `decision="would-block"`, run not
+  failed. `SSPOWER_LSP_GATE_BLOCK=1` promotes to `block` (distinct
+  from B2's `SSPOWER_LSP_SELFREPAIR_BLOCK`; independently promotable).
+- **Fail-open (D-B7):** unresolved codex-lsp / MCP init fail / per-file
+  or 120s-gate timeout → `_lsp.status ∈ {skipped, unavailable}`, gate
+  passes, logged `bridge.lsp …`.
+
+**Verified end-to-end (2026-05-18 dogfood, real Codex):** a seeded
+`bad.ts` (`export const x: number = "not a number";`) → gate detected
+the error → repair loop fired (`repair_rounds: 1`) → Codex `resume`
+fixed it → re-gate `_lsp:{status:"clean",decision:"clean"}`, run exit
+0. A clean run reported `_lsp.status="clean"`, `repair_rounds:0`. In
+both runs **zero** `user cancelled MCP tool call` — confirming the
+bridge-direct path bypasses the Codex approval gate. **Spec §9 P2/P3
+clause 1 is now met via the bridge gate**, not the in-Codex MCP path.
+
+**Promotion (advisory → block), per-phase, never automated (D-B6):**
+the operator confirms **≥10** consecutive `implement`/`resume` runs
+whose `~/.claude/sspower/codex.log` shows no unresolved `_lsp` /
+self-repair regressions, then exports `SSPOWER_LSP_SELFREPAIR_BLOCK=1`
+to flip B2 from advisory to blocking. Audit recipe:
+
+```bash
+grep -c 'kind=disabled_passthrough\|bridge.lsp' ~/.claude/sspower/codex.log 2>/dev/null || echo 0
+```
+
+(runs without error; count ≥0 — a count of 0 means no unresolved-skip
+or passthrough events were logged, i.e. codex-lsp resolved cleanly).
 
 ## Sync with upstream
 

@@ -23,13 +23,13 @@ digraph route {
     "Review before merge" [shape=box];
     "High risk?" [shape=diamond];
 
-    "codex-bridge rescue" [shape=box, style=filled, fillcolor="#ffcccc"];
+    "codex-bridge implement (--write)" [shape=box, style=filled, fillcolor="#ffcccc"];
     "codex-bridge review" [shape=box, style=filled, fillcolor="#ccffcc"];
     "codex-bridge review (adversarial prompt)" [shape=box, style=filled, fillcolor="#ccccff"];
 
     "Why do you need a second opinion?" -> "Stuck after 2+ fix attempts" [label="stuck"];
     "Why do you need a second opinion?" -> "Review before merge" [label="review"];
-    "Stuck after 2+ fix attempts" -> "codex-bridge rescue";
+    "Stuck after 2+ fix attempts" -> "codex-bridge implement (--write)";
     "Review before merge" -> "High risk?";
     "High risk?" -> "codex-bridge review (adversarial prompt)" [label="yes"];
     "High risk?" -> "codex-bridge review" [label="no"];
@@ -57,7 +57,7 @@ SSPOWER_PLUGIN_ROOT=$(dirname "$(dirname "$(find ~/.claude/plugins -name codex-b
 
 1. **Check diff size:** `git diff --shortstat`
 2. **Pick the right command** based on flow above:
-   - **Stuck:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" rescue --write --cd . --prompt @/tmp/rescue-prompt.md`
+   - **Stuck:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement --write --cd . --prompt @/tmp/rescue-prompt.md`
    - **Standard review:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review --cd . --prompt @/tmp/review-prompt.md`
    - **Adversarial review:** Same as above but with adversarial prompt (challenge security, edge cases, failure modes)
 3. **Present Codex output verbatim** — do NOT paraphrase or filter

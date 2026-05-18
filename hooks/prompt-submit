@@ -18,7 +18,7 @@ set -euo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 BRIDGE="${PLUGIN_ROOT}/scripts/codex-bridge.mjs"
-DIAG_LOG="${HOME}/.claude/sspower-codex.log"
+DIAG_LOG="${HOME}/.claude/sspower/codex.log"
 
 log_hook() {
   # $1 = kind (error|warn|info)  $2 = key=value pairs
@@ -64,6 +64,7 @@ emit_json() {
 # ── Gate: decide whether to enrich ────────────────────────────────────
 
 should_enrich() {
+  return 1   # enrich disabled (spec D-A2) — never enrich
   # Disabled by env
   [[ "${SSPOWER_ENRICH:-1}" == "0" ]] && return 1
 

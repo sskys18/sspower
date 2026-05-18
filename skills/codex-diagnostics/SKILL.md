@@ -1,13 +1,13 @@
 ---
 name: codex-diagnostics
-description: Examine the sspower Codex bridge log at ~/.claude/sspower-codex.log to diagnose bridge/hook failures, spot recurring patterns, and propose targeted patches. Trigger when user says "examine codex log", "codex diagnostics", "why is codex failing", "why did enrich not work", "debug bridge", "check codex log", "codex errors", or invokes /codex-diagnostics.
+description: Examine the sspower Codex bridge log at ~/.claude/sspower/codex.log to diagnose bridge/hook failures, spot recurring patterns, and propose targeted patches. Trigger when user says "examine codex log", "codex diagnostics", "why is codex failing", "why did enrich not work", "debug bridge", "check codex log", "codex errors", or invokes /codex-diagnostics.
 user_invocable: true
 allowed-tools: Bash, Read, Edit, Grep, AskUserQuestion
 ---
 
 # Codex Diagnostics
 
-The bridge + hook append errors/warnings to `~/.claude/sspower-codex.log`. This skill reads that log, groups patterns, and proposes concrete patches to `scripts/codex-bridge.mjs` or `hooks/prompt-submit`.
+The bridge + hook append errors/warnings to `~/.claude/sspower/codex.log`. This skill reads that log, groups patterns, and proposes concrete patches to `scripts/codex-bridge.mjs` or `hooks/prompt-submit`.
 
 ## Log format
 
@@ -29,7 +29,7 @@ Fields after source are space-separated `key="value"` pairs. Sources seen:
 ### 1. Read + summarize
 
 ```bash
-LOG="$HOME/.claude/sspower-codex.log"
+LOG="$HOME/.claude/sspower/codex.log"
 [ -f "$LOG" ] || { echo "no log yet — no errors seen"; exit 0; }
 
 # total counts by kind

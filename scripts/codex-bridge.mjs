@@ -15,8 +15,9 @@
  *   node codex-bridge.mjs setup
  *   node codex-bridge.mjs implement  --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]
  *   node codex-bridge.mjs spec-review --prompt <text|@file> [--model <m>] [--cd <dir>]
+ *   node codex-bridge.mjs plan-review --prompt <text|@file> [--profile <p>] [--model <m>] [--cd <dir>]
  *   node codex-bridge.mjs review     --prompt <text|@file> [--model <m>] [--cd <dir>]
- *   node codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]
+ *   node codex-bridge.mjs rescue     [DISABLED — see spec D-A3; use plan-review/review/implement]
  *   node codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--cd <dir>]
  */
 
@@ -26,40 +27,54 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const _sspowerCfg = require("../hooks/_config.js");
 import * as registry from "./codex-registry.mjs";
+import { resolveCodexLspCli } from "./lib/codex-lsp-path.mjs";
+import { McpLspClient, isCleanDiagnosticsText } from "./mcp-lsp-client.mjs";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(BRIDGE_DIR, "..");
 const SCHEMAS_DIR = path.join(PLUGIN_ROOT, "schemas");
 
 const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
-const DEFAULT_MODEL = "gpt-5.5";
-const DEFAULT_EFFORT = "high";
-// Per-command effort tiers. service_tier=fast applies globally via ~/.codex/config.toml.
-// Lower effort = faster, less reasoning. Override per-call with --effort.
-const COMMAND_EFFORT = {
-  enrich: "minimal",     // prompt rewrite — no deliberation needed
-  review: "high",        // review — solid analysis without xhigh stalls
-  "spec-review": "high",
-  rescue: "high",        // targeted fix
-  resume: "high",        // session continuation
-  implement: "high",     // user pref — high enough, avoid xhigh stalls
-  complete: "minimal",   // single-turn extractor — no deliberation
+// Model/effort defaults removed (spec P1, 2026-05-18): tier/model/effort are
+// governed by ~/.codex/config.toml profiles via COMMAND_PROFILE + -p. The
+// bridge no longer force-resolves a default model/effort (that killed profiles).
+
+// Per-command default profile (single source of truth = ~/.codex/config.toml).
+// Bridge passes `-p <profile>` unless the user gave an explicit --profile.
+// `resume` is intentionally absent: `codex exec resume` has NO --profile;
+// it inherits root config.toml (root service_tier=flex is load-bearing).
+const COMMAND_PROFILE = {
+  complete: "quick",
+  enrich: "quick",
+  implement: "normal",
+  review: "normal",
+  "spec-review": "normal",
+  "plan-review": "normal",
+  rescue: "normal",
 };
-const ENRICH_EFFORT = "minimal";  // back-compat alias
 
 // Failure log (structured JSONL, ring-buffered)
-const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-failures.jsonl");
+const FAILURE_LOG = _sspowerCfg.failuresLogPath();
 const FAILURE_LOG_MAX = 2000;
 const FAILURE_LOG_KEEP = 1000;
 
 // ── Diagnostics log ──────────────────────────────────────────────────
-// Single append-only file at ~/.claude/sspower-codex.log, rotated at 1000 lines.
+// Single append-only file at ~/.claude/sspower/codex.log, rotated at
+// log_rotate_lines (default 1000). Failures at ~/.claude/sspower/failures.jsonl.
 // Captures errors + warnings for post-mortem via `codex-diagnostics` skill.
 
-const LOG_FILE = path.join(os.homedir(), ".claude", "sspower-codex.log");
-const LOG_MAX_LINES = 1000;
+const LOG_FILE = _sspowerCfg.codexLogPath();
+const LOG_MAX_LINES = (() => {
+  try {
+    const v = _sspowerCfg.readConfig().log_rotate_lines;
+    return Number.isInteger(v) && v > 0 ? v : 1000;
+  } catch { return 1000; }
+})();
+try { fs.mkdirSync(_sspowerCfg.sspowerDir(), { recursive: true }); } catch { /* best effort */ }
 const LOG_KEEP_TAIL = 500;
 
 let _logRotated = false;
@@ -122,17 +137,6 @@ function die(msg) {
   logEvent("error", "bridge.die", { msg, subcommand: process.argv[2] });
   console.error(`codex-bridge: ${msg}`);
   process.exit(1);
-}
-
-function resolveModel(raw) {
-  if (!raw) return DEFAULT_MODEL;
-  return MODEL_ALIASES.get(raw) ?? raw;
-}
-
-function resolveEffort(raw, command) {
-  if (raw) return raw;
-  if (command && COMMAND_EFFORT[command]) return COMMAND_EFFORT[command];
-  return DEFAULT_EFFORT;
 }
 
 function classifyError(stderr = "", exitCode, durationMs) {
@@ -342,6 +346,27 @@ function autoCommit(dir, message, opts = {}) {
 
 // ── Core executors ───────────────────────────────────────────────────
 
+// Per-run advisory LSP MCP registration (Track B P2). Returns the -c
+// override argv pairs registering the vendored codex-lsp as `mcp_servers.lsp`,
+// or [] (fail-open) if codex-lsp is unresolved. No file is written — Codex
+// 0.130.0 only merges ~/.codex/config.toml + -c overrides, never a project
+// .codex/config.toml, so -c is the clobber-free mechanism. Advisory: the
+// server is registered as callable but never required (P2; required=true is P3).
+function lspMcpOverrideArgs() {
+  const cli = resolveCodexLspCli();
+  if (!cli) {
+    logEvent("info", "bridge.lsp", { kind: "codex_lsp_unresolved_skip" });
+    return [];
+  }
+  const j = (v) => JSON.stringify(v); // TOML basic strings == JSON strings for these values
+  return [
+    "-c", `mcp_servers.lsp.command=${j("node")}`,
+    "-c", `mcp_servers.lsp.args=${j([cli, "mcp"])}`,
+    "-c", `mcp_servers.lsp.env.PATH=${j(process.env.PATH || "")}`,
+    "-c", `mcp_servers.lsp.env.HOME=${j(os.homedir())}`,
+  ];
+}
+
 /**
  * Run `codex exec` for fresh tasks (implement, review, rescue).
  * Supports --output-schema, --sandbox, -C, --full-auto.
@@ -350,10 +375,12 @@ function runCodexExec(prompt, options = {}) {
   const {
     schema = null,
     sandbox = "read-only",
+    profile = null,
     model = null,
     effort = null,
     cd = null,
     ephemeral = true,
+    lspMcp = false,
   } = options;
 
   const bin = codexBin();
@@ -366,8 +393,11 @@ function runCodexExec(prompt, options = {}) {
   args.push("-o", resultFile);
 
   if (schema) args.push("--output-schema", schema);
+  if (profile) args.push("-p", profile);
   if (model) args.push("-m", model);
-  if (effort) args.push("-c", `reasoning.effort="${effort}"`);
+  if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
+  const _lspArgs = lspMcp ? lspMcpOverrideArgs() : [];
+  for (const a of _lspArgs) args.push(a);
   // Normalize --cd to absolute path. Otherwise -C and spawnOpts.cwd both
   // apply, resolving as "<cd>/<cd>" when the caller passes a relative path.
   const cdAbs = cd ? path.resolve(cd) : null;
@@ -376,6 +406,11 @@ function runCodexExec(prompt, options = {}) {
 
   const promptFile = secureTmpFile("prompt", prompt);
   args.push("-");
+
+  if (options.printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args, mcpLsp: _lspArgs.length > 0 }) + "\n");
+    process.exit(0);
+  }
 
   // Pass cd through so registry records the actual Codex working dir,
   // not bridge process cwd. Codex itself uses -C flag set above.
@@ -396,8 +431,10 @@ function runCodexResume(prompt, options = {}) {
   const {
     sessionId = null,
     model = null,
+    effort = null,
     schemaName = null,
     cd = null,
+    lspMcp = false,
   } = options;
 
   const bin = codexBin();
@@ -414,6 +451,9 @@ function runCodexResume(prompt, options = {}) {
   args.push("--json");
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
+  if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
+  const _lspArgs = lspMcp ? lspMcpOverrideArgs() : [];
+  for (const a of _lspArgs) args.push(a);
 
   // Wrap prompt with structured output instruction when schema requested
   let finalPrompt = prompt;
@@ -425,6 +465,11 @@ function runCodexResume(prompt, options = {}) {
 
   const promptFile = secureTmpFile("prompt", finalPrompt);
   args.push("-");
+
+  if (options.printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args, mcpLsp: _lspArgs.length > 0 }) + "\n");
+    process.exit(0);
+  }
 
   // Codex `exec resume` doesn't accept -C, so spawn cwd is the only
   // mechanism. Normalize to absolute path for the same reason runCodexExec does.
@@ -854,7 +899,7 @@ function parseStructuredOutput(text) {
 // Tool-disable contract (spec §6.2 — achievable-contract baseline):
 //   1. --sandbox read-only            (no file writes, no spawns beyond read-only shell)
 //   2. Hard system directive prepended (single-turn extractor; do NOT call tools)
-//   3. reasoning.effort=minimal       (lowers chance of tool-use during reasoning)
+//   3. model_reasoning_effort=minimal (lowers chance of tool-use during reasoning)
 //   4. Wall-clock cap (default 60s)   (on timeout exit nonzero so caller degrades)
 //
 // Output (stdout, exit 0):  OpenAI chat.completion JSON
@@ -892,7 +937,7 @@ function _buildCompletePrompt(userPrompt, systemMessage) {
  * Wall-clock kill enforced: SIGTERM at deadline, SIGKILL 2s later. exitCode 124 on timeout.
  */
 function _runCodexComplete(prompt, options) {
-  const { model, effort, timeoutMs } = options;
+  const { profile, model, effort, timeoutMs, printArgs } = options;
   const bin = codexBin();
   const resultFile = secureTmpFile("complete-result", "");
   const promptFile = secureTmpFile("complete-prompt", prompt);
@@ -903,10 +948,20 @@ function _runCodexComplete(prompt, options) {
     "--ephemeral",
     "--sandbox", "read-only",
     "-o", resultFile,
-    "-m", model,
-    "-c", `reasoning.effort="${effort}"`,
     "-",
   ];
+
+  const _stdinIdx = args.lastIndexOf("-");
+  const _flags = [];
+  if (profile) _flags.push("-p", profile);
+  if (model) _flags.push("-m", model);
+  if (effort) _flags.push("-c", `model_reasoning_effort="${effort}"`);
+  args.splice(_stdinIdx, 0, ..._flags);
+
+  if (printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.exit(0);
+  }
 
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -1029,15 +1084,16 @@ async function cmdComplete(argv) {
   const userPrompt = resolvePrompt(opts.prompt);
   const finalPrompt = _buildCompletePrompt(userPrompt, opts.system);
 
-  const model = resolveModel(opts.model);
-  const effort = opts.effort || COMMAND_EFFORT.complete;
+  const profile = opts.profile || COMMAND_PROFILE.complete;
+  const model = opts.model || null;
+  const effort = opts.effort || null;
   const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
     ? opts.timeoutMs
     : COMPLETE_DEFAULT_TIMEOUT_MS;
 
   let result;
   try {
-    result = await _runCodexComplete(finalPrompt, { model, effort, timeoutMs });
+    result = await _runCodexComplete(finalPrompt, { profile, model, effort, timeoutMs, printArgs: opts.printArgs });
   } catch (err) {
     logEvent("error", "bridge.complete", {
       kind: "spawn_error",
@@ -1078,6 +1134,19 @@ async function cmdComplete(argv) {
     process.exit(1);
   }
 
+  // C9 guard: exit 0 but no model output → structured error, not empty content.
+  // _runCodexComplete trims lastMessage (line ~1047), so falsy ⇒ truly empty.
+  if (!result.lastMessage) {
+    logEvent("error", "bridge.complete", {
+      kind: "empty_response",
+      session: result.sessionId,
+      duration_ms: result.durationMs,
+    });
+    _emitCompleteError("empty_response", "codex complete produced no output");
+    cleanupTmpDir();
+    process.exit(1);
+  }
+
   // Build OpenAI chat.completion shape.
   // - id: prefer Codex session_id (consistent with bridge session identity);
   //       fall back to a synthesized chatcmpl-* id if Codex never emitted one.
@@ -1102,7 +1171,10 @@ async function cmdComplete(argv) {
   const payload = {
     id,
     object: "chat.completion",
-    model,
+    // Profile-routed (spec P1): when no explicit --model, the model is
+    // governed by the ~/.codex/config.toml profile, not pinned by the bridge.
+    // Report a non-null sentinel so the OpenAI shape stays well-formed.
+    model: model || `profile:${profile || "default"}`,
     choices: [{
       index: 0,
       message: { role: "assistant", content: result.lastMessage || "" },
@@ -1212,7 +1284,209 @@ async function cmdSetup() {
     console.log(`Schema ${s}: ${exists ? "OK" : "MISSING"}`);
   }
 
+  try {
+    execFileSync(process.execPath, [path.join(BRIDGE_DIR, "setup-codex-lsp.mjs")], { stdio: "inherit" });
+  } catch {
+    console.log("LSP client config: setup failed (see above)");
+  }
+
   console.log("\nReady for SDD integration.");
+}
+
+// Source extensions codex-lsp can serve (subset; safe superset is fine —
+// files with no server return "No LSP server configured" → treated clean).
+const LSP_SOURCE_EXT = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+  ".py", ".pyi", ".rs", ".go", ".rb", ".swift", ".c", ".cpp", ".cc",
+  ".cxx", ".h", ".hpp", ".sh", ".bash",
+]);
+
+// Changed source files (post-run, pre-commit): committed-since-baseHead
+// ∪ unstaged ∪ staged ∪ untracked, filtered to LSP-serviceable extensions.
+function lspChangedFiles(cwd, baseHead) {
+  const run = (args) => {
+    try {
+      return execFileSync("git", ["-C", cwd, ...args], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      }).split("\n").map((s) => s.trim()).filter(Boolean);
+    } catch { return []; }
+  };
+  const set = new Set();
+  if (baseHead) for (const f of run(["diff", "--name-only", baseHead, "HEAD"])) set.add(f);
+  for (const f of run(["diff", "--name-only"])) set.add(f);
+  for (const f of run(["diff", "--name-only", "--cached"])) set.add(f);
+  for (const f of run(["ls-files", "--others", "--exclude-standard"])) set.add(f);
+  const out = [];
+  for (const rel of set) {
+    const dot = rel.lastIndexOf(".");
+    if (dot < 0) continue;
+    if (!LSP_SOURCE_EXT.has(rel.slice(dot).toLowerCase())) continue;
+    // Skip deleted/stale paths: a removed source file would be sent to
+    // diagnostics() on a nonexistent path → false would-block, or an
+    // unrepairable block-mode loop (Issue 4).
+    if (!fs.existsSync(path.resolve(cwd, rel))) continue;
+    out.push(path.resolve(cwd, rel));
+  }
+  return out;
+}
+
+// Post-run bridge LSP gate. Returns the _lsp object (always — fail-open).
+// blockMode = SSPOWER_LSP_GATE_BLOCK==="1".
+async function runLspGate(cwd, baseHead, blockMode) {
+  const base = {
+    status: "skipped", decision: "clean",
+    checked_files: [], total_errors: 0, errors: [], repair_rounds: 0,
+  };
+  const cli = resolveCodexLspCli();
+  if (!cli) {
+    logEvent("info", "bridge.lsp", { kind: "gate_skipped_unresolved" });
+    return base;
+  }
+  const files = lspChangedFiles(cwd, baseHead);
+  if (files.length === 0) {
+    logEvent("info", "bridge.lsp", { kind: "gate_no_source_files" });
+    return { ...base, status: "clean", decision: "clean" };
+  }
+  const client = new McpLspClient(cli, cwd);
+  const gateDeadline = Date.now() + 120000; // §5.7a whole-gate 120s cap
+  const started = await client.start();
+  if (!started) {
+    await client.stop();
+    logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_init" });
+    return { ...base, status: "unavailable" };
+  }
+  const errors = [];
+  const checked = [];
+  try {
+    for (const f of files) {
+      if (Date.now() > gateDeadline) {
+        logEvent("warn", "bridge.lsp", { kind: "gate_timeout_cap", checked: checked.length });
+        await client.stop();
+        return { ...base, status: "unavailable", checked_files: checked };
+      }
+      const remaining = Math.max(1000, gateDeadline - Date.now());
+      const { ok, text } = await client.diagnostics(f, Math.min(30000, remaining));
+      checked.push(f);
+      if (!ok) {
+        await client.stop();
+        logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_call", file: f });
+        return { ...base, status: "unavailable", checked_files: checked };
+      }
+      if (!isCleanDiagnosticsText(text)) errors.push({ file: f, text });
+    }
+  } finally {
+    await client.stop();
+  }
+  if (errors.length === 0) {
+    logEvent("info", "bridge.lsp", { kind: "gate_clean", files: checked.length });
+    return { ...base, status: "clean", decision: "clean", checked_files: checked };
+  }
+  const decision = blockMode ? "block" : "would-block";
+  logEvent("info", "bridge.lsp", {
+    kind: "gate_errors", decision, files: checked.length, errs: errors.length,
+  });
+  return {
+    status: "errors", decision,
+    checked_files: checked, total_errors: errors.length, errors, repair_rounds: 0,
+  };
+}
+
+// Bounded LSP repair loop (§5.7b / D-B7). ≤2 resume rounds. Terminates on
+// ANY of the 7 spec conditions. Returns the final _lsp (decision updated).
+// Fail-open: any infra error ends the loop with the current _lsp.
+async function runLspRepairLoop(cwd, baseHead, sessionId, _lsp, blockMode) {
+  if (!sessionId) return _lsp;                         // cond 4: missing session
+  let prevErrHash = "";
+  for (let round = 1; round <= 2; round++) {           // cond 1: ≤2 rounds
+    // cond 6: pre-resume registry concurrency check
+    let rec = null;
+    try { rec = registry.readState(sessionId); } catch { rec = null; }
+    if (rec && ["running", "killed", "stale"].includes(rec.status)) {
+      logEvent("warn", "bridge.lsp", { kind: "repair_abort_registry", status: rec.status, round });
+      return { ..._lsp, repair_rounds: round - 1 };
+    }
+    // cond 7: HEAD drift
+    let headBefore = null;
+    try {
+      headBefore = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch { headBefore = null; }
+    if (baseHead && headBefore && headBefore !== baseHead && round === 1) {
+      logEvent("warn", "bridge.lsp", { kind: "repair_abort_head_drift", baseHead, headBefore });
+      return { ..._lsp, repair_rounds: 0 };
+    }
+    const diffBefore = lspDiffHash(cwd);
+    const errHash = lspErrHash(_lsp.errors);
+    if (errHash && errHash === prevErrHash) {           // cond 3: same diagnostics
+      logEvent("info", "bridge.lsp", { kind: "repair_stop_same_diag", round });
+      return { ..._lsp, repair_rounds: round - 1 };
+    }
+    prevErrHash = errHash;
+    const fileList = _lsp.errors.map((e) => e.file).join(", ");
+    const repairPrompt =
+      `LSP reports error-severity diagnostics after your edits. Fix ONLY these so the language server is clean. Do not change unrelated code. Files: ${fileList}\n\n` +
+      _lsp.errors.map((e) => `--- ${e.file} ---\n${e.text}`).join("\n\n");
+    let rr;
+    try {
+      rr = await runCodexResume(repairPrompt, {
+        sessionId, effort: "high", schemaName: "implementation-output", cd: cwd, lspMcp: true,
+      });
+    } catch {
+      logEvent("warn", "bridge.lsp", { kind: "repair_resume_threw", round });
+      return { ..._lsp, repair_rounds: round };          // fail-open
+    }
+    if (!rr || rr.exitCode !== 0) {                       // cond 5: nonzero resume
+      logEvent("warn", "bridge.lsp", { kind: "repair_resume_nonzero", round, code: rr && rr.exitCode });
+      return { ..._lsp, repair_rounds: round };
+    }
+    if (lspDiffHash(cwd) === diffBefore) {                // cond 2: no progress
+      logEvent("info", "bridge.lsp", { kind: "repair_stop_no_progress", round });
+      return { ..._lsp, repair_rounds: round };
+    }
+    let re;
+    try { re = await runLspGate(cwd, baseHead, blockMode); }
+    catch { logEvent("warn", "bridge.lsp", { kind: "repair_gate_threw", round }); return { ..._lsp, repair_rounds: round }; }
+    re.repair_rounds = round;
+    if (re.status === "clean") {
+      logEvent("info", "bridge.lsp", { kind: "repair_converged", round });
+      return re;                                          // decision=clean
+    }
+    _lsp = re;                                            // loop with new errors
+  }
+  logEvent("info", "bridge.lsp", { kind: "repair_exhausted" });
+  return { ..._lsp, repair_rounds: 2 };
+}
+
+function lspDiffHash(cwd) {
+  try {
+    const h = require("node:crypto").createHash("sha1");
+    h.update(execFileSync("git", ["-C", cwd, "diff", "HEAD"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    // git diff HEAD ignores untracked files, but the gate checks them
+    // (lspChangedFiles unions ls-files --others). Hash untracked contents
+    // too, else a repair that only edits an untracked file looks like
+    // "no progress" (cond-2 false-positive → premature loop abort).
+    const others = execFileSync("git", ["-C", cwd, "ls-files", "--others", "--exclude-standard"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split("\n").map((s) => s.trim()).filter(Boolean).sort();
+    for (const rel of others) {
+      h.update("\0" + rel + "\0");
+      try { h.update(fs.readFileSync(path.join(cwd, rel))); } catch { /* gone/binbig: name only */ }
+    }
+    return h.digest("hex");
+  } catch { return ""; }
+}
+function lspErrHash(errs) {
+  try {
+    const key = (errs || []).map((e) => e.file + "|" + (e.text || "")).sort().join("\n");
+    return require("node:crypto").createHash("sha1").update(key).digest("hex");
+  } catch { return ""; }
+}
+// Session id source of truth for the repair loop. result.sessionId is set by
+// _spawnAndCapture (available immediately); _meta.session_id is stamped later
+// in output(), AFTER the gate block, so it is undefined here — defensive only.
+function _extractSid(result) {
+  return result.sessionId || result.structured?._meta?.session_id || null;
 }
 
 async function cmdImplement(argv) {
@@ -1242,11 +1516,34 @@ async function cmdImplement(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "implement"),
+    profile: opts.profile || COMMAND_PROFILE["implement"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: workDir,
     ephemeral: false, // persist session for resume-based fix loops
+    lspMcp: true,
   });
+
+  // Bridge-side LSP gate (D-B1: bridge-computed _lsp overrides Codex
+  // self-report). Advisory by default (D-B6); fail-open (D-B7).
+  if (result.structured) {
+    // cwd basis MUST mirror baseHead's `workDir || "."` so the gate diffs
+    // the same tree the HEAD snapshot was taken against (Issue 1).
+    const cwdAbs = path.resolve(workDir || opts.cd || ".");
+    const blockMode = process.env.SSPOWER_LSP_GATE_BLOCK === "1";
+    let _lsp = await runLspGate(cwdAbs, baseHead, blockMode);
+    if (_lsp.status === "errors") {
+      const sid = _extractSid(result);
+      _lsp = await runLspRepairLoop(cwdAbs, baseHead, sid, _lsp, blockMode);
+    }
+    result.structured._lsp = _lsp;
+    if (blockMode && _lsp.decision === "block") {
+      result.structured.status = "BLOCKED";
+      result.structured.blocked_reason =
+        `LSP gate: ${_lsp.total_errors} error(s) after ${_lsp.repair_rounds} repair round(s)`;
+    }
+  }
 
   // Auto-commit after successful implementation
   if (result.exitCode === 0 && result.structured?.status === "DONE" && opts.autoCommit) {
@@ -1284,10 +1581,28 @@ async function cmdSpecReview(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("spec-review-output"),
     sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "spec-review"),
+    profile: opts.profile || COMMAND_PROFILE["spec-review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
+  });
+  output(result, { expectStructured: true });
+}
+
+async function cmdPlanReview(argv) {
+  const opts = parseOpts(argv);
+  const prompt = resolvePrompt(opts.prompt);
+  const result = await runCodexExec(prompt, {
+    schema: schemaPath("plan-review-output"),
+    sandbox: "read-only",
+    profile: opts.profile || COMMAND_PROFILE["plan-review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
+    cd: opts.cd,
+    ephemeral: true,
   });
   output(result, { expectStructured: true });
 }
@@ -1298,8 +1613,10 @@ async function cmdReview(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("quality-review-output"),
     sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "review"),
+    profile: opts.profile || COMMAND_PROFILE["review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
   });
@@ -1307,96 +1624,23 @@ async function cmdReview(argv) {
 }
 
 async function cmdRescue(argv) {
-  const opts = parseOpts(argv);
-  const prompt = resolvePrompt(opts.prompt);
-  const result = await runCodexExec(prompt, {
-    schema: null,
-    sandbox: opts.write ? "workspace-write" : "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "rescue"),
-    cd: opts.cd,
-    ephemeral: !opts.write, // persist write sessions for potential resume
-  });
-  output(result);
+  parseOpts(argv); // tolerate args for back-compat
+  process.stderr.write(
+    "[codex:rescue] disabled (spec D-A3). Use `plan-review` for design/plan review, " +
+    "`review` for code review, or `implement --write` for worker delegation.\n"
+  );
+  logEvent("info", "bridge.rescue", { kind: "disabled" });
+  process.exit(2);
 }
 
 async function cmdEnrich(argv) {
   const opts = parseOpts(argv);
   const rawPrompt = resolvePrompt(opts.prompt);
-
-  // Wrap user prompt with enrichment instructions.
-  // Codex scans repo (read-only), corrects assumptions, returns enriched prompt.
-  const wrapped = [
-    "You are a prompt-enrichment assistant for Claude Code.",
-    "",
-    "Original user prompt:",
-    "<<<PROMPT",
-    rawPrompt,
-    "PROMPT>>>",
-    "",
-    "Task: Produce an enriched version of the prompt that Claude will use to do the work.",
-    "Rules:",
-    "  1. Scan relevant files in this repository (read-only).",
-    "  2. Quote exact file paths and line numbers. Do not guess.",
-    "  3. If the user made wrong assumptions about the codebase, correct them.",
-    "  4. Add concrete technical context Claude will need (types, function signatures, existing patterns).",
-    "  5. Preserve the user's intent and tone. Do not answer the request — only enrich it.",
-    "  6. Keep enrichment under 1500 tokens. Cut fluff.",
-    "",
-    "Output format: plain text only. No markdown fences. No preamble.",
-    "Start with '<ENRICHED>' on its own line.",
-    "End with '</ENRICHED>' on its own line.",
-    "Everything inside those markers is the enriched prompt Claude will see.",
-  ].join("\n");
-
-  const result = await runCodexExec(wrapped, {
-    schema: null,
-    sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: opts.effort || ENRICH_EFFORT,
-    cd: opts.cd,
-    ephemeral: true,
-  });
-
-  // Fail-open: if Codex errored, emit raw prompt + stderr warning
-  if (result.exitCode !== 0) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "exit_nonzero_fallback",
-      exitCode: result.exitCode,
-      session: result.sessionId,
-      duration_ms: result.trace?.duration_ms,
-      stderr_preview: result.stderr?.slice(0, 200),
-    });
-    process.stderr.write(`[codex:enrich] failed exit=${result.exitCode}, passing raw prompt\n`);
-    console.log(rawPrompt);
-    cleanupTmpDir();
-    process.exit(0);
-  }
-
-  // Extract enriched body between markers
-  const raw = result.lastMessage || "";
-  const match = raw.match(/<ENRICHED>\s*\n?([\s\S]*?)\n?<\/ENRICHED>/);
-  const enriched = match ? match[1].trim() : raw.trim();
-
-  if (!enriched) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "empty_output_fallback",
-      session: result.sessionId,
-      duration_ms: result.trace?.duration_ms,
-    });
-    process.stderr.write(`[codex:enrich] empty output, passing raw prompt\n`);
-    console.log(rawPrompt);
-  } else if (!match) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "missing_enriched_markers",
-      session: result.sessionId,
-      raw_preview: raw.slice(0, 120),
-    });
-    console.log(enriched);
-  } else {
-    console.log(enriched);
-  }
+  process.stderr.write("[codex:enrich] disabled (spec D-A2) — passing raw prompt through\n");
+  logEvent("info", "bridge.enrich", { kind: "disabled_passthrough" });
+  process.stdout.write(rawPrompt);
   cleanupTmpDir();
+  process.exit(0);
 }
 
 async function cmdResume(argv) {
@@ -1407,9 +1651,12 @@ async function cmdResume(argv) {
   const schemaName = opts.noSchema ? null : (opts.schema || "implementation-output");
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,
-    model: resolveModel(opts.model),
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     schemaName,
     cd: opts.cd,
+    lspMcp: true,
   });
   output(result, { expectStructured: !!schemaName });
 }
@@ -1567,9 +1814,12 @@ async function cmdSteer(argv) {
   const resumeCwd = opts.cd || record?.cwd || null;
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,
-    model: resolveModel(opts.model),
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     schemaName: null,
     cd: resumeCwd,
+    lspMcp: true,
   });
   output(result);
 }
@@ -1592,6 +1842,8 @@ function parseOpts(argv) {
     prompt: null,
     write: false,
     model: null,
+    profile: null,
+    printArgs: false,
     effort: null,
     cd: null,
     sessionId: null,
@@ -1614,6 +1866,12 @@ function parseOpts(argv) {
         break;
       case "--model":
         opts.model = argv[++i];
+        break;
+      case "--profile":
+        opts.profile = argv[++i];
+        break;
+      case "--print-args":
+        opts.printArgs = true;
         break;
       case "--effort":
         opts.effort = argv[++i];
@@ -1684,8 +1942,9 @@ async function main() {
       "  codex-bridge.mjs setup",
       "  codex-bridge.mjs implement  --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>] [--worktree <branch>] [--auto-commit [msg]]",
       "  codex-bridge.mjs spec-review --prompt <text|@file> [--model <m>] [--cd <dir>]",
-      "  codex-bridge.mjs review     --prompt <text|@file> [--model <m>] [--cd <dir>]",
-      "  codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]",
+      "  codex-bridge.mjs plan-review --prompt <text|@file> [--profile <p>] [--model <m>] [--cd <dir>]",
+      "  codex-bridge.mjs review     --prompt <text|@file> [--profile <p>] [--model <m>] [--cd <dir>]",
+      "  codex-bridge.mjs rescue     [DISABLED — spec D-A3; use plan-review/review/implement]",
       "  codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--no-schema]",
       "  codex-bridge.mjs enrich     --prompt <text|@file> [--model <m>] [--effort <e>] [--cd <dir>]",
       "  codex-bridge.mjs complete   --json --prompt <text|@file> [--system <text>] [--model <m>] [--effort <e>] [--timeout <ms>]",
@@ -1728,6 +1987,9 @@ async function main() {
     case "spec-review":
       await cmdSpecReview(argv);
       break;
+    case "plan-review":
+      await cmdPlanReview(argv);
+      break;
     case "review":
       await cmdReview(argv);
       break;
@@ -1763,8 +2025,25 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  cleanupTmpDir();
-  console.error(`codex-bridge: ${err.message}`);
-  process.exit(1);
-});
+// Import-safe CLI guard: only dispatch when run directly, not when imported
+// (e.g. tests importing __test_runLspGate). Canonicalize BOTH sides:
+// ESM import.meta.url resolves symlinks but process.argv[1] does not, so a
+// raw compare breaks under any symlinked path component (macOS /tmp →
+// /private/tmp, npm-link, marketplace cache) and main() silently never runs.
+let _isCli = false;
+try {
+  _isCli = !!process.argv[1] &&
+    fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1]);
+} catch { _isCli = false; }
+if (_isCli) {
+  main().catch((err) => {
+    cleanupTmpDir();
+    console.error(`codex-bridge: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+export { runLspGate as __test_runLspGate };
+export { runLspRepairLoop as __test_runLspRepairLoop };
+export { _extractSid };
+export { lspDiffHash as __test_lspDiffHash };

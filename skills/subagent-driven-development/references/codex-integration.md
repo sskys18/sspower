@@ -15,7 +15,6 @@ SDD can use Codex (OpenAI) as an implementation and review engine alongside Clau
 | `implement` | `implementation-output.json` | `workspace-write` | Task implementation |
 | `spec-review` | `spec-review-output.json` | `read-only` | Spec compliance verification |
 | `review` | `quality-review-output.json` | `read-only` | Code quality review |
-| `rescue` | none (free-form) | configurable | Open-ended investigation |
 | `resume` | none (free-form) | configurable | Continue last Codex thread |
 | `setup` | n/a | n/a | Verify Codex CLI + auth |
 
@@ -59,7 +58,7 @@ node "${PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement \
 
 ### Session ID tracking
 
-The bridge prints `[codex:session] <id>` to stderr during `implement` and `rescue --write` runs. **The controller must capture this ID** — it's needed to resume the correct thread after reviews.
+The bridge prints `[codex:session] <id>` to stderr during `implement` runs. **The controller must capture this ID** — it's needed to resume the correct thread after reviews.
 
 Why: after implementation, the SDD flow runs spec review and quality review. These create their own Codex sessions. If you use `--last`, you'd resume the reviewer, not the implementer.
 
@@ -82,8 +81,8 @@ Codex's `resume` is a significant advantage for fix loops: the model retains ful
 
 ### Session persistence
 
-- `implement` and `rescue --write` run **without** `--ephemeral` so sessions persist to disk for resume
-- `spec-review`, `review`, and read-only `rescue` run **with** `--ephemeral` since they don't need resume
+- `implement` runs **without** `--ephemeral` so sessions persist to disk for resume
+- `spec-review` and `review` run **with** `--ephemeral` since they don't need resume
 - This means only implementation sessions accumulate on disk — clean up via `codex` CLI if needed
 
 ### When resume fails
@@ -110,7 +109,7 @@ The bridge handles JSON parsing with fallbacks:
 2. Extract from markdown fenced code block (```json ... ```)
 3. Extract first `{ ... }` from prose
 
-If all parsing fails for a structured command (implement, spec-review, review), the bridge exits with code 1 and a JSON error object including the raw output. For free-form commands (rescue, resume), unparsed text is returned as-is.
+If all parsing fails for a structured command (implement, spec-review, review), the bridge exits with code 1 and a JSON error object including the raw output. For free-form commands (resume), unparsed text is returned as-is.
 
 ## Error Handling
 

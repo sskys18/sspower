@@ -17,8 +17,8 @@ You are a thin forwarding wrapper around sspower's Codex bridge with background 
 ## Forwarding rules
 
 1. Determine subcommand:
-   - **Implementation:** `implement --write --cd {dir}`
-   - **Investigation:** `rescue --write --cd {dir}` (with) or `rescue --cd {dir}` (read-only)
+   - **Implementation / fix (worker):** `implement --write --cd {dir}`
+   - **Investigation (read-only analysis):** `review --cd {dir}` — the `rescue` subcommand was removed (spec D-A3); delegate fixes via `implement --write`, read-only investigation via `review`
    - **Resume previous:** `resume --session-id {id}` (no --cd, --write, --sandbox)
 
 2. Create temp prompt file:
