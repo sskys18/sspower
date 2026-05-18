@@ -26,6 +26,9 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const _sspowerCfg = require("../hooks/_config.js");
 import * as registry from "./codex-registry.mjs";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -50,16 +53,23 @@ const COMMAND_EFFORT = {
 const ENRICH_EFFORT = "minimal";  // back-compat alias
 
 // Failure log (structured JSONL, ring-buffered)
-const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-failures.jsonl");
+const FAILURE_LOG = _sspowerCfg.failuresLogPath();
 const FAILURE_LOG_MAX = 2000;
 const FAILURE_LOG_KEEP = 1000;
 
 // ── Diagnostics log ──────────────────────────────────────────────────
-// Single append-only file at ~/.claude/sspower-codex.log, rotated at 1000 lines.
+// Single append-only file at ~/.claude/sspower/codex.log, rotated at
+// log_rotate_lines (default 1000). Failures at ~/.claude/sspower/failures.jsonl.
 // Captures errors + warnings for post-mortem via `codex-diagnostics` skill.
 
-const LOG_FILE = path.join(os.homedir(), ".claude", "sspower-codex.log");
-const LOG_MAX_LINES = 1000;
+const LOG_FILE = _sspowerCfg.codexLogPath();
+const LOG_MAX_LINES = (() => {
+  try {
+    const v = _sspowerCfg.readConfig().log_rotate_lines;
+    return Number.isInteger(v) && v > 0 ? v : 1000;
+  } catch { return 1000; }
+})();
+try { fs.mkdirSync(_sspowerCfg.sspowerDir(), { recursive: true }); } catch { /* best effort */ }
 const LOG_KEEP_TAIL = 500;
 
 let _logRotated = false;
