@@ -192,10 +192,17 @@ case "$BRANCH" in
   $STRICT_PATTERN) BRANCH_TIER="strict" ;;
   *)               BRANCH_TIER="tiered" ;;
 esac
-if [ -n "$REPO_ROOT" ]; then
+# Resolve the loop-guard state dir via git so it lands in the REAL per-worktree
+# gitdir (a directory) for BOTH normal repos and linked worktrees. In a linked
+# worktree $REPO_ROOT/.git is a FILE (gitdir: pointer), so $REPO_ROOT/.git/...
+# would be an invalid path and the round cap / same-diff bypass would silently
+# never engage. --absolute-git-dir (git 2.13+) returns the correct absolute
+# gitdir for both cases.
+GIT_DIR_ABS=$(git_in_repo rev-parse --absolute-git-dir 2>/dev/null || true)
+if [ -n "$GIT_DIR_ABS" ]; then
   # C6: prune stale rounds files (>7d) before reading the counter. Best-effort.
-  find "$REPO_ROOT/.git" -maxdepth 1 -name 'sspower-review-rounds-*' -mtime +7 -delete 2>/dev/null || true
-  ROUNDS_FILE="$REPO_ROOT/.git/sspower-review-rounds-$SAFE_BRANCH"
+  find "$GIT_DIR_ABS" -maxdepth 1 -name 'sspower-review-rounds-*' -mtime +7 -delete 2>/dev/null || true
+  ROUNDS_FILE="$GIT_DIR_ABS/sspower-review-rounds-$SAFE_BRANCH"
 else
   ROUNDS_FILE=""
 fi
@@ -212,8 +219,8 @@ fi
 
 # ---------- Diff-stability bypass setup (checked after DIFF_HASH computed) ----------
 LAST_DENY_FILE=""
-if [ -n "$REPO_ROOT" ]; then
-  LAST_DENY_FILE="$REPO_ROOT/.git/sspower-review-last-deny-$SAFE_BRANCH"
+if [ -n "$GIT_DIR_ABS" ]; then
+  LAST_DENY_FILE="$GIT_DIR_ABS/sspower-review-last-deny-$SAFE_BRANCH"
 fi
 
 # ---------- Verdict cache ----------
