@@ -18,6 +18,14 @@ Review JSON: `docs/reviews/2026-05-18-sspower-config-consolidation-plan-review.j
 | advisory | Spec impl-step-1 pre-edit fail-closed sweep absent | New Task 0 (gate) |
 | advisory | Migration verifier ignored `patches.md` | Task 10 verifier adds fixture + asserts moved |
 
+**Re-review v2** (`needs-attention`, 3 new blocking from REV2's own changes — all fixed in REV3):
+
+| Sev | Finding | Fix |
+|---|---|---|
+| blocking | Task 6 verifier used `./hooks/_config.js` (resolves to `scripts/hooks/...` → MODULE_NOT_FOUND) | Verifier now `../hooks/_config.js`, mirroring the bridge's real require |
+| blocking | Task 6 hardcoded `os.homedir()` → inconsistent with `_config.js`, untestable under sandbox | Task 6 now derives `FAILURE_LOG`/`LOG_FILE`/`sspowerDir` from `_config.js` helpers (single path source, honors `CLAUDE_CONFIG_DIR`) |
+| blocking | `mv_if` skipped on dst-exists → legacy root file orphaned (violates acceptance criterion) | `mv_if` archives legacy → `<dst>.pre-migrate-<ts>` and clears root; verifier asserts no orphan + content kept |
+
 ## Outcome
 
 `~/.claude/` root: 4 scattered files (`sspower-codex-failures.jsonl`, `sspower-codex.log`, `.sspower-diet`, `sspower-codex-patches.md`) → one dir `~/.claude/sspower/` with one config file `config.json` (`{diet, log_rotate_lines}`). Logs/doc are separate files inside that dir. All runtime + cross-repo consumers updated. Manual migration script. No data loss.
@@ -433,56 +441,56 @@ Commit: `refactor(diet): diet-track uses config.json active-diet helpers`
 
 ## Task 6 — Update `codex-bridge.mjs` paths + config-driven rotation
 
-In `scripts/codex-bridge.mjs`:
+In `scripts/codex-bridge.mjs`. **Single source of path truth**: the bridge must derive its paths from `_config.js` helpers (which honor `CLAUDE_CONFIG_DIR || os.homedir()`), NOT re-hardcode `os.homedir()`. Re-review v2 blocking #2: hardcoding `os.homedir()` made paths inconsistent with `_config.js` and untestable under a sandboxed `CLAUDE_CONFIG_DIR`.
 
-Line 53: `const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-failures.jsonl");`
-→ `const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower", "failures.jsonl");`
-
-Line 61: `const LOG_FILE = path.join(os.homedir(), ".claude", "sspower-codex.log");`
-→ `const LOG_FILE = path.join(os.homedir(), ".claude", "sspower", "codex.log");`
-
-**`codex-bridge.mjs` is pure ESM** (`import ... from "node:..."`, top of file). `require` is undefined in `.mjs` — a bare `require('../hooks/_config')` would throw `ReferenceError`, get swallowed by try/catch, and silently fall back to 1000 forever (config-driven rotation never implemented). Bridge `_config.js` access via `createRequire`.
-
-Add to the import block at the top of the file (after the existing `import { fileURLToPath } from "node:url";`, line ~17):
+**`codex-bridge.mjs` is pure ESM** (`import ... from "node:..."`). `require` is undefined in `.mjs`. Add to the import block (after the existing `import { fileURLToPath } from "node:url";`, line ~17):
 ```javascript
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+const _sspowerCfg = require("../hooks/_config.js");
 ```
+`createRequire(import.meta.url)` roots resolution at the bridge file (`scripts/`), so `"../hooks/_config.js"` correctly resolves to `hooks/_config.js`. `_config.js` is CommonJS (`hooks/package.json` is `{"type":"commonjs"}`) — `createRequire` loads it cleanly. Explicit `.js` extension required.
+
+Line 53: `const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-failures.jsonl");`
+→ `const FAILURE_LOG = _sspowerCfg.failuresLogPath();`
+
+Line 61: `const LOG_FILE = path.join(os.homedir(), ".claude", "sspower-codex.log");`
+→ `const LOG_FILE = _sspowerCfg.codexLogPath();`
 
 Line 62: `const LOG_MAX_LINES = 1000;`
 →
 ```javascript
 const LOG_MAX_LINES = (() => {
   try {
-    const v = require("../hooks/_config.js").readConfig().log_rotate_lines;
+    const v = _sspowerCfg.readConfig().log_rotate_lines;
     return Number.isInteger(v) && v > 0 ? v : 1000;
   } catch { return 1000; }
 })();
 ```
-(`_config.js` is CommonJS — `hooks/package.json` is `{"type":"commonjs"}` — so `createRequire` resolves it correctly; explicit `.js` extension required by createRequire.)
 
 Update comment lines 57-59 to reference `~/.claude/sspower/codex.log` and `~/.claude/sspower/failures.jsonl`.
 
-Add a `mkdir` guard so first write on a fresh machine doesn't fail. Immediately after the new `LOG_MAX_LINES` block, add:
+`mkdir` guard so first write on a fresh machine doesn't fail. Immediately after the `LOG_MAX_LINES` block, add:
 ```javascript
-try { fs.mkdirSync(path.join(os.homedir(), ".claude", "sspower"), { recursive: true }); } catch { /* best effort */ }
+try { fs.mkdirSync(_sspowerCfg.sspowerDir(), { recursive: true }); } catch { /* best effort */ }
 ```
-(`fs`, `path`, `os` are already imported at top of file — confirm with `grep -nE "require\\(.(fs|path|os).\\)" scripts/codex-bridge.mjs`.)
+(`fs` already imported at top — confirm `grep -nE "^import fs " scripts/codex-bridge.mjs`. `os`/`path` may now be unused by the removed lines but are used elsewhere in the file; do NOT remove their imports without `grep -c '\bos\.\|\bpath\.' scripts/codex-bridge.mjs` confirming 0.)
 
-Verify (must prove config IS read, not silent 1000 fallback):
+Verify (proves: config IS read, AND paths honor the sandbox — never touches real `~/.claude`):
 ```
 node --check scripts/codex-bridge.mjs                       # syntax ok, exit 0
 T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
 node -e "require('./hooks/_config.js').writeConfigKey('log_rotate_lines',1234)"
-node --input-type=module -e "
-  import { createRequire } from 'node:module';
-  const r = createRequire(process.cwd()+'/scripts/codex-bridge.mjs');
-  console.log(r('./hooks/_config.js').readConfig().log_rotate_lines);
-"   # -> 1234  (proves createRequire path resolves _config from the bridge's location)
+node --input-type=module -e '
+  import { createRequire } from "node:module";
+  const r = createRequire(process.cwd()+"/scripts/codex-bridge.mjs");
+  const c = r("../hooks/_config.js");
+  console.log(c.readConfig().log_rotate_lines, c.failuresLogPath());
+'   # -> 1234  /tmp/.../sspower/failures.jsonl   (config read + path sandboxed)
 node scripts/codex-bridge.mjs --help | head -1              # usage banner, no throw
 rm -rf "$T"; unset CLAUDE_CONFIG_DIR
 ```
-The middle check fails loudly (prints `1000` or throws) if the ESM/createRequire wiring is wrong — catching exactly the silent-fallback bug.
+The `../hooks/_config.js` path mirrors the bridge's actual require exactly (re-review v2 #1: `./hooks/...` would be `MODULE_NOT_FOUND`). The printed path must start with `$T/` — proving the bridge no longer hardcodes `os.homedir()` (re-review v2 #2).
 
 Commit: `refactor(bridge): codex-bridge logs → ~/.claude/sspower/, rotate from config`
 
@@ -571,9 +579,21 @@ DIR="$BASE/sspower"
 mkdir -p "$DIR"
 
 moved=0
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
 mv_if() {  # $1=src $2=dst
-  if [ -e "$1" ] && [ ! -e "$2" ]; then mv "$1" "$2"; echo "moved: $1 -> $2"; moved=$((moved+1));
-  elif [ -e "$1" ] && [ -e "$2" ]; then echo "skip (dest exists): $1"; fi
+  [ -e "$1" ] || return 0
+  if [ ! -e "$2" ]; then
+    mv "$1" "$2"; echo "moved: $1 -> $2"; moved=$((moved+1))
+  else
+    # Conflict: new code already created $2 (post-upgrade, pre-migrate).
+    # NEVER leave the legacy root file orphaned (acceptance criterion) and
+    # NEVER silently drop its data. Archive the legacy source beside the
+    # destination with a timestamp, then remove it from root.
+    local bak="$2.pre-migrate-$ts"
+    mv "$1" "$bak"
+    echo "conflict: $2 existed; legacy archived -> $bak (root cleared)"
+    moved=$((moved+1))
+  fi
 }
 
 mv_if "$BASE/sspower-codex-failures.jsonl" "$DIR/failures.jsonl"
@@ -632,6 +652,18 @@ node -e "console.log(require('./hooks/_config.js').readActiveDiet())"  # -> full
 bash scripts/sspower-migrate.sh
 node -e "console.log(require('./hooks/_config.js').readActiveDiet())"  # -> full  (still!)
 rm -rf "$T"; unset CLAUDE_CONFIG_DIR
+
+# Conflict path: dst already exists + legacy root file also exists.
+# Legacy must be archived (no data loss) AND removed from root (no orphan).
+T2=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T2"
+mkdir -p "$T2/sspower"; printf 'NEW\n' > "$T2/sspower/codex.log"
+printf 'OLD\n' > "$T2/sspower-codex.log"
+bash scripts/sspower-migrate.sh
+test ! -e "$T2/sspower-codex.log"                              # root cleared (no orphan)
+ls "$T2/sspower/"codex.log.pre-migrate-* >/dev/null            # legacy archived (data kept)
+grep -q OLD "$T2/sspower/"codex.log.pre-migrate-*              # archived content intact
+grep -q NEW "$T2/sspower/codex.log"                            # new file untouched
+rm -rf "$T2"; unset CLAUDE_CONFIG_DIR
 ```
 Every `test` passes; both `readActiveDiet()` prints are `full` (second run does NOT reset diet — the idempotency bug fix); second run reports `moved=0` and "diet untouched".
 
