@@ -12,6 +12,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/codex-lsp-stop.sh",
+            "timeout": 130,
+            "statusMessage": "checking LSP before stop (advisory)"
+          }
+        ]
+      }
     ]
   }
 }
