@@ -32,6 +32,7 @@ const require = createRequire(import.meta.url);
 const _sspowerCfg = require("../hooks/_config.js");
 import * as registry from "./codex-registry.mjs";
 import { resolveCodexLspCli } from "./lib/codex-lsp-path.mjs";
+import { McpLspClient, isCleanDiagnosticsText } from "./mcp-lsp-client.mjs";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(BRIDGE_DIR, "..");
@@ -1279,6 +1280,198 @@ async function cmdSetup() {
   console.log("\nReady for SDD integration.");
 }
 
+// Source extensions codex-lsp can serve (subset; safe superset is fine —
+// files with no server return "No LSP server configured" → treated clean).
+const LSP_SOURCE_EXT = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+  ".py", ".pyi", ".rs", ".go", ".rb", ".swift", ".c", ".cpp", ".cc",
+  ".cxx", ".h", ".hpp", ".sh", ".bash",
+]);
+
+// Changed source files (post-run, pre-commit): committed-since-baseHead
+// ∪ unstaged ∪ staged ∪ untracked, filtered to LSP-serviceable extensions.
+function lspChangedFiles(cwd, baseHead) {
+  const run = (args) => {
+    try {
+      return execFileSync("git", ["-C", cwd, ...args], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      }).split("\n").map((s) => s.trim()).filter(Boolean);
+    } catch { return []; }
+  };
+  const set = new Set();
+  if (baseHead) for (const f of run(["diff", "--name-only", baseHead, "HEAD"])) set.add(f);
+  for (const f of run(["diff", "--name-only"])) set.add(f);
+  for (const f of run(["diff", "--name-only", "--cached"])) set.add(f);
+  for (const f of run(["ls-files", "--others", "--exclude-standard"])) set.add(f);
+  const out = [];
+  for (const rel of set) {
+    const dot = rel.lastIndexOf(".");
+    if (dot < 0) continue;
+    if (!LSP_SOURCE_EXT.has(rel.slice(dot).toLowerCase())) continue;
+    out.push(path.resolve(cwd, rel));
+  }
+  return out;
+}
+
+// Post-run bridge LSP gate. Returns the _lsp object (always — fail-open).
+// blockMode = SSPOWER_LSP_GATE_BLOCK==="1".
+async function runLspGate(cwd, baseHead, blockMode) {
+  const base = {
+    status: "skipped", decision: "clean",
+    checked_files: [], total_errors: 0, errors: [], repair_rounds: 0,
+  };
+  const cli = resolveCodexLspCli();
+  if (!cli) {
+    logEvent("info", "bridge.lsp", { kind: "gate_skipped_unresolved" });
+    return base;
+  }
+  const files = lspChangedFiles(cwd, baseHead);
+  if (files.length === 0) {
+    logEvent("info", "bridge.lsp", { kind: "gate_no_source_files" });
+    return { ...base, status: "clean", decision: "clean" };
+  }
+  const client = new McpLspClient(cli, cwd);
+  const gateDeadline = Date.now() + 120000; // §5.7a whole-gate 120s cap
+  const started = await client.start();
+  if (!started) {
+    await client.stop();
+    logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_init" });
+    return { ...base, status: "unavailable" };
+  }
+  const errors = [];
+  const checked = [];
+  try {
+    for (const f of files) {
+      if (Date.now() > gateDeadline) {
+        logEvent("warn", "bridge.lsp", { kind: "gate_timeout_cap", checked: checked.length });
+        await client.stop();
+        return { ...base, status: "unavailable", checked_files: checked };
+      }
+      const remaining = Math.max(1000, gateDeadline - Date.now());
+      const { ok, text } = await client.diagnostics(f, Math.min(30000, remaining));
+      checked.push(f);
+      if (!ok) {
+        await client.stop();
+        logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_call", file: f });
+        return { ...base, status: "unavailable", checked_files: checked };
+      }
+      if (!isCleanDiagnosticsText(text)) errors.push({ file: f, text });
+    }
+  } finally {
+    await client.stop();
+  }
+  if (errors.length === 0) {
+    logEvent("info", "bridge.lsp", { kind: "gate_clean", files: checked.length });
+    return { ...base, status: "clean", decision: "clean", checked_files: checked };
+  }
+  const decision = blockMode ? "block" : "would-block";
+  logEvent("info", "bridge.lsp", {
+    kind: "gate_errors", decision, files: checked.length, errs: errors.length,
+  });
+  return {
+    status: "errors", decision,
+    checked_files: checked, total_errors: errors.length, errors, repair_rounds: 0,
+  };
+}
+
+// Bounded LSP repair loop (§5.7b / D-B7). ≤2 resume rounds. Terminates on
+// ANY of the 7 spec conditions. Returns the final _lsp (decision updated).
+// Fail-open: any infra error ends the loop with the current _lsp.
+async function runLspRepairLoop(cwd, baseHead, sessionId, _lsp, blockMode) {
+  if (!sessionId) return _lsp;                         // cond 4: missing session
+  let prevErrHash = "";
+  for (let round = 1; round <= 2; round++) {           // cond 1: ≤2 rounds
+    // cond 6: pre-resume registry concurrency check
+    let rec = null;
+    try { rec = registry.readState(sessionId); } catch { rec = null; }
+    if (rec && ["running", "killed", "stale"].includes(rec.status)) {
+      logEvent("warn", "bridge.lsp", { kind: "repair_abort_registry", status: rec.status, round });
+      return { ..._lsp, repair_rounds: round - 1 };
+    }
+    // cond 7: HEAD drift
+    let headBefore = null;
+    try {
+      headBefore = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch { headBefore = null; }
+    if (baseHead && headBefore && headBefore !== baseHead && round === 1) {
+      logEvent("warn", "bridge.lsp", { kind: "repair_abort_head_drift", baseHead, headBefore });
+      return { ..._lsp, repair_rounds: 0 };
+    }
+    const diffBefore = lspDiffHash(cwd);
+    const errHash = lspErrHash(_lsp.errors);
+    if (errHash && errHash === prevErrHash) {           // cond 3: same diagnostics
+      logEvent("info", "bridge.lsp", { kind: "repair_stop_same_diag", round });
+      return { ..._lsp, repair_rounds: round - 1 };
+    }
+    prevErrHash = errHash;
+    const fileList = _lsp.errors.map((e) => e.file).join(", ");
+    const repairPrompt =
+      `LSP reports error-severity diagnostics after your edits. Fix ONLY these so the language server is clean. Do not change unrelated code. Files: ${fileList}\n\n` +
+      _lsp.errors.map((e) => `--- ${e.file} ---\n${e.text}`).join("\n\n");
+    let rr;
+    try {
+      rr = await runCodexResume(repairPrompt, {
+        sessionId, effort: "high", schemaName: "implementation-output", cd: cwd, lspMcp: true,
+      });
+    } catch {
+      logEvent("warn", "bridge.lsp", { kind: "repair_resume_threw", round });
+      return { ..._lsp, repair_rounds: round };          // fail-open
+    }
+    if (!rr || rr.exitCode !== 0) {                       // cond 5: nonzero resume
+      logEvent("warn", "bridge.lsp", { kind: "repair_resume_nonzero", round, code: rr && rr.exitCode });
+      return { ..._lsp, repair_rounds: round };
+    }
+    if (lspDiffHash(cwd) === diffBefore) {                // cond 2: no progress
+      logEvent("info", "bridge.lsp", { kind: "repair_stop_no_progress", round });
+      return { ..._lsp, repair_rounds: round };
+    }
+    let re;
+    try { re = await runLspGate(cwd, baseHead, blockMode); }
+    catch { logEvent("warn", "bridge.lsp", { kind: "repair_gate_threw", round }); return { ..._lsp, repair_rounds: round }; }
+    re.repair_rounds = round;
+    if (re.status === "clean") {
+      logEvent("info", "bridge.lsp", { kind: "repair_converged", round });
+      return re;                                          // decision=clean
+    }
+    _lsp = re;                                            // loop with new errors
+  }
+  logEvent("info", "bridge.lsp", { kind: "repair_exhausted" });
+  return { ..._lsp, repair_rounds: 2 };
+}
+
+function lspDiffHash(cwd) {
+  try {
+    const h = require("node:crypto").createHash("sha1");
+    h.update(execFileSync("git", ["-C", cwd, "diff", "HEAD"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    // git diff HEAD ignores untracked files, but the gate checks them
+    // (lspChangedFiles unions ls-files --others). Hash untracked contents
+    // too, else a repair that only edits an untracked file looks like
+    // "no progress" (cond-2 false-positive → premature loop abort).
+    const others = execFileSync("git", ["-C", cwd, "ls-files", "--others", "--exclude-standard"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split("\n").map((s) => s.trim()).filter(Boolean).sort();
+    for (const rel of others) {
+      h.update("\0" + rel + "\0");
+      try { h.update(fs.readFileSync(path.join(cwd, rel))); } catch { /* gone/binbig: name only */ }
+    }
+    return h.digest("hex");
+  } catch { return ""; }
+}
+function lspErrHash(errs) {
+  try {
+    const key = (errs || []).map((e) => e.file + "|" + (e.text || "")).sort().join("\n");
+    return require("node:crypto").createHash("sha1").update(key).digest("hex");
+  } catch { return ""; }
+}
+// Session id source of truth for the repair loop. result.sessionId is set by
+// _spawnAndCapture (available immediately); _meta.session_id is stamped later
+// in output(), AFTER the gate block, so it is undefined here — defensive only.
+function _extractSid(result) {
+  return result.sessionId || result.structured?._meta?.session_id || null;
+}
+
 async function cmdImplement(argv) {
   const opts = parseOpts(argv);
   const prompt = resolvePrompt(opts.prompt);
@@ -1314,6 +1507,24 @@ async function cmdImplement(argv) {
     ephemeral: false, // persist session for resume-based fix loops
     lspMcp: true,
   });
+
+  // Bridge-side LSP gate (D-B1: bridge-computed _lsp overrides Codex
+  // self-report). Advisory by default (D-B6); fail-open (D-B7).
+  if (result.structured && (workDir || opts.cd)) {
+    const cwdAbs = path.resolve(workDir || opts.cd);
+    const blockMode = process.env.SSPOWER_LSP_GATE_BLOCK === "1";
+    let _lsp = await runLspGate(cwdAbs, baseHead, blockMode);
+    if (_lsp.status === "errors") {
+      const sid = _extractSid(result);
+      _lsp = await runLspRepairLoop(cwdAbs, baseHead, sid, _lsp, blockMode);
+    }
+    result.structured._lsp = _lsp;
+    if (blockMode && _lsp.decision === "block") {
+      result.structured.status = "BLOCKED";
+      result.structured.blocked_reason =
+        `LSP gate: ${_lsp.total_errors} error(s) after ${_lsp.repair_rounds} repair round(s)`;
+    }
+  }
 
   // Auto-commit after successful implementation
   if (result.exitCode === 0 && result.structured?.status === "DONE" && opts.autoCommit) {
@@ -1795,8 +2006,25 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  cleanupTmpDir();
-  console.error(`codex-bridge: ${err.message}`);
-  process.exit(1);
-});
+// Import-safe CLI guard: only dispatch when run directly, not when imported
+// (e.g. tests importing __test_runLspGate). Canonicalize BOTH sides:
+// ESM import.meta.url resolves symlinks but process.argv[1] does not, so a
+// raw compare breaks under any symlinked path component (macOS /tmp →
+// /private/tmp, npm-link, marketplace cache) and main() silently never runs.
+let _isCli = false;
+try {
+  _isCli = !!process.argv[1] &&
+    fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1]);
+} catch { _isCli = false; }
+if (_isCli) {
+  main().catch((err) => {
+    cleanupTmpDir();
+    console.error(`codex-bridge: ${err.message}`);
+    process.exit(1);
+  });
+}
+
+export { runLspGate as __test_runLspGate };
+export { runLspRepairLoop as __test_runLspRepairLoop };
+export { _extractSid };
+export { lspDiffHash as __test_lspDiffHash };

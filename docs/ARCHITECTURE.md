@@ -400,16 +400,59 @@ Codex 0.130.0 approval gate. The standalone handshake above **is**
 the P3 re-plan trigger evidence ("codex-lsp `mcp` stdio mode manually
 smoke-tested working").
 
+The bridge-computed `_lsp` is injected into the runtime structured
+result object post-parse; it is deliberately NOT declared in
+`schemas/implementation-output.json` because OpenAI strict
+structured-output (`--output-schema`) forbids optional properties and
+open objects — declaring it 400s the Codex API.
+
 **P2 §9 acceptance:** clause 2 ("Codex self-repairs a seeded TS error
 in advisory mode") is **met** — the B2 hook path repaired `export
 const x: number = "not a number";` → `export const x: number = 0;`,
-advisory, run not blocked. Clause 1 ("lsp.status smoke passes") is
-**deferred to P3**: B1 registration is consumed and the codex-lsp
-server is healthy, but the Codex-model→MCP round-trip is blocked by
-Codex 0.130.0's per-tool-call approval gate (only
+advisory, run not blocked. Clause 1 ("lsp.status smoke passes") was
+initially blocked: B1-via-Codex-model registration is consumed and the
+codex-lsp server is healthy, but the Codex-model→MCP round-trip is
+blocked by Codex 0.130.0's per-tool-call approval gate (only
 `--dangerously-bypass-approvals-and-sandbox` overrides it, at
-unacceptable security cost). P3's bridge-side MCP client is the
-correct resolution, not a bridge approval-bypass.
+unacceptable security cost) — **now resolved by the bridge-side gate
+below**, not a bridge approval-bypass.
+
+### B1 resolution — bridge-side LSP gate (B3+B4, shipped)
+
+The bridge no longer asks Codex's *model* to call `lsp.*`. Instead
+`scripts/mcp-lsp-client.mjs` (a minimal newline-delimited
+JSON-RPC-2.0-over-stdio MCP client) is spawned by `codex-bridge.mjs`
+**after** an `implement`/`resume` run completes and queries the
+vendored `codex-lsp mcp` server **directly**, per changed file
+(`diagnostics`, `severity:"error"`). Because this bridge↔codex-lsp
+channel never traverses Codex's model tool-call path, it **structurally
+sidesteps the 0.130.0 per-tool-call approval gate** that blocked
+B1-via-model.
+
+- **Gate** (`runLspGate`): changed files = committed-since-baseHead ∪
+  unstaged ∪ staged ∪ untracked, filtered to LSP-serviceable
+  extensions; result normalized into bridge-injected
+  `result.structured._lsp` (D-B1: bridge truth overrides Codex
+  self-report). `_lsp` is injected post-parse and is **not** in the
+  JSON-Schema file (see strict-output note above).
+- **Repair loop** (`runLspRepairLoop`): ≤2 `codex exec resume` rounds,
+  terminating on the seven §5.7b conditions; `_lsp.decision ∈
+  {clean, would-block, block}`.
+- **Advisory default (D-B6):** `decision="would-block"`, run not
+  failed. `SSPOWER_LSP_GATE_BLOCK=1` promotes to `block` (distinct
+  from B2's `SSPOWER_LSP_SELFREPAIR_BLOCK`; independently promotable).
+- **Fail-open (D-B7):** unresolved codex-lsp / MCP init fail / per-file
+  or 120s-gate timeout → `_lsp.status ∈ {skipped, unavailable}`, gate
+  passes, logged `bridge.lsp …`.
+
+**Verified end-to-end (2026-05-18 dogfood, real Codex):** a seeded
+`bad.ts` (`export const x: number = "not a number";`) → gate detected
+the error → repair loop fired (`repair_rounds: 1`) → Codex `resume`
+fixed it → re-gate `_lsp:{status:"clean",decision:"clean"}`, run exit
+0. A clean run reported `_lsp.status="clean"`, `repair_rounds:0`. In
+both runs **zero** `user cancelled MCP tool call` — confirming the
+bridge-direct path bypasses the Codex approval gate. **Spec §9 P2/P3
+clause 1 is now met via the bridge gate**, not the in-Codex MCP path.
 
 **Promotion (advisory → block), per-phase, never automated (D-B6):**
 the operator confirms **≥10** consecutive `implement`/`resume` runs
