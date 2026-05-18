@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(shell|bash|run|exec)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/codex-guard-pretool.sh",
+            "timeout": 10,
+            "statusMessage": "sspower guard (git/rm/install)"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "^(apply_patch|Write|Edit|MultiEdit|multi_edit|write|edit|multiedit)$",
