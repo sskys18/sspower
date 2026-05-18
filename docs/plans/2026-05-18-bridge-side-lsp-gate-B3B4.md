@@ -244,39 +244,31 @@ Expected: no output, exit 0.
 
 # PHASE B4 — `_lsp` schema + post-run gate + advisory/block + repair loop
 
-### Task 2: `_lsp` schema fields
+### Task 2: `_lsp` schema fields — DO NOT ADD (corrected after B4 T2 dogfood)
 
 **Files:**
-- Modify: `schemas/implementation-output.json`
+- `schemas/implementation-output.json` — **leave UNMODIFIED**
 
-- [ ] **Step 1: Add the `_lsp` property**
+**DO NOT add `_lsp` to `schemas/implementation-output.json`.**
 
-Re-read `schemas/implementation-output.json` fully. The root object has `"additionalProperties": false` and a `required` array. Add `_lsp` as an **optional** property (NOT added to `required` — Codex never self-reports it; the bridge injects it post-parse, and `additionalProperties:false` would otherwise reject a bridge-added key, so it MUST be declared). Insert into `properties` (after `blocked_reason`'s property block, matching existing indentation/style — re-read to match exactly):
-```json
-    "_lsp": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["status", "decision", "checked_files", "total_errors", "errors"],
-      "properties": {
-        "status": { "type": "string", "enum": ["clean", "errors", "unavailable", "skipped"], "description": "Bridge-observed LSP gate status (overrides Codex self-report, D-B1)" },
-        "decision": { "type": "string", "enum": ["clean", "would-block", "block"], "description": "Advisory verdict (D-B6): would-block in advisory mode, block only when SSPOWER_LSP_GATE_BLOCK=1" },
-        "checked_files": { "type": "array", "items": { "type": "string" }, "description": "Absolute paths the gate ran diagnostics on" },
-        "total_errors": { "type": "integer", "description": "Total error-severity diagnostics across checked files" },
-        "errors": { "type": "array", "items": { "type": "object", "additionalProperties": true }, "description": "Raw per-file diagnostic text blocks (file → text)" },
-        "repair_rounds": { "type": "integer", "description": "Repair resume rounds attempted (0 if none)" }
-      }
-    }
-```
+Rationale: OpenAI strict structured-output (`codex exec --output-schema`) rejects optional properties — every property must be in `required` and `additionalProperties:true` is forbidden. `_lsp` is bridge-injected post-parse (cmdImplement sets `result.structured._lsp`) and is NEVER validated against the schema (`parseStructuredOutput` = plain JSON.parse, no ajv). Adding it to the schema file only breaks the Codex API call (invalid_json_schema 400). The spec §5.7 'schema gains _lsp' is realized at the runtime-object level, not the JSON-Schema-file level.
 
-- [ ] **Step 2: Validate the schema is still valid JSON**
+(The original B4 T2 premise — "`additionalProperties:false` would reject a bridge-added key, so `_lsp` MUST be declared" — was incorrect: there is no re-validation. A real dogfood proved adding `_lsp` 400s Codex in ~7s via `invalid_request_error / invalid_json_schema`. Making `_lsp` `required` to satisfy strict mode would wrongly force the model to emit it; optional properties are categorically rejected. There is no strict-compliant way to keep `_lsp` in the schema — so it stays out entirely.)
 
-Run: `node -e 'JSON.parse(require("fs").readFileSync("schemas/implementation-output.json","utf8"));console.log("schema valid")'`
-Expected: `schema valid`.
+- [ ] **Step 1: Confirm `_lsp` is NOT in the schema**
 
-- [ ] **Step 3: Confirm parser tolerates the new optional field**
+Run: `node -e 'const s=require("./schemas/implementation-output.json");console.log("_lsp absent:", !("_lsp" in s.properties), "| root.required has all props:", s.required.length===Object.keys(s.properties).length)'`
+Expected: `_lsp absent: true | root.required has all props: true`.
+
+- [ ] **Step 2: Confirm schema is byte-identical to its pre-B4 state**
+
+Run: `diff <(git show 294ee0b:schemas/implementation-output.json) schemas/implementation-output.json`
+Expected: empty output (exit 0).
+
+- [ ] **Step 3: Confirm no parser/test regression**
 
 Run: `bash tests/codex-bridge/test-complete.sh`
-Expected: still `PASS=14 FAIL=0` (no schema regression; `_lsp` optional so existing fixtures unaffected).
+Expected: still `PASS=14 FAIL=0`.
 
 ### Task 3: Post-run LSP gate in the bridge (advisory `_lsp`, no repair yet)
 
@@ -527,9 +519,21 @@ async function runLspRepairLoop(cwd, baseHead, sessionId, _lsp, blockMode) {
 
 function lspDiffHash(cwd) {
   try {
-    const d = execFileSync("git", ["-C", cwd, "diff", "HEAD"], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    return require("node:crypto").createHash("sha1").update(d).digest("hex");
+    const h = require("node:crypto").createHash("sha1");
+    h.update(execFileSync("git", ["-C", cwd, "diff", "HEAD"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    // git diff HEAD ignores untracked files, but the gate checks them
+    // (lspChangedFiles unions ls-files --others). Hash untracked contents
+    // too, else a repair that only edits an untracked file looks like
+    // "no progress" (cond-2 false-positive → premature loop abort).
+    const others = execFileSync("git", ["-C", cwd, "ls-files", "--others", "--exclude-standard"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      .split("\n").map((s) => s.trim()).filter(Boolean).sort();
+    for (const rel of others) {
+      h.update("\0" + rel + "\0");
+      try { h.update(fs.readFileSync(path.join(cwd, rel))); } catch { /* gone/binbig: name only */ }
+    }
+    return h.digest("hex");
   } catch { return ""; }
 }
 function lspErrHash(errs) {
@@ -539,7 +543,8 @@ function lspErrHash(errs) {
   } catch { return ""; }
 }
 ```
-(`require` is already available — `createRequire` at bridge top, line ~31. Reuse it; do not re-create.)
+(`require` is already available — `createRequire` at bridge top, line ~31. Reuse it; do not re-create. `fs`/`path` are already imported — reuse, do not add imports.)
+> Note: hashes untracked file contents too — the gate (lspChangedFiles) checks untracked files, so a diff-HEAD-only hash would false-positive cond-2 (no-progress) when a repair edits an untracked file.
 
 - [ ] **Step 3: Invoke the loop from `cmdImplement`**
 
@@ -550,7 +555,7 @@ Replace the Task 3 Step 3 inserted block's tail so that, when the gate returns `
     const blockMode = process.env.SSPOWER_LSP_GATE_BLOCK === "1";
     let _lsp = await runLspGate(cwdAbs, baseHead, blockMode);
     if (_lsp.status === "errors") {
-      const sid = result.structured?._meta?.session_id || null;
+      const sid = result.sessionId || result.structured?._meta?.session_id || null;
       _lsp = await runLspRepairLoop(cwdAbs, baseHead, sid, _lsp, blockMode);
     }
     result.structured._lsp = _lsp;
@@ -561,6 +566,8 @@ Replace the Task 3 Step 3 inserted block's tail so that, when the gate returns `
     }
   }
 ```
+> Note: `result.sessionId` (set in _spawnAndCapture) is the primary source — `_meta.session_id` is stamped later in output(), after the gate, so it is undefined here.
+> Implementation extracts this via a shared `_extractSid(result)` helper (exported for test) so the production path and unit test share one source of truth.
 
 - [ ] **Step 4: Termination unit test (no real Codex — stub the resume seam)**
 
