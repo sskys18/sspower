@@ -1321,6 +1321,10 @@ function lspChangedFiles(cwd, baseHead) {
     const dot = rel.lastIndexOf(".");
     if (dot < 0) continue;
     if (!LSP_SOURCE_EXT.has(rel.slice(dot).toLowerCase())) continue;
+    // Skip deleted/stale paths: a removed source file would be sent to
+    // diagnostics() on a nonexistent path → false would-block, or an
+    // unrepairable block-mode loop (Issue 4).
+    if (!fs.existsSync(path.resolve(cwd, rel))) continue;
     out.push(path.resolve(cwd, rel));
   }
   return out;
@@ -1523,8 +1527,10 @@ async function cmdImplement(argv) {
 
   // Bridge-side LSP gate (D-B1: bridge-computed _lsp overrides Codex
   // self-report). Advisory by default (D-B6); fail-open (D-B7).
-  if (result.structured && (workDir || opts.cd)) {
-    const cwdAbs = path.resolve(workDir || opts.cd);
+  if (result.structured) {
+    // cwd basis MUST mirror baseHead's `workDir || "."` so the gate diffs
+    // the same tree the HEAD snapshot was taken against (Issue 1).
+    const cwdAbs = path.resolve(workDir || opts.cd || ".");
     const blockMode = process.env.SSPOWER_LSP_GATE_BLOCK === "1";
     let _lsp = await runLspGate(cwdAbs, baseHead, blockMode);
     if (_lsp.status === "errors") {

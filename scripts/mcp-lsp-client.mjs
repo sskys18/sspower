@@ -57,6 +57,10 @@ export class McpLspClient {
         arguments: { filePath, severity },
       }, perCallTimeoutMs);
       if (!res || res.error || !res.result) return { ok: false, text: "" };
+      // MCP tool-level failure (server crash/timeout/dep-missing) comes back
+      // as a SUCCESSFUL JSON-RPC response with result.isError===true. Treat
+      // as unavailable → fail-open, exactly like a JSON-RPC error (Issue 2).
+      if (res.result.isError) return { ok: false, text: "" };
       const text = (res.result.content || [])
         .filter((b) => b && b.type === "text")
         .map((b) => b.text)
