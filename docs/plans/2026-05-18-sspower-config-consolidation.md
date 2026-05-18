@@ -26,6 +26,12 @@ Review JSON: `docs/reviews/2026-05-18-sspower-config-consolidation-plan-review.j
 | blocking | Task 6 hardcoded `os.homedir()` → inconsistent with `_config.js`, untestable under sandbox | Task 6 now derives `FAILURE_LOG`/`LOG_FILE`/`sspowerDir` from `_config.js` helpers (single path source, honors `CLAUDE_CONFIG_DIR`) |
 | blocking | `mv_if` skipped on dst-exists → legacy root file orphaned (violates acceptance criterion) | `mv_if` archives legacy → `<dst>.pre-migrate-<ts>` and clears root; verifier asserts no orphan + content kept |
 
+**Final branch review** (`needs-attention`, 1 blocking — fixed in REV6, found post-implementation):
+
+| Sev | Finding | Fix |
+|---|---|---|
+| blocking | Migration `rm -f .sspower-diet` ran BEFORE `writeConfigKey`, and `node -e` ignored the boolean return (exit 0 even on false) → diet state lost if config write fails | Delete legacy flag only AFTER `process.exit(writeConfigKey(...)?0:1)` confirms success; `set -euo pipefail` aborts before the `rm` on failure. Added failure-injection verifier (parent-symlink → nonzero exit + flag preserved intact) |
+
 ## Outcome
 
 `~/.claude/` root: 4 scattered files (`sspower-codex-failures.jsonl`, `sspower-codex.log`, `.sspower-diet`, `sspower-codex-patches.md`) → one dir `~/.claude/sspower/` with one config file `config.json` (`{diet, log_rotate_lines}`). Logs/doc are separate files inside that dir. All runtime + cross-repo consumers updated. Manual migration script. No data loss.
@@ -614,18 +620,24 @@ migrated_diet=""
 if [ -f "$BASE/.sspower-diet" ]; then
   raw="$(tr -d '[:space:]' < "$BASE/.sspower-diet" | tr '[:upper:]' '[:lower:]')"
   case "$raw" in lite|full|ultra) migrated_diet="$raw" ;; *) migrated_diet="off" ;; esac
-  rm -f "$BASE/.sspower-diet"
-  echo "migrated diet flag: $migrated_diet"
+  # NO-DATA-LOSS: do NOT delete the legacy flag here. Removed only AFTER
+  # writeConfigKey confirms success below. Write fails -> node exits 1 ->
+  # set -euo pipefail aborts -> legacy flag survives for a retry.
 fi
 
 if [ -n "$migrated_diet" ]; then
   # Legacy flag existed THIS run -> authoritative. writeConfigKey merges
   # DEFAULTS, so log_rotate_lines is set on a brand-new file in the same call.
-  CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('diet','$migrated_diet')"
+  # process.exit(...?0:1): false return (symlink/parent-symlink/perms/refusal)
+  # -> node exit 1 -> set -e aborts BEFORE the rm -> no data loss.
+  CLAUDE_CONFIG_DIR="$BASE" node -e "process.exit(require('$NODE_CFG').writeConfigKey('diet','$migrated_diet') ? 0 : 1)"
+  rm -f "$BASE/.sspower-diet"
+  echo "migrated diet flag: $migrated_diet"
 elif [ ! -f "$CONFIG" ]; then
   # Brand-new config, no legacy flag: one write seeds the file. writeConfigKey
   # read-merges DEFAULTS, so the file lands as {"diet":"off","log_rotate_lines":1000}.
-  CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('log_rotate_lines',1000)"
+  # Fail loudly (exit 1) if the config is unwritable.
+  CLAUDE_CONFIG_DIR="$BASE" node -e "process.exit(require('$NODE_CFG').writeConfigKey('log_rotate_lines',1000) ? 0 : 1)"
 else
   # Config already exists, no legacy flag this run: touch NOTHING.
   # Re-run safety — never overwrite a previously migrated diet value.
@@ -668,8 +680,19 @@ ls "$T2/sspower/"codex.log.pre-migrate-* >/dev/null            # legacy archived
 grep -q OLD "$T2/sspower/"codex.log.pre-migrate-*              # archived content intact
 grep -q NEW "$T2/sspower/codex.log"                            # new file untouched
 rm -rf "$T2"; unset CLAUDE_CONFIG_DIR
+
+# NO-DATA-LOSS failure injection (final-review blocking fix): if the config
+# write fails, the legacy .sspower-diet MUST survive and the script MUST
+# exit nonzero (no silent success, no lost diet state).
+T3=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T3"
+echo full > "$T3/.sspower-diet"
+mkdir -p "$T3/realdir"; ln -s "$T3/realdir" "$T3/sspower"   # parent-dir symlink -> writeConfigKey()=false
+if bash scripts/sspower-migrate.sh >/dev/null 2>&1; then echo "BUG: exited 0 on write failure"; exit 1; fi
+test -f "$T3/.sspower-diet"                                  # legacy flag PRESERVED
+grep -q full "$T3/.sspower-diet"                             # content intact
+rm -rf "$T3"; unset CLAUDE_CONFIG_DIR
 ```
-Every `test` passes; both `readActiveDiet()` prints are `full` (second run does NOT reset diet — the idempotency bug fix); second run reports `moved=0` and "diet untouched".
+Every `test` passes; both `readActiveDiet()` prints are `full` (second run does NOT reset diet — the idempotency bug fix); second run reports `moved=0` and "diet untouched". The failure-injection block proves no-data-loss: write refused → nonzero exit → `.sspower-diet` survives intact.
 
 Commit: `feat(migrate): one-shot idempotent sspower-migrate.sh`
 

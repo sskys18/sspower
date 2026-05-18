@@ -44,18 +44,25 @@ migrated_diet=""
 if [ -f "$BASE/.sspower-diet" ]; then
   raw="$(tr -d '[:space:]' < "$BASE/.sspower-diet" | tr '[:upper:]' '[:lower:]')"
   case "$raw" in lite|full|ultra) migrated_diet="$raw" ;; *) migrated_diet="off" ;; esac
-  rm -f "$BASE/.sspower-diet"
-  echo "migrated diet flag: $migrated_diet"
+  # NO-DATA-LOSS: do NOT delete the legacy flag here. It is removed only
+  # AFTER writeConfigKey confirms success below. If the write fails the
+  # node -e exits nonzero, `set -euo pipefail` aborts, and the legacy flag
+  # survives for a retry.
 fi
 
 if [ -n "$migrated_diet" ]; then
   # Legacy flag existed THIS run -> authoritative. writeConfigKey merges
   # DEFAULTS, so log_rotate_lines is set on a brand-new file in the same call.
-  CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('diet','$migrated_diet')"
+  # process.exit(...?0:1): a false return (symlink / parent-symlink / perms /
+  # refusal) -> node exit 1 -> set -e aborts BEFORE the rm -> no data loss.
+  CLAUDE_CONFIG_DIR="$BASE" node -e "process.exit(require('$NODE_CFG').writeConfigKey('diet','$migrated_diet') ? 0 : 1)"
+  rm -f "$BASE/.sspower-diet"
+  echo "migrated diet flag: $migrated_diet"
 elif [ ! -f "$CONFIG" ]; then
   # Brand-new config, no legacy flag: one write seeds the file. writeConfigKey
   # read-merges DEFAULTS, so the file lands as {"diet":"off","log_rotate_lines":1000}.
-  CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('log_rotate_lines',1000)"
+  # Fail loudly (exit 1) if the config is unwritable.
+  CLAUDE_CONFIG_DIR="$BASE" node -e "process.exit(require('$NODE_CFG').writeConfigKey('log_rotate_lines',1000) ? 0 : 1)"
 else
   # Config already exists, no legacy flag this run: touch NOTHING.
   # Re-run safety — never overwrite a previously migrated diet value.
