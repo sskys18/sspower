@@ -2,27 +2,24 @@
 // sspower diet — SessionStart activation hook
 //
 // Runs on every session start:
-//   1. Writes flag file at $CLAUDE_CONFIG_DIR/.sspower-diet (for tracker/statusline)
+//   1. Writes active diet level into ~/.claude/sspower/config.json (read by diet-track)
 //   2. Emits diet ruleset as hidden SessionStart context, filtered to active level
 //
 // Adapted from caveman/hooks/caveman-activate.js (MIT, Julius Brussee).
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
-const { getDefaultMode, safeWriteFlag } = require('./_diet-config');
-
-const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-const flagPath = path.join(claudeDir, '.sspower-diet');
+const { getDefaultMode } = require('./_diet-config');
+const { writeActiveDiet, clearActiveDiet } = require('./_config');
 
 const mode = getDefaultMode();
 
 if (mode === 'off') {
-  try { fs.unlinkSync(flagPath); } catch (e) {}
+  clearActiveDiet();          // sets config.json diet:"off"; never unlinks config
   process.exit(0);
 }
 
-safeWriteFlag(flagPath, mode);
+writeActiveDiet(mode);
 
 // Read SKILL.md — single source of truth for diet behavior.
 // Plugin layout: __dirname = <plugin_root>/hooks/, SKILL.md at <plugin_root>/skills/diet/SKILL.md
