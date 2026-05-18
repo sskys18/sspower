@@ -32,7 +32,12 @@ fs.mkdirSync(path.dirname(dst), { recursive: true });
 let existing = {};
 if (fs.existsSync(dst)) {
   try { existing = JSON.parse(fs.readFileSync(dst, "utf8")) || {}; }
-  catch { existing = {}; } // unparseable / our own old shape → safe to rewrite
+  catch {
+    // Unparseable: could be a user hand-edit (JSONC, syntax error, partial
+    // write). Refuse to overwrite — fail-open must never destroy user data.
+    console.error(`[setup-codex-lsp] WARNING: ${dst} exists but is not valid JSON — leaving it untouched (refusing to overwrite possible user config).`);
+    process.exit(0);
+  }
 }
 const mergedLsp = { ...ourEntries, ...(existing.lsp || {}) };
 const next = { ...existing, lsp: mergedLsp };

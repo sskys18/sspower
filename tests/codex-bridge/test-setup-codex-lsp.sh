@@ -5,7 +5,7 @@ SCRIPT="$ROOT/scripts/setup-codex-lsp.mjs"
 
 # --- Case 1: fresh HOME → file has codex-lsp-loadable .lsp shape ---
 H1="$(mktemp -d)"
-trap 'rm -rf "$H1" "$H2"' EXIT
+trap 'rm -rf "$H1" "$H2" "$H3"' EXIT
 HOME="$H1" node "$SCRIPT" >/dev/null
 CFG1="$H1/.codex/lsp-client.json"
 [ -f "$CFG1" ] || { echo "FAIL: $CFG1 not written"; exit 1; }
@@ -44,5 +44,24 @@ case "$OUT" in
   *up-to-date*) echo "PASS: idempotent (up-to-date on 2nd run)";;
   *) echo "FAIL: 2nd run not idempotent: $OUT"; exit 1;;
 esac
+
+# --- Case 3: pre-existing UNPARSEABLE user file → untouched + exit 0 + warning ---
+H3="$(mktemp -d)"
+mkdir -p "$H3/.codex"
+BADCFG="$H3/.codex/lsp-client.json"
+printf 'not json {{{' > "$BADCFG"
+SHA_BEFORE="$(shasum "$BADCFG" | awk '{print $1}')"
+set +e
+ERR3="$(HOME="$H3" node "$SCRIPT" 2>&1 >/dev/null)"
+RC3=$?
+set -e
+[ "$RC3" -eq 0 ] || { echo "FAIL: unparseable file did not exit 0 (rc=$RC3)"; exit 1; }
+case "$ERR3" in
+  *WARNING*not\ valid\ JSON*leaving\ it\ untouched*) echo "PASS: unparseable file → stderr WARNING printed";;
+  *) echo "FAIL: expected untouched WARNING on stderr, got: $ERR3"; exit 1;;
+esac
+SHA_AFTER="$(shasum "$BADCFG" | awk '{print $1}')"
+[ "$SHA_BEFORE" = "$SHA_AFTER" ] || { echo "FAIL: unparseable user file was overwritten ($SHA_BEFORE != $SHA_AFTER)"; exit 1; }
+echo "PASS: unparseable user file left byte-identical (no clobber)"
 
 echo "PASS: test-setup-codex-lsp"

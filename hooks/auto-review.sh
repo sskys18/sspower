@@ -426,6 +426,9 @@ EOF
   # Tier-aware timeout: max(main, security) since they run in parallel
   if [ -n "${SSPOWER_REVIEW_TIMEOUT:-}" ]; then
     REVIEW_TIMEOUT="$SSPOWER_REVIEW_TIMEOUT"
+    MAIN_TIMEOUT="$REVIEW_TIMEOUT"
+    SEC_TIMEOUT="$REVIEW_TIMEOUT"
+    SANITY_TIMEOUT="$REVIEW_TIMEOUT"
   else
     case "$ROUND_EFFORT" in
       low|minimal) MAIN_TIMEOUT=60 ;;
