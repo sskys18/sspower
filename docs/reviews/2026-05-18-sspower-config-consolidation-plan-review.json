@@ -1,0 +1,104 @@
+{
+  "verdict": "needs-attention",
+  "strengths": [
+    "The plan is mapped task-by-task to most changed files in the spec, including plugin repo and cross-repo consumers.",
+    "It preserves the stated `_diet-config.js` default-mode non-goal and documents the `_log.sh` rotation carve-out.",
+    "It includes focused unit tests for absent/corrupt config, off semantics, and config-path symlink refusal."
+  ],
+  "issues": [
+    {
+      "severity": "blocking",
+      "title": "`codex-bridge.mjs` rotation never reads `config.json`",
+      "body": "Task 6 inserts `require('../hooks/_config')` inside an ES module. In `.mjs`, `require` is undefined. Because the expression is wrapped in `try/catch`, this will not crash, but it will always fall back to `1000`, so the spec requirement that `codex-bridge.mjs` rotation reads `readConfig().log_rotate_lines` is not implemented. The planned verifiers (`node --check` and `--help`) would not catch this.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 374,
+      "line_end": 382,
+      "recommendation": "Use `createRequire(import.meta.url)` from `node:module`, or add an ESM-compatible import path, and add a verifier that sets `CLAUDE_CONFIG_DIR` with `log_rotate_lines` and proves the bridge reads it.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "blocking",
+      "title": "Migration is not idempotent for diet state",
+      "body": "The migration script initializes `diet=\"off\"` and always writes that value when no legacy `.sspower-diet` file exists. On a second run after successfully migrating `full`, the old flag is gone, so the script overwrites `config.json.diet` back to `off`. This contradicts the spec's idempotent/no-data-loss migration requirement and the plan's own sandbox verifier does not re-check diet after the second run.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 491,
+      "line_end": 506,
+      "recommendation": "Only write `diet` when migrating an existing legacy flag, or when creating a brand-new config with no existing `diet`; then extend the rerun verifier to assert the diet remains `full`.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "blocking",
+      "title": "`readConfig()` lacks parent-directory symlink refusal",
+      "body": "The spec and plan notes require security parity with `_diet-config.js`: symlink refusal at file and parent dir. The planned `readConfig()` checks only `config.json` itself. If `~/.claude/sspower` is a symlinked directory, reads can follow it, weakening the stated hardening. Test 6 only covers a symlink at `config.json`, not the parent directory case.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 71,
+      "line_end": 96,
+      "recommendation": "Before opening `config.json`, `lstatSync(sspowerDir())` and return defaults if it is a symlink or not a directory. Add tests for parent-dir symlink refusal on read and write.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "blocking",
+      "title": "Plan contradicts `log_rotate_lines` read-only-to-code contract",
+      "body": "The spec says `log_rotate_lines` is user-edited and no code path writes it. The plan repeats that, but Task 10 writes `log_rotate_lines` from the migration script, and Task 2 normalizes writing it through `writeConfigKey`. That makes the contract ambiguous: either migration is allowed to initialize defaults, or the key is genuinely never written by code. As written, implementation can satisfy one statement only by violating the other.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 17,
+      "line_end": 17,
+      "recommendation": "State the exact exception if migration may initialize the key once, and keep runtime code from writing it. If no code may write it, remove the migration write and let `readConfig()` defaults supply `1000` until the user creates the key.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "blocking",
+      "title": "Task verifiers mutate the live user config",
+      "body": "Task 4 and Task 5 verification commands do not set `CLAUDE_CONFIG_DIR`, so they write to the real `~/.claude/sspower/config.json` during implementation. That can change the live diet state before the planned manual migration/session-boundary step, creating exactly the kind of mid-session state mutation the spec warns about.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 306,
+      "line_end": 306,
+      "recommendation": "Run these verifiers under a temporary `CLAUDE_CONFIG_DIR` and clean it up, matching the safer Task 11 pattern.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "advisory",
+      "title": "Forced failure append verification from spec is missing",
+      "body": "The spec rollout explicitly requires verifying that a forced Codex failure appends to `~/.claude/sspower/failures.jsonl`. Task 11 checks syntax and `--help`, but never exercises `appendFailure()` or proves failure events use the new path.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 548,
+      "line_end": 549,
+      "recommendation": "Add a sandboxed verifier that triggers a controlled bridge failure and asserts `$CLAUDE_CONFIG_DIR/sspower/failures.jsonl` is created/appended.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "advisory",
+      "title": "Initial fail-closed consumer sweep is not a task",
+      "body": "The spec says implementation step 1 is an exhaustive grep across plugin and config repo before edits, failing closed on unlisted hits. The plan only performs stale-path sweeps after docs/cross-repo edits. Final sweeps are useful, but they do not satisfy the spec's pre-edit discovery step.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 36,
+      "line_end": 36,
+      "recommendation": "Insert a Task 0 before creating `_config.js` that runs the plugin and config-repo grep, records expected hits, and blocks implementation on any unlisted consumer.",
+      "suggested_patch": null
+    },
+    {
+      "severity": "advisory",
+      "title": "Migration verifier does not test `patches.md` preservation",
+      "body": "The spec calls out `sspower-codex-patches.md` as a no-data-loss migration requirement, and the acceptance criteria mention all four legacy files. The sandbox migration verifier creates and checks only `codex.log` and `failures.jsonl`; it never proves `patches.md` is moved.",
+      "file": "docs/plans/2026-05-18-sspower-config-consolidation.md",
+      "line_start": 514,
+      "line_end": 521,
+      "recommendation": "Add a sandbox `sspower-codex-patches.md` fixture and assert it appears as `$T/sspower/patches.md` after migration.",
+      "suggested_patch": null
+    }
+  ],
+  "assessment": "Do not approve as-is. The plan is close, but it has at least three executable correctness gaps: config-driven bridge rotation silently falls back forever, migration reruns erase diet state, and config reads do not preserve the stated parent-symlink hardening.",
+  "_meta": {
+    "session_id": "019e3921-3dda-7053-9750-16e6c3a669ac",
+    "duration_ms": 80292,
+    "tool_calls": 0,
+    "edits": 0,
+    "execs": 18,
+    "errors": 0,
+    "tokens": {
+      "input": 259324,
+      "output": 4794,
+      "total": 264118
+    }
+  }
+}

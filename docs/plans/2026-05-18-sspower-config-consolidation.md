@@ -4,6 +4,20 @@
 > Branch: `refactor/sspower-config-consolidation` (off `main`, already created)
 > Date: 2026-05-18
 
+## Codex plan-review resolution (v1 `needs-attention` → REV2)
+
+Review JSON: `docs/reviews/2026-05-18-sspower-config-consolidation-plan-review.json`.
+
+| Sev | Finding | Fix |
+|---|---|---|
+| blocking | `codex-bridge.mjs` is ESM — bare `require` undefined → config rotation silently never read | Task 6: `createRequire(import.meta.url)` + verifier that proves `1234` is read (not 1000 fallback) |
+| blocking | Migration not idempotent — rerun resets migrated diet to `off` | Task 10: write diet only if legacy flag existed; brand-new seeds via DEFAULTS merge; existing config untouched on rerun; verifier re-asserts `full` after 2nd run |
+| blocking | `readConfig()` missing parent-dir symlink refusal (security parity) | Task 1: `lstatSync(sspowerDir())` symlink/dir check; Task 2 tests parent-symlink read+write (PASS 12→16) |
+| advisory | Task 3/4/5 verifiers touch real `~/.claude` | All wrapped in temp `CLAUDE_CONFIG_DIR` |
+| advisory | No forced-failure append proof (spec rollout step 4) | Task 11 step 6 sandbox verifier |
+| advisory | Spec impl-step-1 pre-edit fail-closed sweep absent | New Task 0 (gate) |
+| advisory | Migration verifier ignored `patches.md` | Task 10 verifier adds fixture + asserts moved |
+
 ## Outcome
 
 `~/.claude/` root: 4 scattered files (`sspower-codex-failures.jsonl`, `sspower-codex.log`, `.sspower-diet`, `sspower-codex-patches.md`) → one dir `~/.claude/sspower/` with one config file `config.json` (`{diet, log_rotate_lines}`). Logs/doc are separate files inside that dir. All runtime + cross-repo consumers updated. Manual migration script. No data loss.
@@ -30,6 +44,32 @@ Modified (plugin repo):
 
 Modified (config repo `~/.claude`, separate git repo — Task 9):
 - `bin/codex-failures` `skills/codex-health/SKILL.md`
+
+---
+
+## Task 0 — Pre-edit fail-closed consumer sweep (spec impl-step 1)
+
+Before any edit, enumerate every consumer of the legacy paths and assert it matches the known set. Run from plugin root:
+
+```
+grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
+  --include='*.js' --include='*.mjs' --include='*.sh' --include='*.md' . \
+  | grep -vE '/docs/specs/|/docs/plans/|/docs/reviews/|/docs/.*handoff|/\.git/|/\.claude/wiki/' \
+  | sort > /tmp/sspower_consumers_plugin.txt
+grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
+  "$HOME/.claude/bin" "$HOME/.claude/skills/codex-health" 2>/dev/null | sort \
+  > /tmp/sspower_consumers_cfg.txt
+cat /tmp/sspower_consumers_plugin.txt /tmp/sspower_consumers_cfg.txt
+```
+
+Expected consumer set (every printed line must map to one of these; any extra line BLOCKS implementation until added to the plan):
+
+- Plugin: `scripts/codex-bridge.mjs` (FAILURE_LOG, LOG_FILE, comments) · `hooks/prompt-submit` (DIAG_LOG) · `hooks/_log.sh` (SSPOWER_LOG_FILE) · `hooks/_diet-config.js` (.sspower-diet flag I/O) · `hooks/diet-activate.js` (flagPath) · `hooks/diet-track.js` (flagPath) · `skills/codex-diagnostics/SKILL.md` · `README.md` · `docs/ARCHITECTURE.md` · `CLAUDE.md`
+- Config repo: `bin/codex-failures` · `skills/codex-health/SKILL.md`
+
+If a line falls outside this set, STOP — extend the plan with a task for it before proceeding. No edits this task; it is a gate.
+
+Commit: none (verification gate only).
 
 ---
 
@@ -71,6 +111,14 @@ function codexLogPath() { return path.join(sspowerDir(), 'codex.log'); }
 function readConfig() {
   const p = configPath();
   try {
+    // Parent-dir symlink refusal (security parity with _diet-config.js,
+    // which lstat-checks flagDir). If ~/.claude/sspower is a symlink or
+    // not a real dir, refuse — return defaults.
+    try {
+      const dst = fs.lstatSync(sspowerDir());
+      if (dst.isSymbolicLink() || !dst.isDirectory()) return { ...DEFAULTS };
+    } catch (e) { return { ...DEFAULTS }; }
+
     let st;
     try { st = fs.lstatSync(p); } catch (e) { return { ...DEFAULTS }; }
     if (st.isSymbolicLink() || !st.isFile()) return { ...DEFAULTS };
@@ -212,11 +260,20 @@ rm -f "$TMP/sspower/config.json"; ln -s /etc/hosts "$TMP/sspower/config.json"
 ok "$(node -e "console.log(require('$C').writeConfigKey('diet','full'))")" "false" "symlink write refused"
 ok "$(node -e "console.log(require('$C').readActiveDiet())")" "null" "symlink read refused"
 
+# 7. parent-dir symlink refused on BOTH read and write (security parity)
+rm -rf "$TMP/sspower"
+mkdir -p "$TMP/real_target"
+ln -s "$TMP/real_target" "$TMP/sspower"
+ok "$(node -e "console.log(require('$C').readActiveDiet())")" "null" "parent-symlink read refused"
+ok "$(node -e "console.log(require('$C').readConfig().log_rotate_lines)")" "1000" "parent-symlink read->defaults"
+ok "$(node -e "console.log(require('$C').writeConfigKey('diet','full'))")" "false" "parent-symlink write refused"
+ok "$(node -e "const fs=require('fs');console.log(fs.existsSync('$TMP/real_target/config.json'))")" "false" "parent-symlink not followed on write"
+
 echo "PASS=$pass FAIL=$fail"
 [ "$fail" -eq 0 ]
 ```
 
-`chmod +x tests/config/test_config.sh`. Run: `bash tests/config/test_config.sh` → last line `PASS=12 FAIL=0`, exit 0.
+`chmod +x tests/config/test_config.sh`. Run: `bash tests/config/test_config.sh` → last line `PASS=16 FAIL=0`, exit 0.
 
 Commit: `test(config): _config.js unit tests (defaults, off-semantics, security)`
 
@@ -249,9 +306,14 @@ module.exports = { getDefaultMode, getConfigDir, getConfigPath, VALID_MODES, saf
 
 Rationale: `safeWriteFlag`/`readFlag` keep their signatures so `diet-activate.js`/`diet-track.js` callers compile unchanged this task; the `flagPath` argument is now inert. `readFlag` returns `null` for off/absent exactly as before (file-absent previously → `null`).
 
-Verify: `bash tests/config/test_config.sh` still `FAIL=0`. Then:
-`node -e "const d=require('./hooks/_diet-config.js'); d.safeWriteFlag(null,'lite'); console.log(d.readFlag(null))"` → `lite`.
-`node -e "const d=require('./hooks/_diet-config.js'); d.safeWriteFlag(null,'off'); console.log(d.readFlag(null))"` → `null`.
+Verify (sandboxed — must NOT write real `~/.claude/sspower/`):
+```
+bash tests/config/test_config.sh                              # FAIL=0
+T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
+node -e "const d=require('./hooks/_diet-config.js'); d.safeWriteFlag(null,'lite'); console.log(d.readFlag(null))"  # lite
+node -e "const d=require('./hooks/_diet-config.js'); d.safeWriteFlag(null,'off'); console.log(d.readFlag(null))"   # null
+rm -rf "$T"; unset CLAUDE_CONFIG_DIR
+```
 
 Commit: `refactor(diet): route _diet-config flag I/O through _config.js`
 
@@ -303,7 +365,13 @@ to:
 
 `fs`/`path`/`os` are still used elsewhere in the file (SKILL.md read) — leave those requires. Verify: `grep -c 'os\.' hooks/diet-activate.js` → if 0 after edit, delete the `const os = require('os');` line to avoid lint noise; if >0 leave it. Same check for `path` (`grep -c 'path\.' hooks/diet-activate.js`).
 
-Verify: `echo '{}' | SSPOWER_DIET_DEFAULT=full node hooks/diet-activate.js | head -1` → `DIET MODE ACTIVE — level: full`. Then `node -e "console.log(require('./hooks/_config.js').readActiveDiet())"` → `full`.
+Verify (sandboxed):
+```
+T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
+echo '{}' | SSPOWER_DIET_DEFAULT=full node hooks/diet-activate.js | head -1   # DIET MODE ACTIVE — level: full
+node -e "console.log(require('./hooks/_config.js').readActiveDiet())"          # full
+rm -rf "$T"; unset CLAUDE_CONFIG_DIR
+```
 
 Commit: `refactor(diet): diet-activate writes config.json, no flag unlink`
 
@@ -348,13 +416,15 @@ Apply these in-body replacements (semantics preserved exactly):
 
 After edits, `fs`/`path`/`os` may be unused. Check each: `for s in fs path os; do echo -n "$s: "; grep -c "\\b$s\\." hooks/diet-track.js; done`. For any with count 0, delete its `const X = require('X');` line (lines 8-10). `readActiveDiet()` returns `null` for off → `if (activeMode)` on line 68 behaves identically to the old `readFlag` (which returned `null` when the flag file was absent).
 
-Verify (off-state must NOT emit reinforcement, identical to today):
+Verify (sandboxed; off-state must NOT emit reinforcement, identical to today):
 ```
+T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
 printf '{"prompt":"/diet full"}' | node hooks/diet-track.js >/dev/null
 node -e "console.log(require('./hooks/_config.js').readActiveDiet())"   # -> full
 printf '{"prompt":"hello"}' | node hooks/diet-track.js | grep -c 'DIET MODE ACTIVE'  # -> 1
 printf '{"prompt":"normal mode"}' | node hooks/diet-track.js >/dev/null
 printf '{"prompt":"hello"}' | node hooks/diet-track.js | wc -c  # -> 0  (no reinforcement when off)
+rm -rf "$T"; unset CLAUDE_CONFIG_DIR
 ```
 
 Commit: `refactor(diet): diet-track uses config.json active-diet helpers`
@@ -371,16 +441,25 @@ Line 53: `const FAILURE_LOG = path.join(os.homedir(), ".claude", "sspower-codex-
 Line 61: `const LOG_FILE = path.join(os.homedir(), ".claude", "sspower-codex.log");`
 → `const LOG_FILE = path.join(os.homedir(), ".claude", "sspower", "codex.log");`
 
+**`codex-bridge.mjs` is pure ESM** (`import ... from "node:..."`, top of file). `require` is undefined in `.mjs` — a bare `require('../hooks/_config')` would throw `ReferenceError`, get swallowed by try/catch, and silently fall back to 1000 forever (config-driven rotation never implemented). Bridge `_config.js` access via `createRequire`.
+
+Add to the import block at the top of the file (after the existing `import { fileURLToPath } from "node:url";`, line ~17):
+```javascript
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+```
+
 Line 62: `const LOG_MAX_LINES = 1000;`
 →
 ```javascript
 const LOG_MAX_LINES = (() => {
   try {
-    const v = require('../hooks/_config').readConfig().log_rotate_lines;
+    const v = require("../hooks/_config.js").readConfig().log_rotate_lines;
     return Number.isInteger(v) && v > 0 ? v : 1000;
   } catch { return 1000; }
 })();
 ```
+(`_config.js` is CommonJS — `hooks/package.json` is `{"type":"commonjs"}` — so `createRequire` resolves it correctly; explicit `.js` extension required by createRequire.)
 
 Update comment lines 57-59 to reference `~/.claude/sspower/codex.log` and `~/.claude/sspower/failures.jsonl`.
 
@@ -390,7 +469,20 @@ try { fs.mkdirSync(path.join(os.homedir(), ".claude", "sspower"), { recursive: t
 ```
 (`fs`, `path`, `os` are already imported at top of file — confirm with `grep -nE "require\\(.(fs|path|os).\\)" scripts/codex-bridge.mjs`.)
 
-Verify: `node --check scripts/codex-bridge.mjs` exits 0 (no syntax error). `node -e "require('./hooks/_config.js')"` exits 0. `node scripts/codex-bridge.mjs --help | head -1` prints the usage banner (no require/throw).
+Verify (must prove config IS read, not silent 1000 fallback):
+```
+node --check scripts/codex-bridge.mjs                       # syntax ok, exit 0
+T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
+node -e "require('./hooks/_config.js').writeConfigKey('log_rotate_lines',1234)"
+node --input-type=module -e "
+  import { createRequire } from 'node:module';
+  const r = createRequire(process.cwd()+'/scripts/codex-bridge.mjs');
+  console.log(r('./hooks/_config.js').readConfig().log_rotate_lines);
+"   # -> 1234  (proves createRequire path resolves _config from the bridge's location)
+node scripts/codex-bridge.mjs --help | head -1              # usage banner, no throw
+rm -rf "$T"; unset CLAUDE_CONFIG_DIR
+```
+The middle check fails loudly (prints `1000` or throws) if the ESM/createRequire wiring is wrong — catching exactly the silent-fallback bug.
 
 Commit: `refactor(bridge): codex-bridge logs → ~/.claude/sspower/, rotate from config`
 
@@ -488,22 +580,33 @@ mv_if "$BASE/sspower-codex-failures.jsonl" "$DIR/failures.jsonl"
 mv_if "$BASE/sspower-codex.log"            "$DIR/codex.log"
 mv_if "$BASE/sspower-codex-patches.md"     "$DIR/patches.md"
 
-# Diet flag -> config.json .diet (then remove legacy flag).
+# Diet flag -> config.json .diet. IDEMPOTENT: only write diet when there is
+# a legacy flag to migrate, OR when config.json has no diet yet. A re-run
+# after the flag is gone must NOT clobber an already-migrated value.
 CONFIG="$DIR/config.json"
-diet="off"
+NODE_CFG="$(cd "$(dirname "$0")/.." && pwd)/hooks/_config.js"
+
+migrated_diet=""
 if [ -f "$BASE/.sspower-diet" ]; then
   raw="$(tr -d '[:space:]' < "$BASE/.sspower-diet" | tr '[:upper:]' '[:lower:]')"
-  case "$raw" in lite|full|ultra) diet="$raw" ;; *) diet="off" ;; esac
+  case "$raw" in lite|full|ultra) migrated_diet="$raw" ;; *) migrated_diet="off" ;; esac
   rm -f "$BASE/.sspower-diet"
-  echo "migrated diet flag: $diet"
+  echo "migrated diet flag: $migrated_diet"
 fi
 
-# Use the hardened node writer so we never hand-roll JSON.
-NODE_CFG="$(cd "$(dirname "$0")/.." && pwd)/hooks/_config.js"
-if [ ! -f "$CONFIG" ]; then
+if [ -n "$migrated_diet" ]; then
+  # Legacy flag existed THIS run -> authoritative. writeConfigKey merges
+  # DEFAULTS, so log_rotate_lines is set on a brand-new file in the same call.
+  CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('diet','$migrated_diet')"
+elif [ ! -f "$CONFIG" ]; then
+  # Brand-new config, no legacy flag: one write seeds the file. writeConfigKey
+  # read-merges DEFAULTS, so the file lands as {"diet":"off","log_rotate_lines":1000}.
   CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('log_rotate_lines',1000)"
+else
+  # Config already exists, no legacy flag this run: touch NOTHING.
+  # Re-run safety — never overwrite a previously migrated diet value.
+  echo "config exists, no legacy flag: diet untouched (idempotent)"
 fi
-CLAUDE_CONFIG_DIR="$BASE" node -e "require('$NODE_CFG').writeConfigKey('diet','$diet')"
 
 echo "done. moved=$moved config=$CONFIG"
 ls -la "$DIR"
@@ -516,13 +619,21 @@ Verify in a sandbox (does NOT touch real `~/.claude`):
 T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
 printf 'x\n' > "$T/sspower-codex.log"; echo full > "$T/.sspower-diet"
 echo '[]' > "$T/sspower-codex-failures.jsonl"
+printf '# patches\n' > "$T/sspower-codex-patches.md"
 bash scripts/sspower-migrate.sh
-test -f "$T/sspower/codex.log" && test -f "$T/sspower/failures.jsonl" && test ! -e "$T/.sspower-diet"
-node -e "process.env.CLAUDE_CONFIG_DIR='$T'; console.log(require('./hooks/_config.js').readActiveDiet())"  # -> full
-bash scripts/sspower-migrate.sh   # re-run: idempotent, no error, moved=0
+# all 4 legacy files migrated, none left at root
+test -f "$T/sspower/codex.log"
+test -f "$T/sspower/failures.jsonl"
+test -f "$T/sspower/patches.md"          # patches.md preserved (spec no-data-loss)
+test ! -e "$T/.sspower-diet"
+test ! -e "$T/sspower-codex-patches.md"
+node -e "console.log(require('./hooks/_config.js').readActiveDiet())"  # -> full
+# RE-RUN must be idempotent AND must NOT clobber migrated diet back to off
+bash scripts/sspower-migrate.sh
+node -e "console.log(require('./hooks/_config.js').readActiveDiet())"  # -> full  (still!)
 rm -rf "$T"; unset CLAUDE_CONFIG_DIR
 ```
-All assertions pass; second run prints `moved=0`.
+Every `test` passes; both `readActiveDiet()` prints are `full` (second run does NOT reset diet — the idempotency bug fix); second run reports `moved=0` and "diet untouched".
 
 Commit: `feat(migrate): one-shot idempotent sspower-migrate.sh`
 
@@ -532,7 +643,7 @@ Commit: `feat(migrate): one-shot idempotent sspower-migrate.sh`
 
 From plugin root, on branch `refactor/sspower-config-consolidation`:
 
-1. `bash tests/config/test_config.sh` → `PASS=12 FAIL=0`, exit 0.
+1. `bash tests/config/test_config.sh` → `PASS=16 FAIL=0`, exit 0.
 2. Plugin-wide stale-path sweep (Task 8 command) → empty.
 3. Config-repo sweep (Task 9 command) → empty.
 4. Diet round-trip end to end:
@@ -545,8 +656,18 @@ From plugin root, on branch `refactor/sspower-config-consolidation`:
    test -f "$T/sspower/config.json"                                               # exists (not unlinked)
    rm -rf "$T"; unset CLAUDE_CONFIG_DIR
    ```
-5. `node --check scripts/codex-bridge.mjs` exit 0; `node scripts/codex-bridge.mjs --help | head -1` prints usage.
-6. Existing suites unaffected: run any present `tests/hooks/*.sh` — no new failures vs `main`.
+5. `node --check scripts/codex-bridge.mjs` exit 0; config-driven rotation proven via the Task 6 createRequire verifier (prints `1234`, not `1000`).
+6. Forced-failure append uses the new path (spec rollout step 4). Sandbox:
+   ```
+   T=$(mktemp -d); export CLAUDE_CONFIG_DIR="$T"
+   # invoke the bridge so a guaranteed-nonzero codex run records a failure
+   node scripts/codex-bridge.mjs rescue --prompt "noop" --model nonexistent-model-xyz >/dev/null 2>&1 || true
+   test -f "$T/sspower/failures.jsonl" && test ! -e "$T/sspower-codex-failures.jsonl"
+   echo "failure log at new path: OK"
+   rm -rf "$T"; unset CLAUDE_CONFIG_DIR
+   ```
+   `failures.jsonl` exists under `$T/sspower/`, never at the legacy root path. (If the bridge no-ops without writing on this error class, assert instead that `FAILURE_LOG` resolves to `$T/sspower/failures.jsonl` via the Task 6 createRequire pattern — never the legacy path.)
+7. Existing suites unaffected: run any present `tests/hooks/*.sh` and `tests/codex-bridge/*` — no new failures vs `main`.
 
 If all green, implementation is complete. Migration is a **manual user step** (run `scripts/sspower-migrate.sh` at a session boundary) — do NOT auto-run it during implementation; it would move this live session's diet state.
 
