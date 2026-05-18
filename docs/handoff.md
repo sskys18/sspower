@@ -20,7 +20,7 @@ sspower Codex-worker LSP gate, **Track C / P4** (spec Phases B5+B6, D-B4/D-B5): 
 
 ## Resume Here
 1. **Finish the branch.** Invoke `sspower:finishing-a-development-branch` for `feat/codex-worker-trackC`: push + open PR into `main`. `git push`/`gh pr create` are auto-review chokepoints — the branch-diff Codex review is the real merge gate (per-task reviews already done; expect it to surface the same Task-3 threat-model point — the documented rationale in `.claude/sspower/followups.md` + commit `4d654f4` is the answer, not more guard iteration).
-2. **`.claude/sspower/followups.md`** holds advisory followups (Task 2 block-path test coverage; Task 3 threat-model disposition + npm-option-prefix/recursive-rm-strictness nits). Carry forward; not blockers.
+2. **`.claude/sspower/followups.md`** holds advisory followups (Task 2 block-path test coverage; Task 3 threat-model disposition; PreToolUse matcher widened to `.*`). NOTE: that file is **gitignored** (local-only) — the durable threat-model + matcher rationale also lives in committed `docs/ARCHITECTURE.md` (P4 section), so it travels with the branch/PR and the branch-review Codex will see it there. Carry forward; not blockers.
 3. **P5** (semble_rs, Phase B7) stays roadmap — trigger: P2–P4 **shipped** (P4 not yet merged) AND semble_rs re-validated on a current repo. Re-plan via `writing-plans` only when triggered + explicit go-ahead.
 
 ## Decisions (do NOT revisit) — see `.claude/wiki/decisions.md` P4 block

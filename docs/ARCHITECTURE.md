@@ -496,7 +496,13 @@ against the native binary (`struct StopCommandOutputWire`; errors
 `"… exited with code 2 …"`). `.codex/hooks.json` now carries three
 events:
 
-- **`PreToolUse`** → `.codex/codex-guard-pretool.sh` (B6/D-B4):
+- **`PreToolUse`** → `.codex/codex-guard-pretool.sh` (B6/D-B4),
+  matcher `.*` (fire on every tool — the Codex 0.130 shell
+  `tool_name` token is not pinned: the blob shows `bash`/`exec`/`run`
+  AND `local_shell`/`exec_command`; an anchored matcher that missed
+  the real token would be a silent total bypass, so the in-script
+  classifier is the sole authority and no-ops `allow` on tools with
+  no command):
   **threat model = cooperative worker, NOT an adversary.** It
   pattern-classifies the command in node (segment split + per-segment
   regex; more robust than bash substring but **not** a full shell
