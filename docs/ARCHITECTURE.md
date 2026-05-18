@@ -40,7 +40,7 @@ Per-cwd artifacts written by hooks live outside the plugin:
 <cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
 ~/.claude/state/sspower/codex/<id>.json       # Codex session registry
 ~/.claude/state/sspower/codex/<id>.events.jsonl
-~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (60min TTL)
+~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
 ```
 
 ## Skills (22)
@@ -129,7 +129,7 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 | Re-entry | `SSPOWER_REVIEW_IN_FLIGHT=1` set by bridge before spawning codex |
 | Depth | `SSPOWER_REVIEW_DEPTH >= 1` skips |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 60min TTL |
+| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 10min TTL |
 | Round counter | `<repo>/.git/sspower-review-rounds-<branch>`, capped at 3 |
 | Branch tier | `wip/*`, `tmp/*`, `draft/*`, `scratch/*` skip; `main`, `master`, `prod`, `release/*` always strict |
 
@@ -139,7 +139,7 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 # Auto-review (hooks/auto-review.sh)
 SSPOWER_AUTO_REVIEW=off               # Full bypass (emergencies)
 SSPOWER_REVIEW_TIMEOUT=90             # Per-call codex timeout (s)
-SSPOWER_REVIEW_CACHE_TTL=3600         # Verdict cache TTL (s; 60min)
+SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s; 10min)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
 SSPOWER_REVIEW_AUTO_APPLY=on          # Auto-apply codex's suggested patches
 SSPOWER_REVIEW_PROFILE                # Override round-aware main-review profile (unset → tier-derived)
@@ -347,7 +347,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
 | Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
-| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (60min TTL) |
+| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
 | Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
 
 ## Codex LSP self-repair (P2, advisory)

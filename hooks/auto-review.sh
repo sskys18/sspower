@@ -24,7 +24,7 @@
 #
 # Tunables (env):
 #   SSPOWER_REVIEW_TIMEOUT     (default 90s)
-#   SSPOWER_REVIEW_CACHE_TTL   (default 3600s = 60min)
+#   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min)
 #   SSPOWER_REVIEW_MAX_ROUNDS  (default 3)
 #   SSPOWER_REVIEW_AUTO_APPLY  (default on; set off to disable patch apply)
 #   SSPOWER_SECURITY_REVIEW    (default on;     set off to skip security pass)
@@ -233,7 +233,7 @@ HASH_INPUT=$(printf '%s|%s|%s|%s' "${REPO_ROOT:-}" "$HEAD_SHA" "$BRANCH" "$DIFF_
 DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_HASH" ] && DIFF_HASH=$(printf '%s' "$HASH_INPUT" | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$DIFF_HASH.json"
-CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-3600}"
+CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-600}"
 
 # ---------- Diff-stability bypass ----------
 # Same diff hash denied 2x consecutively → user pushing same changes, codex stuck.
