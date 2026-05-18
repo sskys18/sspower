@@ -74,6 +74,18 @@ case "$mode" in
     fi
     exit 0
     ;;
+  empty)
+    # Exit 0 but leave the -o result file empty (no model output).
+    # Exercises the C9 guard: must NOT emit empty content silently.
+    cat <<'JSONL'
+{"type":"thread.started","thread_id":"sess-mock-empty"}
+{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":0,"total_tokens":5}}
+JSONL
+    if [ -n "$result_file" ]; then
+      : > "$result_file"
+    fi
+    exit 0
+    ;;
   normal|*)
     # Emit canned JSONL with session id and token usage.
     cat <<'JSONL'
@@ -338,6 +350,37 @@ if [ "$EXIT" = "0" ]; then
   fi
 else
   fail "T9 missing-usage: exit $EXIT (stderr: $(cat "$TMP/stderr"))"
+fi
+
+# ── Test 10: C9 guard — exit 0 but empty model output → structured error ──
+# Codex exits 0 yet produces no final message. The bridge must NOT emit a
+# chat.completion with empty content; it must route through _emitCompleteError
+# and exit nonzero.
+run_bridge empty --prompt "say nothing"
+EXIT=$(cat "$TMP/exit")
+if [ "$EXIT" = "0" ]; then
+  fail "T10 empty-output: expected nonzero exit, got 0 (stdout: $(cat "$TMP/stdout"))"
+else
+  # No chat.completion payload should be on stdout.
+  if [ -s "$TMP/stdout" ] && grep -q 'chat.completion' "$TMP/stdout"; then
+    fail "T10 empty-output: chat.completion emitted despite empty model output"
+  else
+    ETYPE=$(node -e '
+      const s=require("fs").readFileSync("'"$TMP"'/stderr","utf8");
+      let found="NOT_FOUND";
+      for (const line of s.split("\n")) {
+        const t=line.trim();
+        if (!t.startsWith("{")) continue;
+        try { const j=JSON.parse(t); if (j.error && j.error.type) { found=j.error.type; break; } } catch {}
+      }
+      process.stdout.write(found);
+    ' 2>&1)
+    if [ "$ETYPE" = "empty_response" ]; then
+      pass "T10 empty-output: structured error.type=empty_response, nonzero exit"
+    else
+      fail "T10 empty-output: error.type expected 'empty_response', got '$ETYPE'"
+    fi
+  fi
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────

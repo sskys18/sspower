@@ -193,6 +193,8 @@ case "$BRANCH" in
   *)               BRANCH_TIER="tiered" ;;
 esac
 if [ -n "$REPO_ROOT" ]; then
+  # C6: prune stale rounds files (>7d) before reading the counter. Best-effort.
+  find "$REPO_ROOT/.git" -maxdepth 1 -name 'sspower-review-rounds-*' -mtime +7 -delete 2>/dev/null || true
   ROUNDS_FILE="$REPO_ROOT/.git/sspower-review-rounds-$SAFE_BRANCH"
 else
   ROUNDS_FILE=""
@@ -622,6 +624,10 @@ esac
 # ---------- Apply suggested patches (if any) ----------
 APPLIED=0
 APPLIED_COUNT=0
+# C7: make opt-out observable. Best-effort (log_event is self-shielding).
+if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" = "off" ]; then
+  log_event info hook.auto-review kind=auto_apply_skipped branch="$BRANCH" round="$((ROUNDS + 1))"
+fi
 if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" != "off" ] && [ -n "$REPO_ROOT" ]; then
   PATCH_DIR="$REPO_ROOT/.claude/sspower/proposed-fixes"
   mkdir -p "$PATCH_DIR"
@@ -638,6 +644,12 @@ if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" != "off" ] && [ -n "$REPO_ROOT" ]; then
       if git_in_repo apply --3way "$PATCH_FILE" 2>/dev/null; then
         APPLIED=1
         APPLIED_COUNT=$(echo "$RESULT" | jq -r '[.issues // [] | .[] | select(.suggested_patch != null and .suggested_patch != "")] | length' 2>/dev/null)
+        # C7: audit trail for auto-applied patch. Best-effort; never abort the hook.
+        { mkdir -p "$REPO_ROOT/.claude/sspower" && \
+          printf '%s branch=%s round=%s patch=%s head=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$((ROUNDS + 1))" "$PATCH_FILE" \
+            "$(git_in_repo rev-parse HEAD 2>/dev/null)" \
+            >> "$REPO_ROOT/.claude/sspower/applied-patches.log"; } 2>/dev/null || true
       fi
     fi
   else

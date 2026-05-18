@@ -12,6 +12,13 @@ const path = require('path');
 const { getDefaultMode } = require('./_diet-config');
 const { writeActiveDiet, clearActiveDiet } = require('./_config');
 
+// Permanent kill switch. SSPOWER_DIET=off makes the hook fully inert:
+// emit nothing, no config side-effects, exit 0. Takes precedence over
+// every other code path (the point of the switch is total bypass).
+if (process.env.SSPOWER_DIET === 'off') {
+  process.exit(0);
+}
+
 const mode = getDefaultMode();
 
 if (mode === 'off') {

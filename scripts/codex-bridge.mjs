@@ -1134,6 +1134,19 @@ async function cmdComplete(argv) {
     process.exit(1);
   }
 
+  // C9 guard: exit 0 but no model output → structured error, not empty content.
+  // _runCodexComplete trims lastMessage (line ~1047), so falsy ⇒ truly empty.
+  if (!result.lastMessage) {
+    logEvent("error", "bridge.complete", {
+      kind: "empty_response",
+      session: result.sessionId,
+      duration_ms: result.durationMs,
+    });
+    _emitCompleteError("empty_response", "codex complete produced no output");
+    cleanupTmpDir();
+    process.exit(1);
+  }
+
   // Build OpenAI chat.completion shape.
   // - id: prefer Codex session_id (consistent with bridge session identity);
   //       fall back to a synthesized chatcmpl-* id if Codex never emitted one.

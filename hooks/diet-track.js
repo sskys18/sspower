@@ -8,6 +8,14 @@
 const { getDefaultMode } = require('./_diet-config');
 const { writeActiveDiet, clearActiveDiet, readActiveDiet } = require('./_config');
 
+// Permanent kill switch. SSPOWER_DIET=off makes the hook fully inert:
+// no prompt parsing, no flag mutation, no per-turn reinforcement,
+// exit 0. Without this, an off-switch only in diet-activate.js would
+// be defeated by this hook re-emitting the diet directive every turn.
+if (process.env.SSPOWER_DIET === 'off') {
+  process.exit(0);
+}
+
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {

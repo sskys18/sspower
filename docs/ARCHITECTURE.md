@@ -40,7 +40,7 @@ Per-cwd artifacts written by hooks live outside the plugin:
 <cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
 ~/.claude/state/sspower/codex/<id>.json       # Codex session registry
 ~/.claude/state/sspower/codex/<id>.events.jsonl
-~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
+~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (60min TTL)
 ```
 
 ## Skills (22)
@@ -129,22 +129,41 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 | Re-entry | `SSPOWER_REVIEW_IN_FLIGHT=1` set by bridge before spawning codex |
 | Depth | `SSPOWER_REVIEW_DEPTH >= 1` skips |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 10min TTL |
+| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 60min TTL |
 | Round counter | `<repo>/.git/sspower-review-rounds-<branch>`, capped at 3 |
 | Branch tier | `wip/*`, `tmp/*`, `draft/*`, `scratch/*` skip; `main`, `master`, `prod`, `release/*` always strict |
 
 **Tunables** (env):
 
 ```
+# Auto-review (hooks/auto-review.sh)
 SSPOWER_AUTO_REVIEW=off               # Full bypass (emergencies)
 SSPOWER_REVIEW_TIMEOUT=90             # Per-call codex timeout (s)
-SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s)
+SSPOWER_REVIEW_CACHE_TTL=3600         # Verdict cache TTL (s; 60min)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
 SSPOWER_REVIEW_AUTO_APPLY=on          # Auto-apply codex's suggested patches
+SSPOWER_REVIEW_PROFILE                # Override round-aware main-review profile (unset → tier-derived)
 SSPOWER_SECURITY_REVIEW=on            # Run security reviewer in parallel
 SSPOWER_SECURITY_EFFORT=xhigh         # Reasoning effort for security pass
+SSPOWER_SECURITY_REPOS                # ':'-list of repo paths forced to security tier (built-in default list)
+SSPOWER_SANITY_REVIEW=off             # Enable extra sanity pass (set on)
+SSPOWER_SANITY_EFFORT=medium          # Sanity-pass effort (off|low|medium|high|xhigh)
 SSPOWER_REVIEW_SKIP_PATTERN           # Branch-name globs that skip review
 SSPOWER_REVIEW_STRICT_PATTERN         # Branch-name globs forced to xhigh
+
+# LSP gate (scripts/codex-bridge.mjs, .codex/codex-lsp-posttool.sh, scripts/lib/codex-lsp-path.mjs)
+SSPOWER_LSP_GATE_BLOCK=1              # Promote bridge B3/B4 post-run gate would-block → block (default advisory)
+SSPOWER_LSP_SELFREPAIR_BLOCK=1       # Promote B2 self-repair PostToolUse hook to blocking (default advisory)
+SSPOWER_CODEX_LSP_CLI                 # Override codex-lsp CLI path (unset → vendored tools/codex-lsp → fail-open)
+
+# Diet hooks (hooks/diet-*.js)
+SSPOWER_DIET=off                      # Kill switch — diet hooks fully inert
+SSPOWER_DIET_DEFAULT                  # Default diet mode (lite|full|ultra; overrides diet.json)
+
+# Codex log rotation (hooks/_log.sh)
+SSPOWER_LOG_FILE                      # Log path (default ~/.claude/sspower/codex.log)
+SSPOWER_LOG_MAX_LINES=1000            # Rotate when log exceeds this many lines
+SSPOWER_LOG_KEEP_TAIL=500             # Lines retained after rotation
 ```
 
 When the round counter hits 3 without converging, the hook emits a deny pointing to: `rm <repo>/.git/sspower-review-rounds-<branch>` to retry, or `SSPOWER_AUTO_REVIEW=off` to bypass.
@@ -328,7 +347,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
 | Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
-| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
+| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (60min TTL) |
 | Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
 
 ## Codex LSP self-repair (P2, advisory)
