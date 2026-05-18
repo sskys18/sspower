@@ -9,7 +9,7 @@ A complete software development workflow for Claude Code. Fork of [Superpowers](
 - **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. Three sub-skills: `/diet-commit`, `/diet-review`, `/compress-memory`.
 - **Project wiki** — PreCompact + SessionEnd hooks archive each session as a structured JSON sidecar plus human-readable markdown summary into `<cwd>/.claude/wiki/sessions/`. Auto-seeds `decisions.md` + `gotchas.md` and appends a one-row index entry per session. Symlinked into `~/.claude/sessions/` for compatibility with cross-project tooling (e.g. daily-rollup skills).
 - **Wired skills** — `brainstorming`, `writing-plans`, and `systematic-debugging` now read the project wiki before proposing work, so prior decisions and gotchas inform every new design and bug investigation.
-- **Codex defaults** — `codex-bridge.mjs` defaults to `gpt-5.5` model with `high` reasoning effort (subcommands all pinned `high` — `xhigh` caused stalls). Override per-call with `--model` / `--effort`.
+- **Codex defaults** — tier/model/effort are governed by `~/.codex/config.toml` profiles (`quick`/`normal`/`deep`, single source of truth). `codex-bridge.mjs` selects a per-command profile (`COMMAND_PROFILE`) and passes `-p`; override per-call with `--profile` / `--model` / `--effort` (explicit flags patch individual profile fields).
 - **Command rewrite hook** — `PreToolUse:Bash` hook (`hooks/cmd-rewrite.sh`) routes shell commands through an external rewriter for token-saving substitutions. Default rewriter is the [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`. Optional — needs the rewriter binary (>= 0.23.0) and `jq` on PATH; the hook is a no-op when either is missing.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
@@ -244,7 +244,6 @@ spec-review --> compliant
 | `diet-commit` | Output | One-shot terse commit-message generator |
 | `diet-review` | Output | One-shot terse PR-review comments |
 | `compress-memory` | Output | Compress CLAUDE.md / preferences into terse format |
-| `codex-enrich-workspace` | Codex | Codex-assisted workspace enrichment |
 
 ---
 
@@ -322,7 +321,7 @@ sspower/
   hooks/
     session-start              -- Injects using-sspower context
     prompt-submit              -- Skill reminder + Codex enrichment (gated)
-  skills/                      -- 16 skill directories
+  skills/                      -- 22 skill directories
     */SKILL.md                 -- Lean entry point (<100 lines)
     */references/              -- Detailed docs (loaded on demand)
 ```

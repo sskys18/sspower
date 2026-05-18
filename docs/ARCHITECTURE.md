@@ -151,9 +151,16 @@ When the round counter hits 3 without converging, the hook emits a deny pointing
 
 ## Codex bridge (`scripts/codex-bridge.mjs`)
 
+> **Canonical source:** Claude Code loads the **marketplace** tree
+> (`~/.claude/plugins/marketplaces/sskys18/plugins/sspower/scripts/codex-bridge.mjs`),
+> registered via `~/.claude/settings.json` (`source_type=local`). The
+> `~/.codex/plugins/cache/sskys18/sspower/<version>/scripts/codex-bridge.mjs`
+> copy is stale dead weight — never edit it, never rely on it. All bridge
+> edits target the marketplace tree (decision D-C1).
+
 Direct integration with the Codex CLI (`@openai/codex`). Skills, agents, and the auto-review hook all dispatch through this bridge — no separate Claude Code plugin involved.
 
-Defaults: `gpt-5.5` model, `high` reasoning effort (subcommands `review` / `spec-review` / `rescue` / `resume` / `implement` all pinned `high` — `xhigh` caused stalls; see `scripts/codex-bridge.mjs:38-47`). Override per-call with `--model` / `--effort`. `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
+Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subcommand to a profile via `COMMAND_PROFILE` (`complete`→`quick`; `implement`/`review`/`spec-review`/`plan-review`→`normal`) and passes `-p <profile>`. **`resume` is excluded — `codex exec resume` has no `--profile`; it inherits root `config.toml` (root `service_tier=flex` is load-bearing) and only emits explicit `--model`/`--effort` overrides.** Explicit `--profile`/`--model`/`--effort` patch individual fields of the selected profile (see `scripts/codex-bridge.mjs` `parseOpts`/`runCodexExec`). `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
 
 ### Subcommands
 
@@ -319,7 +326,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Codex CLI defaults | `~/.codex/config.toml` (model, sandbox, profiles, projects.trust_level) |
 | Auto-review tunables | env vars (`SSPOWER_AUTO_REVIEW`, `SSPOWER_REVIEW_*`, `SSPOWER_SECURITY_*`) |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Per-call codex options | `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
+| Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
 | Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
 | Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
