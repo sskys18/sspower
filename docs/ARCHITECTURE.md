@@ -154,6 +154,7 @@ SSPOWER_REVIEW_STRICT_PATTERN         # Branch-name globs forced to xhigh
 # LSP gate (scripts/codex-bridge.mjs, .codex/codex-lsp-posttool.sh, scripts/lib/codex-lsp-path.mjs)
 SSPOWER_LSP_GATE_BLOCK=1              # Promote bridge B3/B4 post-run gate would-block → block (default advisory)
 SSPOWER_LSP_SELFREPAIR_BLOCK=1       # Promote B2 self-repair PostToolUse hook to blocking (default advisory)
+SSPOWER_CODEX_STOP_GATE=1            # Promote P4 Codex Stop hook would-block → block (default advisory; D-B6)
 SSPOWER_CODEX_LSP_CLI                 # Override codex-lsp CLI path (unset → vendored tools/codex-lsp → fail-open)
 
 # Diet hooks (hooks/diet-*.js)
@@ -485,6 +486,78 @@ grep -c 'kind=disabled_passthrough\|bridge.lsp' ~/.claude/sspower/codex.log 2>/d
 
 (runs without error; count ≥0 — a count of 0 means no unresolved-skip
 or passthrough events were logged, i.e. codex-lsp resolved cleanly).
+
+## P4 — Codex Stop gate + rules/sandbox profiles (Track C, shipped)
+
+P4 (spec Phases B5+B6, D-B4/D-B5) hardens the worker on three axes.
+Codex 0.130's hook system is a **port of Claude Code's** — verified
+against the native binary (`struct StopCommandOutputWire`; errors
+`"Stop hook returned decision:block without a non-empty reason"`,
+`"… exited with code 2 …"`). `.codex/hooks.json` now carries three
+events:
+
+- **`PreToolUse`** → `.codex/codex-guard-pretool.sh` (B6/D-B4):
+  **threat model = cooperative worker, NOT an adversary.** It
+  pattern-classifies the command in node (segment split + per-segment
+  regex; more robust than bash substring but **not** a full shell
+  parser) and emits the Claude-ported `permissionDecision` — `deny`
+  for `git commit|push|merge` & recursive `rm`, `ask` for
+  `npm|pnpm|yarn` installs, else allow. **deny** fires only when the
+  resolved git subcommand is exactly `commit`/`push`/`merge` — so
+  `git merge-base`/`merge-tree`/`merge-file` are allowed (the
+  `sub === "merge"` exact check). D-B4's deny scope is specifically
+  history/remote mutation (`commit`/`push`/`merge`); `merge-base` and
+  `merge-tree` are read-only queries, and while `merge-file` does
+  rewrite a local file it is an ordinary file edit — not a
+  git-history/remote op — so it is intentionally outside this guard's
+  policy (the same as any other file write the guard does not
+  police). For
+  the git/rm deny matrix it handles the routine evasion shapes a
+  cooperative worker produces — path-qualified bins (`/usr/bin/git`),
+  `git -C/-c` global opts, `rm` flag variants (`-r -f`,
+  `--recursive`, `-fr`), and **one** level of `bash -c`/`sh -c`. The
+  **`ask`** install rule matches `npm install|npm i|npm ci|pnpm
+  install|pnpm add|yarn install|yarn add` as a word-bounded match on
+  the (one-level-unwrapped) command string — it is NOT
+  segment-anchored or path-qualified (cooperative-worker scope; a
+  non-leading occurrence can still `ask`, which is low-harm; tracked
+  in followups). It does **NOT** defend against
+  deliberate adversarial evasion (deeper nesting, `xargs`,
+  `find -exec`, `eval`, command substitution) — that is
+  architecturally out of scope at the PreToolUse layer. The real
+  perimeter for adversarial cases is the hardened sandbox +
+  `approval_policy=never` + `network_access=false` below; this hook
+  is advisory + defense-in-depth on the routine path. Fail-open.
+- **`PostToolUse`** → existing codex-lsp advisory (P2), unchanged.
+- **`Stop`** → `.codex/codex-lsp-stop.sh` (B5): runs
+  `codex-bridge.mjs lsp-check` (a thin CLI over the shipped
+  bridge-direct `runLspGate` — **never** model-issued MCP, per the
+  0.130 approval-gate finding). Advisory by default;
+  `SSPOWER_CODEX_STOP_GATE=1` emits `{decision:"block",reason}` so
+  Codex keeps fixing in-session. D-B7 fail-open everywhere, including
+  reason-escaping failure → no block (never malformed JSON).
+
+**Hardened write profile (B6/D-B5).** `runCodexExec` gains
+`hardenWrite`; when set it appends `-c approval_policy="never"` and
+`-c sandbox_workspace_write.network_access=false` after `--sandbox`.
+`cmdImplement` ties it to `--write` only — `spec-review`/`plan-review`/
+`review` stay `read-only`, unhardened (D-4).
+
+**D-4a (security, empirically resolved).** Task-0 spike proved
+`codex exec resume` does **not** inherit the originating session's
+`network_access=false` (a resumed session ran `curl` successfully)
+but **does** accept the two `-c` flags (with them, blocked). So
+`runCodexResume` gains the same `hardenWrite` gate, and **every**
+write-capable resume caller — `runLspRepairLoop` (gate-triggered
+repair), `cmdResume` (SDD fix-loop), `cmdSteer` — passes
+`hardenWrite:true`. Without this, gate-triggered repair rounds would
+run network-ON precisely while Codex edits files. (Codex's own LLM
+API channel is unaffected by the sandbox network knob — only
+model-spawned shell network is denied.)
+
+`SSPOWER_CODEX_STOP_GATE` is advisory→block per D-B6 (operator-gated,
+never automated), independent of `SSPOWER_LSP_GATE_BLOCK` /
+`SSPOWER_LSP_SELFREPAIR_BLOCK`.
 
 ## Sync with upstream
 
