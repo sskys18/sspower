@@ -31,6 +31,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const _sspowerCfg = require("../hooks/_config.js");
 import * as registry from "./codex-registry.mjs";
+import { resolveCodexLspCli } from "./lib/codex-lsp-path.mjs";
 
 const BRIDGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(BRIDGE_DIR, "..");
@@ -344,6 +345,27 @@ function autoCommit(dir, message, opts = {}) {
 
 // ── Core executors ───────────────────────────────────────────────────
 
+// Per-run advisory LSP MCP registration (Track B P2). Returns the -c
+// override argv pairs registering the vendored codex-lsp as `mcp_servers.lsp`,
+// or [] (fail-open) if codex-lsp is unresolved. No file is written — Codex
+// 0.130.0 only merges ~/.codex/config.toml + -c overrides, never a project
+// .codex/config.toml, so -c is the clobber-free mechanism. Advisory: the
+// server is registered as callable but never required (P2; required=true is P3).
+function lspMcpOverrideArgs() {
+  const cli = resolveCodexLspCli();
+  if (!cli) {
+    logEvent("info", "bridge.lsp", { kind: "codex_lsp_unresolved_skip" });
+    return [];
+  }
+  const j = (v) => JSON.stringify(v); // TOML basic strings == JSON strings for these values
+  return [
+    "-c", `mcp_servers.lsp.command=${j("node")}`,
+    "-c", `mcp_servers.lsp.args=${j([cli, "mcp"])}`,
+    "-c", `mcp_servers.lsp.env.PATH=${j(process.env.PATH || "")}`,
+    "-c", `mcp_servers.lsp.env.HOME=${j(os.homedir())}`,
+  ];
+}
+
 /**
  * Run `codex exec` for fresh tasks (implement, review, rescue).
  * Supports --output-schema, --sandbox, -C, --full-auto.
@@ -357,6 +379,7 @@ function runCodexExec(prompt, options = {}) {
     effort = null,
     cd = null,
     ephemeral = true,
+    lspMcp = false,
   } = options;
 
   const bin = codexBin();
@@ -372,6 +395,8 @@ function runCodexExec(prompt, options = {}) {
   if (profile) args.push("-p", profile);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
+  const _lspArgs = lspMcp ? lspMcpOverrideArgs() : [];
+  for (const a of _lspArgs) args.push(a);
   // Normalize --cd to absolute path. Otherwise -C and spawnOpts.cwd both
   // apply, resolving as "<cd>/<cd>" when the caller passes a relative path.
   const cdAbs = cd ? path.resolve(cd) : null;
@@ -382,7 +407,7 @@ function runCodexExec(prompt, options = {}) {
   args.push("-");
 
   if (options.printArgs) {
-    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args, mcpLsp: _lspArgs.length > 0 }) + "\n");
     process.exit(0);
   }
 
@@ -408,6 +433,7 @@ function runCodexResume(prompt, options = {}) {
     effort = null,
     schemaName = null,
     cd = null,
+    lspMcp = false,
   } = options;
 
   const bin = codexBin();
@@ -425,6 +451,8 @@ function runCodexResume(prompt, options = {}) {
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
+  const _lspArgs = lspMcp ? lspMcpOverrideArgs() : [];
+  for (const a of _lspArgs) args.push(a);
 
   // Wrap prompt with structured output instruction when schema requested
   let finalPrompt = prompt;
@@ -438,7 +466,7 @@ function runCodexResume(prompt, options = {}) {
   args.push("-");
 
   if (options.printArgs) {
-    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args, mcpLsp: _lspArgs.length > 0 }) + "\n");
     process.exit(0);
   }
 
@@ -1242,6 +1270,12 @@ async function cmdSetup() {
     console.log(`Schema ${s}: ${exists ? "OK" : "MISSING"}`);
   }
 
+  try {
+    execFileSync(process.execPath, [path.join(BRIDGE_DIR, "setup-codex-lsp.mjs")], { stdio: "inherit" });
+  } catch {
+    console.log("LSP client config: setup failed (see above)");
+  }
+
   console.log("\nReady for SDD integration.");
 }
 
@@ -1278,6 +1312,7 @@ async function cmdImplement(argv) {
     printArgs: opts.printArgs,
     cd: workDir,
     ephemeral: false, // persist session for resume-based fix loops
+    lspMcp: true,
   });
 
   // Auto-commit after successful implementation
@@ -1391,6 +1426,7 @@ async function cmdResume(argv) {
     printArgs: opts.printArgs,
     schemaName,
     cd: opts.cd,
+    lspMcp: true,
   });
   output(result, { expectStructured: !!schemaName });
 }
@@ -1553,6 +1589,7 @@ async function cmdSteer(argv) {
     printArgs: opts.printArgs,
     schemaName: null,
     cd: resumeCwd,
+    lspMcp: true,
   });
   output(result);
 }

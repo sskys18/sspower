@@ -331,6 +331,99 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
 | Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
 
+## Codex LSP self-repair (P2, advisory)
+
+Track B P2 gives Codex worker runs the same language servers and an
+internal LSP self-repair path. **Advisory only** (spec D-B6): nothing
+blocks Codex until an operator explicitly flips the gate after reviewing
+clean runs.
+
+**Two independent paths:**
+
+1. **B1 — LSP MCP server.** `codex-bridge.mjs` registers the vendored
+   `tools/codex-lsp/dist/cli.js mcp` as `mcp_servers.lsp` via per-run
+   `-c mcp_servers.lsp.*` dotted-path overrides on `implement`/`resume`
+   only (never review/spec-review/plan-review/complete). No file is
+   written — Codex 0.130.0 merges only `~/.codex/config.toml` + `-c`
+   overrides + profiles, never a project-local `.codex/config.toml`, so
+   `-c` is the clobber-free mechanism. Fail-open: if codex-lsp is
+   unresolved, nothing is registered and the bridge logs
+   `bridge.lsp kind=codex_lsp_unresolved_skip`, never crashing.
+2. **B2 — PostToolUse hook.** Repo-local `.codex/hooks.json` runs
+   `.codex/codex-lsp-posttool.sh` after Codex edits. In advisory default
+   it strips codex-lsp's `block` decision to `approve`; it passes the
+   `block` through **only** when `SSPOWER_LSP_SELFREPAIR_BLOCK=1`.
+
+**Known boundary — B1 MCP round-trip not functional at P2 (verified
+2026-05-18, evidence chain):**
+
+- Registration **is consumed** by Codex 0.130.0: a `lsp.status` smoke
+  produced `item.mcp_tool_call` events, exit 0, no `service_tier` 400.
+- The tool call **fails**: `status:"failed"`, error `"user cancelled
+  MCP tool call"` — despite no human in the loop.
+- **Sandbox ruled out:** identical failure under `read-only` and
+  `workspace-write`.
+- **`approval_policy=never` ruled out:** identical failure with
+  explicit `-c approval_policy=never` (debug log still shows
+  `ResolveElicitation{ server:"lsp", request_id:
+  "mcp_tool_call_approval_...", decision: Cancel }`).
+- **Granular knobs ruled out:** identical failure with
+  `approval_policy={granular={mcp_elicitations=true,...}}` +
+  `approvals_reviewer=auto_review`.
+- **codex-lsp server is healthy standalone:** `node
+  tools/codex-lsp/dist/cli.js mcp` answers `initialize`
+  (protocolVersion 2024-11-05), `tools/list` (7 tools) AND
+  `tools/call status` (18ms, full result) over newline-delimited
+  JSON-RPC, no stderr.
+- **Confirmed root cause:** Codex 0.130.0 gates every MCP tool call
+  behind a per-call approval/elicitation
+  (`mcp_tool_call_approval_*`) **distinct from `approval_policy`**.
+  In non-interactive `codex exec` it auto-resolves `decision:
+  Cancel`. The ONLY config that lets the round-trip complete is
+  `--dangerously-bypass-approvals-and-sandbox` (verified: tool call
+  `status:"completed"`, full LSP status returned) — which also
+  **disables the sandbox entirely**. No documented per-server trust
+  key, granular flag, or `approvals_reviewer` setting bypasses it
+  without also disabling the sandbox. Not a defect in the vendoring,
+  resolver, hook, or `-c` registration (each verified working).
+
+**This finding validates the planned P3 architecture.** Spec §5.7a /
+Phase B3 (**P3**) specifies `scripts/mcp-lsp-client.mjs` — a
+bridge-side MCP client that queries codex-lsp **directly** (the bridge
+speaks JSON-RPC to `cli.js mcp` itself, post-run, per changed file).
+That path **never traverses Codex's model tool-call approval gate** —
+it is the exact bridge↔codex-lsp channel proven working standalone
+(initialize + tools/list + tools/call status, 18ms). So routing LSP
+through Codex's *model* (B1-via-`-c mcp_servers`) is the dead end;
+routing it through the *bridge* (P3) structurally sidesteps the
+Codex 0.130.0 approval gate. The standalone handshake above **is**
+the P3 re-plan trigger evidence ("codex-lsp `mcp` stdio mode manually
+smoke-tested working").
+
+**P2 §9 acceptance:** clause 2 ("Codex self-repairs a seeded TS error
+in advisory mode") is **met** — the B2 hook path repaired `export
+const x: number = "not a number";` → `export const x: number = 0;`,
+advisory, run not blocked. Clause 1 ("lsp.status smoke passes") is
+**deferred to P3**: B1 registration is consumed and the codex-lsp
+server is healthy, but the Codex-model→MCP round-trip is blocked by
+Codex 0.130.0's per-tool-call approval gate (only
+`--dangerously-bypass-approvals-and-sandbox` overrides it, at
+unacceptable security cost). P3's bridge-side MCP client is the
+correct resolution, not a bridge approval-bypass.
+
+**Promotion (advisory → block), per-phase, never automated (D-B6):**
+the operator confirms **≥10** consecutive `implement`/`resume` runs
+whose `~/.claude/sspower/codex.log` shows no unresolved `_lsp` /
+self-repair regressions, then exports `SSPOWER_LSP_SELFREPAIR_BLOCK=1`
+to flip B2 from advisory to blocking. Audit recipe:
+
+```bash
+grep -c 'kind=disabled_passthrough\|bridge.lsp' ~/.claude/sspower/codex.log 2>/dev/null || echo 0
+```
+
+(runs without error; count ≥0 — a count of 0 means no unresolved-skip
+or passthrough events were logged, i.e. codex-lsp resolved cleanly).
+
 ## Sync with upstream
 
 ```bash
