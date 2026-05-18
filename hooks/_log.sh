@@ -7,7 +7,7 @@
 #   source "$(dirname "$0")/_log.sh"
 #   log_event warn hook.auto-review kind=deny_predecessor cmd_preview="cd .. && git push"
 
-SSPOWER_LOG_FILE="${SSPOWER_LOG_FILE:-$HOME/.claude/sspower-codex.log}"
+SSPOWER_LOG_FILE="${SSPOWER_LOG_FILE:-$HOME/.claude/sspower/codex.log}"
 SSPOWER_LOG_MAX_LINES="${SSPOWER_LOG_MAX_LINES:-1000}"
 SSPOWER_LOG_KEEP_TAIL="${SSPOWER_LOG_KEEP_TAIL:-500}"
 
@@ -15,6 +15,7 @@ SSPOWER_LOG_KEEP_TAIL="${SSPOWER_LOG_KEEP_TAIL:-500}"
 # SSPOWER_LOG_KEEP_TAIL lines. Matches scripts/codex-bridge.mjs
 # rotateLogOnce() defaults so the file size cap is consistent across
 # both writers. Best effort; never errors out.
+# Path moved to ~/.claude/sspower/codex.log; rotation knobs intentionally stay env (no jq dep in hook hot path) — see docs/specs/2026-05-18-sspower-config-consolidation-design.md carve-out.
 _sspower_rotate_log() {
   [ -f "$SSPOWER_LOG_FILE" ] || return 0
   local lines
