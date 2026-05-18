@@ -1,12 +1,21 @@
 # Codex-Worker LSP Quality Gate + Codex Tier/Review Consolidation — Design Spec
 
-> Status: **DRAFT v5** (2026-05-18). Codex review iter 1 (11) + iter 2 (7) + iter 3 (8) + **iter 4 (4, all `[High]`, all P1-blocking, zero reword nits)** applied. **PLATEAU THESIS RETRACTED** — iter4 converged (set shrank 11→7→8→4, all-blocking, one finding self-validated empirically this session). The v4 "plateau" call was premised on iter1–3; iter4 invalidated it. **Recommended: this is the convergence point — user-gate P0+P1 on v5.** Awaiting user decision.
+> Status: **v6** (2026-05-18). P0+P1 IMPLEMENTED & committed (`b548683` P0, `d538bd6` P1). **v6 = post-implementation correction:** the locked `service_tier=flex` decision (D-A1/§4.1) was empirically **falsified at execution** — Codex's config schema accepts only `fast|flex`, but the **API rejects `flex` at runtime (`400 Unsupported service_tier: flex`) on this account**. Shipped as **all-`fast`** (proven working end-to-end). The bridge profile-routing machinery is correct and unaffected; only the config tier *value* changed vs the original decision. G1's rate-limit mitigation now rests solely on the call-count cuts (D-A4 fan-out 3→1, cache 600→3600, single auto-gate), not the `flex` lever. (v5 history below retained.)
 > Author: Claude (Opus 4.7), 2026-05-17.
 > Supersedes: the "**Semble is out of scope** (user decision 2026-05-13)" note in `docs/specs/2026-05-13-index-backend-integration-design.md`. That decision is **reversed**: `johunsang/semble_rs` was validated on a real repo this session (see §2) and is now in scope as Track B.
 > HARD-GATE: no implementation until this spec is user-approved. Phased delivery; each phase ships independently.
 > **First implementation plan scope: P0 + P1 only** (Cleanup C1–C3/C10 + Track A). P2–P6 (Track B, remaining cleanup) are design intent here but **PROVISIONAL** — re-planned after P1 ships and the spike tools prove out in real use. Mirrors the decomposition precedent in `2026-05-13-index-backend-integration-design.md`.
 
 ## 0. Change log
+
+### v5 → v6 (post-implementation: `flex` empirically impossible — corrected to all-`fast`)
+
+Discovered during P1 execution (real `plan-review` dogfood, not catchable by `--print-args` dry-runs):
+
+1. **D-A1/§4.1 `flex` decision falsified.** Codex `config.toml` schema accepts only `fast|flex` (spec was right about the *schema*; `""`/omit → parse error or root-inherit). But the **API returns `400 invalid_request_error: Unsupported service_tier: flex`** for this account/model at request time. `fast` works (verified end-to-end). Therefore the only viable value is **`fast`** — a hard constraint, not a preference.
+2. **Resolution:** `~/.codex/config.toml` root + all profiles = `service_tier="fast"` (out-of-repo, plan R1 — not committed; lives in user-global state, must be re-seeded `fast` if regenerated). `deep`/`quick` were already `fast`; only `normal`+root reverted from the planned `flex`.
+3. **D-A1, §4.1 rationale, R5, §12 r5 corrected** below (strikethrough-in-spirit: `normal=flex/root=flex` → all `fast`).
+4. **G1 impact:** the heavy-volume rate-limit relief now comes **only** from call-count reduction (D-A4 fan-out 3→1, cache TTL 600→3600, single automatic gate). The `flex` tier lever is unavailable on this account. Whether call-count cuts alone fully meet G1 is empirically unverified — monitor.
 
 ### v4 → v5 (Codex review iter 4, user-requested: 4 findings, all `[High]`, all P1-blocking — addressed; CONVERGED)
 
@@ -132,20 +141,20 @@ Two-layer LSP verification: Codex-internal hooks (medium trust, fast self-repair
 
 ### 4.1 Profiles (`~/.codex/config.toml`) — single source of truth
 
-`service_tier` valid values are **only `flex` and `fast`** (verified, OpenAI config-reference).
+`service_tier` config-schema values are only `flex` and `fast`. **v6 correction: `flex` is API-rejected at runtime on this account (`400 Unsupported service_tier: flex`); the only working value is `fast`. All profiles + root use `fast`.**
 
 Profile key is **`model_reasoning_effort`** (the actual Codex config key — NOT `reasoning_effort`; wrong key silently no-ops).
 
 | Profile | model | model_reasoning_effort | service_tier | Consumers |
 |---|---|---|---|---|
 | `quick` | gpt-5.4 | low | `fast` | complete (+ enrich if it existed; disabled per D-A2) |
-| `normal` | gpt-5.5 | high | `flex` | review r0/r1, implement, resume, spec-review |
+| `normal` | gpt-5.5 | high | `fast` (was `flex` — v6: flex API-dead) | review r0/r1, implement, resume, spec-review |
 | `deep` | gpt-5.5 | xhigh | `fast` | review r2 (stuck), strict-branch review |
 | root default | gpt-5.5 | — | `flex` | safety fallback; `resume` (no `--profile`) inherits this |
 
 **Current actual config (P1 must change):** `~/.codex/config.toml:3` root `service_tier = "fast"`; `[profiles.normal]` (lines 61-64) `service_tier = "fast"`. P1 edits root + `profiles.normal` → `flex`; `quick`/`deep` keep `fast`.
 
-Rationale: `fast` (priority, burns rate-limit pool) reserved for **rare-but-critical** (`deep`) and **small-but-latency-sensitive** (`quick`, short turns). Heavy-volume path (`normal`: review/implement) on `flex` — sustainable only because the review fan-out is cut 3→1 (D-A4). `normal=flex` is explicit (not unset; unset behavior undocumented — silent-failure risk).
+~~Rationale: `fast` reserved for rare-but-critical (`deep`)... heavy path (`normal`) on `flex`...~~ **v6: VOID — `flex` is API-rejected on this account; all tiers forced to `fast`.** The intended "heavy path off the priority pool" benefit is unavailable; rate-limit sustainability now rests entirely on the call-count cuts (D-A4 fan-out 3→1, cache 600→3600, single auto-gate). `unset`/`""` is not an option (config schema rejects it). Monitor whether call-count reduction alone holds G1.
 
 ### 4.2 Bridge profile routing (`codex-bridge.mjs`)
 
@@ -303,7 +312,7 @@ Ship alongside Track A (low-risk, high-leverage):
 
 ## 8. Locked decisions
 
-- **D-A1** All codex tier/effort via `~/.codex/config.toml` profiles. `deep=fast, normal=flex, quick=fast, root=flex`.
+- **D-A1** All codex tier/effort via `~/.codex/config.toml` profiles. ~~`deep=fast, normal=flex, quick=fast, root=flex`~~ **v6: all `fast` (`deep=fast, normal=fast, quick=fast, root=fast`) — `flex` API-rejected on this account; profile-routing machinery (model/effort per profile) unaffected.**
 - **D-A2** `enrich` disabled. Disabled `enrich` echoes the **raw prompt verbatim to stdout** (notice → stderr only) so the live `hooks/prompt-submit:126` caller injects the unmodified prompt, not a notice (Codex iter3 #3). `hooks/prompt-submit` enrich call removed in P1.
 - **D-A3** `rescue` subcommand disabled **only after §12 caller migration completes** (last P1 step). `resume` retained (Track B + steer). Migration targets (Codex iter4 Finding 1 — corrected): plan/design-review callers → **new `plan-review` command** (NOT `spec-review`: its `compliant|non-compliant` impl-vs-spec schema is structurally wrong for open-ended design critique; NOT `review`: diff/code-oriented, same mismatch); code-review callers → `review` (exists). `plan-review` + `schemas/plan-review-output.json` is new P1 scope (§12 r6c).
 - **D-A4** Auto push gate = MAIN review only; sanity off-auto. **Security: hybrid** — auto-ON when repo path matches `SSPOWER_SECURITY_REPOS` (configured high-risk: custody/stablecoin/pay-chain/security paths) OR branch is strict (`main|master|prod|release/*`); manual elsewhere. Review ladder normal→normal→deep, strict→deep. Cache TTL 3600s. Cross-checkpoint dedupe dropped.
@@ -338,7 +347,7 @@ Advisory→block promotion (D-B6) is a gated step within P2/P3/P4, not automatic
 - **R2** ~~Security off-auto~~ **RESOLVED v2** — hybrid (D-A4): security auto-ON for `SSPOWER_SECURITY_REPOS` paths + strict branches, manual elsewhere. Codex (iter1 #10) and Claude independently flagged the full-manual regression; user accepted hybrid. Residual: the high-risk repo allowlist must be configured correctly (P1 sets the initial list: custody-dashboard, pay-chain, infinite-block/security, stablecoin repos).
 - **R3** `codex exec resume` `-p` support unverified — fallback to root flex documented.
 - **R4** Codex subprocess PATH/env divergence could make MCP `lsp` server fail to find language servers. Mitigated by explicit `mcp_servers.lsp.env`. `required=true` makes failure loud (good).
-- **R5** Repair-loop cost: each LSP-fail round = another resume turn. Cap at 2; BLOCKED beats infinite. Tier `normal=flex` keeps cost bounded.
+- **R5** Repair-loop cost: each LSP-fail round = another resume turn. Cap at 2; BLOCKED beats infinite. ~~Tier `normal=flex` keeps cost bounded~~ **(v6: `normal=fast`; cost bound now from round cap + call-count cuts, not tier).**
 - **Q1** Does the bridge spawn one persistent codex-lsp MCP per run or one per project session? (Perf vs isolation — resolve in P3.)
 - **Q2** Run-artifact retention/rotation policy (disk growth) — resolve in P3.
 
@@ -358,7 +367,7 @@ Ordered. Each row = one file, one change, one verification. P1 step 9 (rescue di
 | 3 | `README.md`, `docs/ARCHITECTURE.md` | remove orphan `codex-enrich-workspace` from README skill table; add `--profile` tunability; fix effort-uniformity claim (C10). NOT a count edit — repo has 22 real SKILL.md | README skill table == actual `find skills -name SKILL.md` set |
 | 4 | `docs/` note | document marketplace tree canonical, cache stale (C3, D-C1) | one-liner in ARCHITECTURE |
 | **P1 — config** | | | |
-| 5 | `~/.codex/config.toml` | root `service_tier` `fast`→`flex`; `[profiles.normal].service_tier` `fast`→`flex`; ensure `[profiles.quick]`/`[profiles.deep]` keep `fast`; profile key `model_reasoning_effort` | `codex … --profile normal` effective config shows flex |
+| 5 | `~/.codex/config.toml` | **v6: NO-OP for tier — keep root + all profiles `service_tier="fast"`** (planned `fast`→`flex` reverted: `flex` API-rejected, `400`). Profile key `model_reasoning_effort` per matrix still applies. | real `--profile normal` call exits 0 (NOT a 400); `grep -c flex ~/.codex/config.toml` = 0 |
 | **P1 — bridge** | | | |
 | 6 | `scripts/codex-bridge.mjs` | add `--profile`+`-p` passthrough; `COMMAND_PROFILE` map; **default `-p`, emit `-m`/`-c` ONLY if user explicitly supplied `--model`/`--effort`** (track user-supplied in parser; else `resolveModel()` default kills profile/root config). Apply to **all five**: cmdComplete `:1032`, cmdImplement `:1245`, cmdSpecReview `:1287`, cmdReview `:1301`, **cmdResume `:1410`** (Finding 4 — resume excepted from `-p`, no `--profile`; still must suppress default `-m`). Fix wrong effort key at **both `:370` and `:907`**: `reasoning.effort=` → `model_reasoning_effort=` (Finding 3); explicit `--effort X` emits `-c model_reasoning_effort="X"`; keep `--effort` parser; `enrich`→**echo raw prompt to stdout**, notice to stderr (iter3 #3); `complete`→`quick`. (Lines drifted from v3; verify before edit.) | no-flag `review` spawns `-p normal`, no `-m`/`-c`; **no-flag `resume` emits no `-m`/`-c`** (root governs); `--effort high`→`-c model_reasoning_effort="high"`; `grep -n 'reasoning\.effort=' bridge` = 0; `enrich foo`→stdout==`foo` |
 | 6c | `scripts/codex-bridge.mjs` + `schemas/plan-review-output.json` | **NEW (Finding 1):** add `plan-review` command + its output schema (open-ended design/gap critique: findings[]+severity, NOT `compliant\|non-compliant`). This is the migration target for plan/design `rescue` callers. Distinct from `spec-review` (impl-vs-spec) and `review` (code/diff). | `codex-bridge.mjs plan-review --prompt @<spec>` returns findings-shaped JSON; schema validates |
