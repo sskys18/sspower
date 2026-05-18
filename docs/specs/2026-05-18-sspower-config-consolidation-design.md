@@ -2,7 +2,17 @@
 
 > Date: 2026-05-18
 > Branch: `refactor/sspower-config-consolidation` (off `main`)
-> Status: DRAFT — awaiting Codex review + user approval
+> Status: REV2 — Codex spec-review applied (verdict v1: non-compliant; 5 gaps addressed below). Awaiting user approval.
+
+## Codex review resolution (v1 → REV2)
+
+| # | Codex finding | Resolution |
+|---|---|---|
+| 1 | Missed runtime consumer `skills/codex-diagnostics/SKILL.md` (hardcodes `~/.claude/sspower-codex.log` at lines 10, 32, + description) | Added to plugin change table. |
+| 2 | `_log.sh` rotation knobs left as env, contradicting "all knobs in config" | **Explicit carve-out** (rationale below) — narrowed `log_rotate_lines` claim to codex-bridge only. |
+| 3 | "Atomic read-modify-write" is a false guarantee (lost-update) | **Collapsed, not locked**: verified nothing writes `log_rotate_lines` programmatically (it's a const/env default). Only `diet` is code-written. Single writer key → temp+rename is sufficient. Lock explicitly deferred (YAGNI, single human operator). |
+| 4 | Stale docs (`README.md:256`, `ARCHITECTURE.md:76,325`, `CLAUDE.md`) | Added to change table as doc-cleanup step. |
+| 5 | `_diet-config.js` default-resolution chain (`SSPOWER_DIET_DEFAULT`, XDG `diet.json`, `defaultMode`) fate undefined | **Explicit non-goal**: that chain computes the *default* mode and is unchanged. This refactor relocates only the *active* flag. |
 
 ## Problem
 
@@ -29,6 +39,18 @@ This pollutes `~/.claude/` root and there is no single place to configure sspowe
 - Relocatable `base_dir` / `SSPOWER_HOME` override. Single consumer never needs it.
 - Folding append-only logs into JSON. `failures.jsonl` / `codex.log` are data streams written on every event by processes that run concurrently with diet hooks; embedding them in a config JSON forces whole-file rewrite+reparse per append and creates a write race that corrupts config. Logs are output, not configuration — they remain separate files in the dir.
 - Migrating the cross-repo consumers' resolution to be dynamic. They hardcode the new fixed path (see below).
+- **Changing `_diet-config.js` default-resolution** (Codex v1 #5). Its chain — `SSPOWER_DIET_DEFAULT` env → `$XDG_CONFIG_HOME/sspower/diet.json` → `~/.config/sspower/diet.json` → `%APPDATA%` → `defaultMode` — computes the *default* diet mode when no active flag is set. That is orthogonal to *active* state and stays **unchanged**. This refactor relocates only the active flag (`.sspower-diet` → `config.json.diet`). The resolution order becomes: active `config.json.diet` if present, else the existing default chain.
+- **Other already-namespaced sspower state.** `~/.claude/state/sspower/codex/` (session tracking), `~/.cache/sspower/verdicts/` (review cache), `<repo>/.claude/sspower/` (per-repo followups/patches) are already namespaced, not root clutter — explicitly out of scope. This change touches only the 4 `~/.claude/sspower-*` / `.sspower-diet` root files.
+
+## Scope carve-out: `_log.sh` rotation knobs (Codex v1 #2)
+
+`hooks/_log.sh` is the shell logger for hook events (auto-review denials etc.), separate from `codex-bridge.mjs`. Its rotation tuning `SSPOWER_LOG_MAX_LINES` / `SSPOWER_LOG_KEEP_TAIL` **stays env-with-default and does NOT move into `config.json`**, deliberately:
+
+- Reading JSON from this hot bash hook needs a `jq` dependency on a path that runs on hook events — unjustified for a single consumer.
+- These are static tuning the user effectively never changes.
+- `config.json.log_rotate_lines` governs **only `codex-bridge.mjs`'s `codex.log` rotation** (its `LOG_MAX_LINES` literal). `_log.sh`'s env default is kept numerically equal (1000) so the shared `codex.log` cap stays consistent, exactly as the existing `_log.sh:14` comment already promises.
+
+Net: the "single config file" holds sspower's code-managed state (`diet`) + the one rotation knob a user might tune (`log_rotate_lines`, bridge-side). The shell hook logger's env tuning is an intentional, documented exception — not an oversight.
 
 ## Design
 
@@ -52,7 +74,7 @@ This pollutes `~/.claude/` root and there is no single place to configure sspowe
 ```
 
 - `diet`: one of `off | lite | full | ultra` (replaces `.sspower-diet` content).
-- `log_rotate_lines`: integer, default 1000 (replaces the hardcoded literal in `codex-bridge.mjs`).
+- `log_rotate_lines`: integer, default 1000. **User-edited, read-only to code** — governs `scripts/codex-bridge.mjs` `codex.log` rotation only (replaces its `LOG_MAX_LINES` literal). NO code path writes this key. See "Concurrency" + "Scope carve-out: `_log.sh`".
 - Unknown/missing keys → defaults. Missing file → all defaults, file lazily created on first write.
 
 ### Path constants
@@ -71,9 +93,14 @@ Fixed, hardcoded in all consumers (no resolution logic):
 New `hooks/_config.js` (or extend existing `hooks/_diet-config.js`) exposing:
 
 - `readConfig()` → parsed object merged over defaults; tolerant of absent/corrupt file (returns defaults, never throws).
-- `updateConfig(patch)` → atomic read-modify-write: read current, shallow-merge `patch`, write to `config.json.<pid>.<ts>` then `rename()` over `config.json`. Reuses the temp+rename pattern already in `_diet-config.js:76`.
+- `updateConfig(patch)` → read current (or defaults), shallow-merge `patch`, write to `config.json.<pid>.<ts>` then `rename()` over `config.json`. Reuses the O_EXCL temp + rename pattern already in `_diet-config.js:76`.
 
-**Concurrency contract:** all writers (diet toggle, rotation-lines change) go through `updateConfig`. `rename()` is atomic on the same filesystem, so a diet write and a rotation-config write cannot interleave-corrupt. Readers tolerate a transient missing file (mid-rename) by falling back to defaults for that read; next read succeeds. Rotation of `codex.log` / appends to `failures.jsonl` do NOT touch `config.json` (separate files) — no cross-contention.
+**Concurrency contract (corrected per Codex v1 #3):** The earlier draft claimed "atomic read-modify-write" — that is false in general (two read-merge-rename writers can lose each other's updates). It is **not needed here**, because there is exactly **one code-writable key**:
+
+- `diet` — written only by the diet hooks (`diet-activate`/`_diet-config`). A single human toggling diet serializes these by nature; the existing O_EXCL temp already prevents torn writes.
+- `log_rotate_lines` — **never written by code** (verified: `codex-bridge.mjs` uses a `const LOG_MAX_LINES`; `_log.sh` uses an env default). It is user-edited, read-only to code.
+
+With one writer key, temp+rename is sufficient: no lost-update scenario exists. The only residual race — a human hand-editing `config.json` in the exact sub-second a diet toggle fires — is a non-scenario for a single sequential operator and is explicitly accepted. A `flock` is **deferred (YAGNI)**; revisit only if a second programmatic writer is ever added. Readers tolerate a transient missing file (mid-rename) via default fallback. `codex.log` rotation / `failures.jsonl` appends never touch `config.json` (separate files).
 
 ### Code changes — plugin repo (this repo)
 
@@ -83,7 +110,10 @@ New `hooks/_config.js` (or extend existing `hooks/_diet-config.js`) exposing:
 | `scripts/codex-bridge.mjs:61` | `LOG_FILE` → `…/sspower/codex.log` |
 | `scripts/codex-bridge.mjs` (rotation) | rotation threshold reads `readConfig().log_rotate_lines` (fallback 1000) instead of literal |
 | `hooks/prompt-submit:21` | `DIAG_LOG="${HOME}/.claude/sspower/codex.log"` |
-| `hooks/_log.sh:10` | default → `$HOME/.claude/sspower/codex.log` (keep env override) |
+| `hooks/_log.sh:10` | default path → `$HOME/.claude/sspower/codex.log` (keep `SSPOWER_LOG_FILE` env override). Rotation knobs `SSPOWER_LOG_MAX_LINES`/`SSPOWER_LOG_KEEP_TAIL` stay env — see carve-out |
+| `skills/codex-diagnostics/SKILL.md:10,32` + description | replace `~/.claude/sspower-codex.log` → `~/.claude/sspower/codex.log` (Codex v1 #1 — missed runtime consumer) |
+| `README.md:256`, `docs/ARCHITECTURE.md:76,325` | doc-cleanup: old paths → new (Codex v1 #4) |
+| `CLAUDE.md` (plugin) | update any `~/.claude/sspower-*` path mentions (Codex v1 #4) |
 | `hooks/diet-activate.js:16` | write diet via `updateConfig({diet: level})` instead of `.sspower-diet` |
 | `hooks/diet-track.js:14` | read diet via `readConfig().diet` instead of `.sspower-diet` |
 | `hooks/_diet-config.js:76` | generalize temp+rename into `updateConfig`; drop `.sspower-diet` path |
@@ -127,7 +157,9 @@ fi
 
 | Risk | Mitigation |
 |---|---|
-| Concurrent config writes (diet vs rotation-lines) corrupt JSON | All writes via `updateConfig` atomic temp+rename; reads tolerate transient absence |
+| Concurrent config writes lose updates | Collapsed (Codex v1 #3): only `diet` is code-written; `log_rotate_lines` is read-only to code. One writer key → temp+rename sufficient, no lock. See Concurrency contract |
+| `codex.log` cap inconsistent between bridge (config) and `_log.sh` (env) | `_log.sh` env default kept numerically = `config.json.log_rotate_lines` default (1000); documented carve-out, matches existing `_log.sh:14` invariant |
+| Missed runtime consumer beyond the 6 found | `codex-diagnostics` SKILL was the miss (now in table). Impl step 1 = exhaustive `grep -rn 'sspower-codex\|\.sspower-diet'` across plugin + config repo, fail-closed if any unlisted hit |
 | Hot-path cost: diet read every prompt now parses JSON | File ~40 bytes; parse is sub-ms; acceptable |
 | Cross-repo consumers break if only plugin updated | Implementation plan has explicit cross-repo step (`bin/codex-failures`, `codex-health`); migration + both edits land together |
 | Migration run mid-session blips diet | Documented sequencing constraint; run at session boundary |
@@ -143,4 +175,4 @@ fi
 
 ## Open questions
 
-None outstanding. Single-consumer scope locked; log-folding ruled out for correctness; branch chosen.
+None outstanding. Codex v1 review applied (5/5 addressed in REV2). Single-consumer scope locked; log-folding ruled out for correctness; `_log.sh` carve-out + `_diet-config` default-chain non-goal explicit; concurrency claim corrected (one writer key, no lock). Branch chosen. Ready for user approval → writing-plans.
