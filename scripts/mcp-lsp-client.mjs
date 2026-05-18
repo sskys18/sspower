@@ -61,6 +61,12 @@ export class McpLspClient {
       // as a SUCCESSFUL JSON-RPC response with result.isError===true. Treat
       // as unavailable → fail-open, exactly like a JSON-RPC error (Issue 2).
       if (res.result.isError) return { ok: false, text: "" };
+      // codex-lsp signals infra absence (missing language server, no source
+      // files) as a SUCCESSFUL response with isError:false but a non-diagnostic
+      // details.errorKind. Treat these as fail-open unavailable (D-B7), NOT as
+      // code diagnostics — else a machine merely lacking a server false-blocks.
+      const ek = res.result.details && res.result.details.errorKind;
+      if (ek === "missing_dependency" || ek === "no_files") return { ok: false, text: "" };
       const text = (res.result.content || [])
         .filter((b) => b && b.type === "text")
         .map((b) => b.text)
@@ -144,6 +150,7 @@ export function isCleanDiagnosticsText(text) {
   return (
     t.length === 0 ||
     t === "No diagnostics found" ||
-    t.startsWith("No LSP server configured for extension:")
+    t.startsWith("No LSP server configured for extension:") ||
+    t.includes("is configured but NOT INSTALLED")
   );
 }
