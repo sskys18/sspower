@@ -56,63 +56,19 @@ function getDefaultMode() {
   return 'full';
 }
 
-// Symlink-safe flag write. Refuses symlinks at target + parent dir.
-// Atomic temp + rename, 0600, O_NOFOLLOW where available. Silent-fails.
-function safeWriteFlag(flagPath, content) {
-  try {
-    const flagDir = path.dirname(flagPath);
-    fs.mkdirSync(flagDir, { recursive: true });
+// Active-flag I/O now delegates to the single config file (~/.claude/sspower/
+// config.json) via _config.js. The legacy ~/.claude/.sspower-diet flag is
+// retired (see scripts/sspower-migrate.sh). flagPath args are accepted but
+// ignored for backward call-signature compatibility.
+const _cfg = require('./_config');
 
-    try {
-      if (fs.lstatSync(flagDir).isSymbolicLink()) return;
-    } catch (e) { return; }
-
-    try {
-      if (fs.lstatSync(flagPath).isSymbolicLink()) return;
-    } catch (e) {
-      if (e.code !== 'ENOENT') return;
-    }
-
-    const tempPath = path.join(flagDir, `.sspower-diet.${process.pid}.${Date.now()}`);
-    const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
-    const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW;
-    let fd;
-    try {
-      fd = fs.openSync(tempPath, flags, 0o600);
-      fs.writeSync(fd, String(content));
-      try { fs.fchmodSync(fd, 0o600); } catch (e) { /* windows */ }
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
-    }
-    fs.renameSync(tempPath, flagPath);
-  } catch (e) { /* best-effort */ }
+function safeWriteFlag(_flagPath, content) {
+  const m = String(content == null ? '' : content).trim().toLowerCase();
+  return _cfg.writeActiveDiet(m);
 }
 
-const MAX_FLAG_BYTES = 64;
-
-function readFlag(flagPath) {
-  try {
-    let st;
-    try { st = fs.lstatSync(flagPath); } catch (e) { return null; }
-    if (st.isSymbolicLink() || !st.isFile()) return null;
-    if (st.size > MAX_FLAG_BYTES) return null;
-
-    const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === 'number' ? fs.constants.O_NOFOLLOW : 0;
-    const flags = fs.constants.O_RDONLY | O_NOFOLLOW;
-    let fd, out;
-    try {
-      fd = fs.openSync(flagPath, flags);
-      const buf = Buffer.alloc(MAX_FLAG_BYTES);
-      const n = fs.readSync(fd, buf, 0, MAX_FLAG_BYTES, 0);
-      out = buf.slice(0, n).toString('utf8');
-    } finally {
-      if (fd !== undefined) fs.closeSync(fd);
-    }
-
-    const raw = out.trim().toLowerCase();
-    if (!VALID_MODES.includes(raw)) return null;
-    return raw;
-  } catch (e) { return null; }
+function readFlag(_flagPath) {
+  return _cfg.readActiveDiet();
 }
 
 module.exports = { getDefaultMode, getConfigDir, getConfigPath, VALID_MODES, safeWriteFlag, readFlag };
