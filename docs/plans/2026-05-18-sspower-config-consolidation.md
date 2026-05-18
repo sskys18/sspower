@@ -62,7 +62,7 @@ Before any edit, enumerate every consumer of the legacy paths and assert it matc
 ```
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   --include='*.js' --include='*.mjs' --include='*.sh' --include='*.md' . \
-  | grep -vE '/docs/specs/|/docs/plans/|/docs/reviews/|/docs/.*handoff|/\.git/|/\.claude/wiki/' \
+  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/' \
   | sort > /tmp/sspower_consumers_plugin.txt
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   "$HOME/.claude/bin" "$HOME/.claude/skills/codex-health" 2>/dev/null | sort \
@@ -526,7 +526,7 @@ Verify whole-plugin sweep finds no stale runtime/doc path (excluding spec/plan/h
 ```
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   --include='*.js' --include='*.mjs' --include='*.sh' --include='*.md' . \
-  | grep -vE '/docs/specs/|/docs/plans/|/docs/.*handoff|/\.git/|/\.claude/wiki/'
+  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/'
 ```
 Expected: empty. Any printed line is an unhandled consumer — fix it in this task before commit.
 
