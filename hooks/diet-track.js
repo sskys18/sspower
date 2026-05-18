@@ -5,13 +5,8 @@
 //
 // Adapted from caveman/hooks/caveman-mode-tracker.js (MIT, Julius Brussee).
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-const { getDefaultMode, safeWriteFlag, readFlag } = require('./_diet-config');
-
-const claudeDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-const flagPath = path.join(claudeDir, '.sspower-diet');
+const { getDefaultMode } = require('./_diet-config');
+const { writeActiveDiet, clearActiveDiet, readActiveDiet } = require('./_config');
 
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
@@ -26,7 +21,7 @@ process.stdin.on('end', () => {
         /\bbe terse\b/i.test(prompt)) {
       if (!/\b(stop|disable|turn off|deactivate|off)\b/i.test(prompt)) {
         const mode = getDefaultMode();
-        if (mode !== 'off') safeWriteFlag(flagPath, mode);
+        if (mode !== 'off') writeActiveDiet(mode);
       }
     }
 
@@ -49,9 +44,9 @@ process.stdin.on('end', () => {
         else mode = getDefaultMode();
 
         if (mode && mode !== 'off') {
-          safeWriteFlag(flagPath, mode);
+          writeActiveDiet(mode);
         } else if (mode === 'off') {
-          try { fs.unlinkSync(flagPath); } catch (e) {}
+          clearActiveDiet();
         }
       }
     }
@@ -60,11 +55,11 @@ process.stdin.on('end', () => {
     if (/\b(stop|disable|deactivate|turn off)\b.*\b(diet|terse|caveman)\b/i.test(prompt) ||
         /\b(diet|terse|caveman)\b.*\b(stop|disable|deactivate|turn off|off)\b/i.test(prompt) ||
         /\bnormal mode\b/i.test(prompt)) {
-      try { fs.unlinkSync(flagPath); } catch (e) {}
+      clearActiveDiet();
     }
 
     // Per-turn reinforcement
-    const activeMode = readFlag(flagPath);
+    const activeMode = readActiveDiet();
     if (activeMode) {
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: {
