@@ -186,11 +186,23 @@ else
   fail "T3b json: --json flag missing from codex argv"
 fi
 
-# ── Test 3c: reasoning.effort=minimal applied by default ──────────────
-if grep -q 'reasoning.effort="minimal"' "$TMP/last-argv"; then
-  pass "T3c effort: reasoning.effort=minimal applied by default"
+# ── Test 3c: profile-routed (spec P1) — complete passes `-p quick`, no forced effort ──
+# Old contract (bridge force-injected reasoning.effort=minimal) was removed:
+# tier/model/effort are governed by ~/.codex/config.toml profiles. `complete`
+# maps to COMMAND_PROFILE.complete = "quick" and must pass `-p quick`, and must
+# NOT emit a forced `-c reasoning.effort=`/`model_reasoning_effort=` (no --effort given).
+PROFILE_OK=0
+if grep -q '^-p$' "$TMP/last-argv"; then
+  PLINE=$(grep -n '^-p$' "$TMP/last-argv" | head -1 | cut -d: -f1)
+  PVAL=$(sed -n "$((PLINE + 1))p" "$TMP/last-argv")
+  [ "$PVAL" = "quick" ] && PROFILE_OK=1
+fi
+NO_FORCED_EFFORT=1
+grep -qE 'reasoning.effort=|model_reasoning_effort=' "$TMP/last-argv" && NO_FORCED_EFFORT=0
+if [ "$PROFILE_OK" = "1" ] && [ "$NO_FORCED_EFFORT" = "1" ]; then
+  pass "T3c profile: complete passes -p quick, no forced effort (profile-routed)"
 else
-  fail "T3c effort: minimal effort not in codex argv (got: $(grep '^-c$' -A1 "$TMP/last-argv" | tr '\n' ' '))"
+  fail "T3c profile: expected '-p quick' + no forced effort (profile_ok=$PROFILE_OK no_forced_effort=$NO_FORCED_EFFORT; argv: $(tr '\n' ' ' < "$TMP/last-argv"))"
 fi
 
 # ── Test 4: --system message included in prompt ───────────────────────

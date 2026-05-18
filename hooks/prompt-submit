@@ -64,6 +64,7 @@ emit_json() {
 # ── Gate: decide whether to enrich ────────────────────────────────────
 
 should_enrich() {
+  return 1   # enrich disabled (spec D-A2) — never enrich
   # Disabled by env
   [[ "${SSPOWER_ENRICH:-1}" == "0" ]] && return 1
 

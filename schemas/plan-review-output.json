@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "findings", "summary"],
+  "properties": {
+    "verdict": { "type": "string", "enum": ["approve", "approve-with-followups", "needs-attention"], "description": "Overall plan/design judgement" },
+    "findings": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["severity", "issue", "evidence", "suggested_fix"], "properties": { "severity": { "type": "string", "enum": ["high", "medium", "low"] }, "issue": { "type": "string", "description": "The design/plan gap, ambiguity, contradiction, or risk" }, "evidence": { "type": "string", "description": "What in the plan/spec triggers this (quote or section ref)" }, "suggested_fix": { "type": "string", "description": "Concrete correction" } } }, "description": "Open-ended design/gap findings (empty array if none)" },
+    "summary": { "type": "string", "description": "Overall assessment and recommendation" }
+  }
+}

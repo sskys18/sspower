@@ -24,12 +24,12 @@
 #
 # Tunables (env):
 #   SSPOWER_REVIEW_TIMEOUT     (default 90s)
-#   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min)
+#   SSPOWER_REVIEW_CACHE_TTL   (default 3600s = 60min)
 #   SSPOWER_REVIEW_MAX_ROUNDS  (default 3)
 #   SSPOWER_REVIEW_AUTO_APPLY  (default on; set off to disable patch apply)
 #   SSPOWER_SECURITY_REVIEW    (default on;     set off to skip security pass)
 #   SSPOWER_SECURITY_EFFORT    (default xhigh;  off|low|medium|high|xhigh)
-#   SSPOWER_SANITY_REVIEW      (default on;     set off to skip sanity pass)
+#   SSPOWER_SANITY_REVIEW      (default off;    set on to enable sanity pass)
 #   SSPOWER_SANITY_EFFORT      (default medium; off|low|medium|high|xhigh)
 #                              Sanity runs only at round 0 on non-strict
 #                              branches. Purpose: break round-escalation
@@ -224,7 +224,7 @@ HASH_INPUT=$(printf '%s|%s|%s|%s' "${REPO_ROOT:-}" "$HEAD_SHA" "$BRANCH" "$DIFF_
 DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_HASH" ] && DIFF_HASH=$(printf '%s' "$HASH_INPUT" | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$DIFF_HASH.json"
-CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-600}"
+CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-3600}"
 
 # ---------- Diff-stability bypass ----------
 # Same diff hash denied 2x consecutively → user pushing same changes, codex stuck.
@@ -251,19 +251,27 @@ fi
 
 # ---------- Run codex on cache miss ----------
 if [ -z "$RESULT" ]; then
-  # ---------- Round-aware effort tier (main review) ----------
-  if [ -n "${SSPOWER_REVIEW_EFFORT:-}" ]; then
-    ROUND_EFFORT="$SSPOWER_REVIEW_EFFORT"
+  # ---------- Round-aware profile tier (main review) ----------
+  if [ -n "${SSPOWER_REVIEW_PROFILE:-}" ]; then
+    ROUND_PROFILE="$SSPOWER_REVIEW_PROFILE"
   elif [ "$BRANCH_TIER" = "strict" ]; then
-    ROUND_EFFORT="xhigh"
+    ROUND_PROFILE="deep"
   else
     case "$ROUNDS" in
-      0) ROUND_EFFORT="low" ;;
-      1) ROUND_EFFORT="high" ;;
-      *) ROUND_EFFORT="xhigh" ;;
+      0) ROUND_PROFILE="normal" ;;
+      1) ROUND_PROFILE="normal" ;;
+      *) ROUND_PROFILE="deep" ;;
     esac
   fi
-  log_event info hook.auto-review kind=tier_chosen branch="$BRANCH" tier="$BRANCH_TIER" round="$((ROUNDS+1))/$ROUNDS_CAP" effort="$ROUND_EFFORT"
+  # Back-compat shim: downstream timeout (:409) + logs (:440,:645) still read
+  # ROUND_EFFORT. Derive it from the chosen profile so `set -u` stays happy
+  # and the timeout case keeps working. (MAIN review itself uses --profile.)
+  case "$ROUND_PROFILE" in
+    deep)   ROUND_EFFORT="xhigh" ;;
+    quick)  ROUND_EFFORT="low" ;;
+    *)      ROUND_EFFORT="high" ;;   # normal
+  esac
+  log_event info hook.auto-review kind=tier_chosen branch="$BRANCH" tier="$BRANCH_TIER" round="$((ROUNDS+1))/$ROUNDS_CAP" profile="$ROUND_PROFILE" effort="$ROUND_EFFORT"
 
   # Main review prompt (general bugs/regressions/docs drift)
   MAIN_PROMPT_FILE=$(mktemp -t sspower-autoreview-main-XXXXXX)
@@ -374,14 +382,24 @@ For mechanical fixes include 'suggested_patch' as unified diff. For
 design issues set 'suggested_patch' to null.
 EOF
 
-  MAIN_BRIDGE_ARGS=(review --prompt "@$MAIN_PROMPT_FILE" --effort "$ROUND_EFFORT")
+  MAIN_BRIDGE_ARGS=(review --prompt "@$MAIN_PROMPT_FILE" --profile "$ROUND_PROFILE")
   [ -n "$REPO_ROOT" ] && MAIN_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
+  SSPOWER_SECURITY_REPOS="${SSPOWER_SECURITY_REPOS:-/Users/sskys/blockwavelabs/custody-dashboard-solution:/Users/sskys/blockwavelabs/danal/pay-chain:/Users/sskys/blockwavelabs/danal/danalstable-frontend:/Users/sskys/blockwavelabs/danal/danalstablecoin-backend:/Users/sskys/blockwavelabs/infinite-block/security}"
   SEC_EFFORT="${SSPOWER_SECURITY_EFFORT:-xhigh}"
-  SECURITY_ENABLED=1
-  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-on}" = "off" ]; then
-    SECURITY_ENABLED=0
+  SECURITY_ENABLED=0
+  _repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+  if [ "$BRANCH_TIER" = "strict" ]; then
+    SECURITY_ENABLED=1
+  elif [ -n "$_repo_root" ]; then
+    _OLDIFS="$IFS"; IFS=':'
+    for _p in $SSPOWER_SECURITY_REPOS; do
+      case "$_repo_root" in "$_p"*) SECURITY_ENABLED=1 ;; esac
+    done
+    IFS="$_OLDIFS"
   fi
+  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-}" = "off" ]; then SECURITY_ENABLED=0; fi
+  if [ "${SSPOWER_SECURITY_REVIEW:-}" = "on" ]; then SECURITY_ENABLED=1; fi
   SEC_BRIDGE_ARGS=(review --prompt "@$SEC_PROMPT_FILE" --effort "$SEC_EFFORT")
   [ -n "$REPO_ROOT" ] && SEC_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
@@ -393,10 +411,7 @@ EOF
   # blocking the push and forcing another round.
   SANITY_EFFORT="${SSPOWER_SANITY_EFFORT:-medium}"
   SANITY_ENABLED=0
-  if [ "$ROUNDS" -eq 0 ] \
-     && [ "$BRANCH_TIER" != "strict" ] \
-     && [ "$SANITY_EFFORT" != "off" ] \
-     && [ "${SSPOWER_SANITY_REVIEW:-on}" != "off" ]; then
+  if [ "${SSPOWER_SANITY_REVIEW:-off}" = "on" ] && [ "$BRANCH_TIER" != "strict" ] && [ "$SANITY_EFFORT" != "off" ]; then
     SANITY_ENABLED=1
   fi
   SANITY_BRIDGE_ARGS=(review --prompt "@$SANITY_PROMPT_FILE" --effort "$SANITY_EFFORT")
@@ -437,7 +452,11 @@ EOF
   SEC_RESULT_FILE=$(mktemp -t sspower-autoreview-secresult-XXXXXX)
   SANITY_RESULT_FILE=$(mktemp -t sspower-autoreview-sanityresult-XXXXXX)
 
-  log_event info hook.auto-review kind=parallel_review_start branch="$BRANCH" main_effort="$ROUND_EFFORT" sec_effort="$SEC_EFFORT" sanity_effort="$([ "$SANITY_ENABLED" = "1" ] && echo "$SANITY_EFFORT" || echo "off")" timeout="${REVIEW_TIMEOUT}s"
+  log_event info hook.auto-review kind=parallel_review_start branch="$BRANCH" \
+    main_effort="$ROUND_PROFILE" \
+    sec_effort="$([ "$SECURITY_ENABLED" = "1" ] && echo "$SEC_EFFORT" || echo "off")" \
+    sanity_effort="$([ "$SANITY_ENABLED" = "1" ] && echo "$SANITY_EFFORT" || echo "off")" \
+    timeout="${REVIEW_TIMEOUT}s"
 
   if command -v timeout &>/dev/null; then
     timeout "$MAIN_TIMEOUT" node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null &

@@ -1,9 +1,12 @@
 ---
 name: codex-enrich
-description: Enrich a user prompt by sending it to Codex for codebase-aware analysis. Codex scans the repo, validates assumptions against actual code, corrects inaccuracies, and returns a rich detailed prompt. Trigger whenever the user's message contains the word "enrich" — even casually like "enrich fix the auth bug" or "I want to enrich this request". Also trigger for "codex prompt", "make this prompt better", or "prompt enrichment".
-user_invocable: true
-allowed-tools: Bash, Read, Glob, Grep, Agent, Skill, AskUserQuestion
+description: "DEPRECATED and inert (spec D-A2, 2026-05-18). The codex enrich path is disabled and the rescue subcommand is removed. This skill performs no action. Not for invocation."
+user_invocable: false
+allowed-tools: Read
 ---
+
+> **DEPRECATED (spec D-A2, 2026-05-18):** `enrich` is disabled and the
+> `rescue` subcommand is removed (P1). This skill is inert. Do not invoke.
 
 # Codex Enrich
 
@@ -14,7 +17,7 @@ Codex has full repo access and a different model perspective — it spots things
 ## How It Works
 
 1. The user's message contains "enrich" — strip that word out, the rest is the raw prompt
-2. Build an enrichment task and send it to Codex via `codex-bridge.mjs rescue` in read-only mode
+2. This skill formerly sent an enrichment task to Codex; that path is removed (spec D-A2).
 3. Codex scans the repo, validates the prompt against actual code, enriches it
 4. Present the enriched prompt + context notes to the user
 5. User approves, edits, or rejects before you act
@@ -37,8 +40,7 @@ If nothing remains after removing "enrich", ask: "What would you like me to enri
 Invoke the Codex bridge with this task. Do NOT add `--write` — this is read-only analysis.
 
 ```bash
-SSPOWER_PLUGIN_ROOT=$(dirname "$(dirname "$(find ~/.claude/plugins -name codex-bridge.mjs -path "*/sspower/*" | head -1)")")
-node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" rescue --cd . --prompt @/tmp/codex-enrich-prompt.md
+# DEPRECATED — enrich/rescue removed (spec D-A2); this skill is inert
 ```
 
 ```

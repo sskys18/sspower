@@ -15,8 +15,9 @@
  *   node codex-bridge.mjs setup
  *   node codex-bridge.mjs implement  --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]
  *   node codex-bridge.mjs spec-review --prompt <text|@file> [--model <m>] [--cd <dir>]
+ *   node codex-bridge.mjs plan-review --prompt <text|@file> [--profile <p>] [--model <m>] [--cd <dir>]
  *   node codex-bridge.mjs review     --prompt <text|@file> [--model <m>] [--cd <dir>]
- *   node codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]
+ *   node codex-bridge.mjs rescue     [DISABLED — see spec D-A3; use plan-review/review/implement]
  *   node codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--cd <dir>]
  */
 
@@ -36,21 +37,23 @@ const PLUGIN_ROOT = path.resolve(BRIDGE_DIR, "..");
 const SCHEMAS_DIR = path.join(PLUGIN_ROOT, "schemas");
 
 const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
-const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
-const DEFAULT_MODEL = "gpt-5.5";
-const DEFAULT_EFFORT = "high";
-// Per-command effort tiers. service_tier=fast applies globally via ~/.codex/config.toml.
-// Lower effort = faster, less reasoning. Override per-call with --effort.
-const COMMAND_EFFORT = {
-  enrich: "minimal",     // prompt rewrite — no deliberation needed
-  review: "high",        // review — solid analysis without xhigh stalls
-  "spec-review": "high",
-  rescue: "high",        // targeted fix
-  resume: "high",        // session continuation
-  implement: "high",     // user pref — high enough, avoid xhigh stalls
-  complete: "minimal",   // single-turn extractor — no deliberation
+// Model/effort defaults removed (spec P1, 2026-05-18): tier/model/effort are
+// governed by ~/.codex/config.toml profiles via COMMAND_PROFILE + -p. The
+// bridge no longer force-resolves a default model/effort (that killed profiles).
+
+// Per-command default profile (single source of truth = ~/.codex/config.toml).
+// Bridge passes `-p <profile>` unless the user gave an explicit --profile.
+// `resume` is intentionally absent: `codex exec resume` has NO --profile;
+// it inherits root config.toml (root service_tier=flex is load-bearing).
+const COMMAND_PROFILE = {
+  complete: "quick",
+  enrich: "quick",
+  implement: "normal",
+  review: "normal",
+  "spec-review": "normal",
+  "plan-review": "normal",
+  rescue: "normal",
 };
-const ENRICH_EFFORT = "minimal";  // back-compat alias
 
 // Failure log (structured JSONL, ring-buffered)
 const FAILURE_LOG = _sspowerCfg.failuresLogPath();
@@ -132,17 +135,6 @@ function die(msg) {
   logEvent("error", "bridge.die", { msg, subcommand: process.argv[2] });
   console.error(`codex-bridge: ${msg}`);
   process.exit(1);
-}
-
-function resolveModel(raw) {
-  if (!raw) return DEFAULT_MODEL;
-  return MODEL_ALIASES.get(raw) ?? raw;
-}
-
-function resolveEffort(raw, command) {
-  if (raw) return raw;
-  if (command && COMMAND_EFFORT[command]) return COMMAND_EFFORT[command];
-  return DEFAULT_EFFORT;
 }
 
 function classifyError(stderr = "", exitCode, durationMs) {
@@ -360,6 +352,7 @@ function runCodexExec(prompt, options = {}) {
   const {
     schema = null,
     sandbox = "read-only",
+    profile = null,
     model = null,
     effort = null,
     cd = null,
@@ -376,8 +369,9 @@ function runCodexExec(prompt, options = {}) {
   args.push("-o", resultFile);
 
   if (schema) args.push("--output-schema", schema);
+  if (profile) args.push("-p", profile);
   if (model) args.push("-m", model);
-  if (effort) args.push("-c", `reasoning.effort="${effort}"`);
+  if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
   // Normalize --cd to absolute path. Otherwise -C and spawnOpts.cwd both
   // apply, resolving as "<cd>/<cd>" when the caller passes a relative path.
   const cdAbs = cd ? path.resolve(cd) : null;
@@ -386,6 +380,11 @@ function runCodexExec(prompt, options = {}) {
 
   const promptFile = secureTmpFile("prompt", prompt);
   args.push("-");
+
+  if (options.printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.exit(0);
+  }
 
   // Pass cd through so registry records the actual Codex working dir,
   // not bridge process cwd. Codex itself uses -C flag set above.
@@ -406,6 +405,7 @@ function runCodexResume(prompt, options = {}) {
   const {
     sessionId = null,
     model = null,
+    effort = null,
     schemaName = null,
     cd = null,
   } = options;
@@ -424,6 +424,7 @@ function runCodexResume(prompt, options = {}) {
   args.push("--json");
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
+  if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
 
   // Wrap prompt with structured output instruction when schema requested
   let finalPrompt = prompt;
@@ -435,6 +436,11 @@ function runCodexResume(prompt, options = {}) {
 
   const promptFile = secureTmpFile("prompt", finalPrompt);
   args.push("-");
+
+  if (options.printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.exit(0);
+  }
 
   // Codex `exec resume` doesn't accept -C, so spawn cwd is the only
   // mechanism. Normalize to absolute path for the same reason runCodexExec does.
@@ -864,7 +870,7 @@ function parseStructuredOutput(text) {
 // Tool-disable contract (spec §6.2 — achievable-contract baseline):
 //   1. --sandbox read-only            (no file writes, no spawns beyond read-only shell)
 //   2. Hard system directive prepended (single-turn extractor; do NOT call tools)
-//   3. reasoning.effort=minimal       (lowers chance of tool-use during reasoning)
+//   3. model_reasoning_effort=minimal (lowers chance of tool-use during reasoning)
 //   4. Wall-clock cap (default 60s)   (on timeout exit nonzero so caller degrades)
 //
 // Output (stdout, exit 0):  OpenAI chat.completion JSON
@@ -902,7 +908,7 @@ function _buildCompletePrompt(userPrompt, systemMessage) {
  * Wall-clock kill enforced: SIGTERM at deadline, SIGKILL 2s later. exitCode 124 on timeout.
  */
 function _runCodexComplete(prompt, options) {
-  const { model, effort, timeoutMs } = options;
+  const { profile, model, effort, timeoutMs, printArgs } = options;
   const bin = codexBin();
   const resultFile = secureTmpFile("complete-result", "");
   const promptFile = secureTmpFile("complete-prompt", prompt);
@@ -913,10 +919,20 @@ function _runCodexComplete(prompt, options) {
     "--ephemeral",
     "--sandbox", "read-only",
     "-o", resultFile,
-    "-m", model,
-    "-c", `reasoning.effort="${effort}"`,
     "-",
   ];
+
+  const _stdinIdx = args.lastIndexOf("-");
+  const _flags = [];
+  if (profile) _flags.push("-p", profile);
+  if (model) _flags.push("-m", model);
+  if (effort) _flags.push("-c", `model_reasoning_effort="${effort}"`);
+  args.splice(_stdinIdx, 0, ..._flags);
+
+  if (printArgs) {
+    process.stdout.write(JSON.stringify({ bin: codexBin(), args }) + "\n");
+    process.exit(0);
+  }
 
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -1039,15 +1055,16 @@ async function cmdComplete(argv) {
   const userPrompt = resolvePrompt(opts.prompt);
   const finalPrompt = _buildCompletePrompt(userPrompt, opts.system);
 
-  const model = resolveModel(opts.model);
-  const effort = opts.effort || COMMAND_EFFORT.complete;
+  const profile = opts.profile || COMMAND_PROFILE.complete;
+  const model = opts.model || null;
+  const effort = opts.effort || null;
   const timeoutMs = Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
     ? opts.timeoutMs
     : COMPLETE_DEFAULT_TIMEOUT_MS;
 
   let result;
   try {
-    result = await _runCodexComplete(finalPrompt, { model, effort, timeoutMs });
+    result = await _runCodexComplete(finalPrompt, { profile, model, effort, timeoutMs, printArgs: opts.printArgs });
   } catch (err) {
     logEvent("error", "bridge.complete", {
       kind: "spawn_error",
@@ -1112,7 +1129,10 @@ async function cmdComplete(argv) {
   const payload = {
     id,
     object: "chat.completion",
-    model,
+    // Profile-routed (spec P1): when no explicit --model, the model is
+    // governed by the ~/.codex/config.toml profile, not pinned by the bridge.
+    // Report a non-null sentinel so the OpenAI shape stays well-formed.
+    model: model || `profile:${profile || "default"}`,
     choices: [{
       index: 0,
       message: { role: "assistant", content: result.lastMessage || "" },
@@ -1252,8 +1272,10 @@ async function cmdImplement(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "implement"),
+    profile: opts.profile || COMMAND_PROFILE["implement"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: workDir,
     ephemeral: false, // persist session for resume-based fix loops
   });
@@ -1294,10 +1316,28 @@ async function cmdSpecReview(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("spec-review-output"),
     sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "spec-review"),
+    profile: opts.profile || COMMAND_PROFILE["spec-review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
+  });
+  output(result, { expectStructured: true });
+}
+
+async function cmdPlanReview(argv) {
+  const opts = parseOpts(argv);
+  const prompt = resolvePrompt(opts.prompt);
+  const result = await runCodexExec(prompt, {
+    schema: schemaPath("plan-review-output"),
+    sandbox: "read-only",
+    profile: opts.profile || COMMAND_PROFILE["plan-review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
+    cd: opts.cd,
+    ephemeral: true,
   });
   output(result, { expectStructured: true });
 }
@@ -1308,8 +1348,10 @@ async function cmdReview(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("quality-review-output"),
     sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "review"),
+    profile: opts.profile || COMMAND_PROFILE["review"],
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     cd: opts.cd,
     ephemeral: true, // reviews don't need resume
   });
@@ -1317,96 +1359,23 @@ async function cmdReview(argv) {
 }
 
 async function cmdRescue(argv) {
-  const opts = parseOpts(argv);
-  const prompt = resolvePrompt(opts.prompt);
-  const result = await runCodexExec(prompt, {
-    schema: null,
-    sandbox: opts.write ? "workspace-write" : "read-only",
-    model: resolveModel(opts.model),
-    effort: resolveEffort(opts.effort, "rescue"),
-    cd: opts.cd,
-    ephemeral: !opts.write, // persist write sessions for potential resume
-  });
-  output(result);
+  parseOpts(argv); // tolerate args for back-compat
+  process.stderr.write(
+    "[codex:rescue] disabled (spec D-A3). Use `plan-review` for design/plan review, " +
+    "`review` for code review, or `implement --write` for worker delegation.\n"
+  );
+  logEvent("info", "bridge.rescue", { kind: "disabled" });
+  process.exit(2);
 }
 
 async function cmdEnrich(argv) {
   const opts = parseOpts(argv);
   const rawPrompt = resolvePrompt(opts.prompt);
-
-  // Wrap user prompt with enrichment instructions.
-  // Codex scans repo (read-only), corrects assumptions, returns enriched prompt.
-  const wrapped = [
-    "You are a prompt-enrichment assistant for Claude Code.",
-    "",
-    "Original user prompt:",
-    "<<<PROMPT",
-    rawPrompt,
-    "PROMPT>>>",
-    "",
-    "Task: Produce an enriched version of the prompt that Claude will use to do the work.",
-    "Rules:",
-    "  1. Scan relevant files in this repository (read-only).",
-    "  2. Quote exact file paths and line numbers. Do not guess.",
-    "  3. If the user made wrong assumptions about the codebase, correct them.",
-    "  4. Add concrete technical context Claude will need (types, function signatures, existing patterns).",
-    "  5. Preserve the user's intent and tone. Do not answer the request — only enrich it.",
-    "  6. Keep enrichment under 1500 tokens. Cut fluff.",
-    "",
-    "Output format: plain text only. No markdown fences. No preamble.",
-    "Start with '<ENRICHED>' on its own line.",
-    "End with '</ENRICHED>' on its own line.",
-    "Everything inside those markers is the enriched prompt Claude will see.",
-  ].join("\n");
-
-  const result = await runCodexExec(wrapped, {
-    schema: null,
-    sandbox: "read-only",
-    model: resolveModel(opts.model),
-    effort: opts.effort || ENRICH_EFFORT,
-    cd: opts.cd,
-    ephemeral: true,
-  });
-
-  // Fail-open: if Codex errored, emit raw prompt + stderr warning
-  if (result.exitCode !== 0) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "exit_nonzero_fallback",
-      exitCode: result.exitCode,
-      session: result.sessionId,
-      duration_ms: result.trace?.duration_ms,
-      stderr_preview: result.stderr?.slice(0, 200),
-    });
-    process.stderr.write(`[codex:enrich] failed exit=${result.exitCode}, passing raw prompt\n`);
-    console.log(rawPrompt);
-    cleanupTmpDir();
-    process.exit(0);
-  }
-
-  // Extract enriched body between markers
-  const raw = result.lastMessage || "";
-  const match = raw.match(/<ENRICHED>\s*\n?([\s\S]*?)\n?<\/ENRICHED>/);
-  const enriched = match ? match[1].trim() : raw.trim();
-
-  if (!enriched) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "empty_output_fallback",
-      session: result.sessionId,
-      duration_ms: result.trace?.duration_ms,
-    });
-    process.stderr.write(`[codex:enrich] empty output, passing raw prompt\n`);
-    console.log(rawPrompt);
-  } else if (!match) {
-    logEvent("warn", "bridge.enrich", {
-      kind: "missing_enriched_markers",
-      session: result.sessionId,
-      raw_preview: raw.slice(0, 120),
-    });
-    console.log(enriched);
-  } else {
-    console.log(enriched);
-  }
+  process.stderr.write("[codex:enrich] disabled (spec D-A2) — passing raw prompt through\n");
+  logEvent("info", "bridge.enrich", { kind: "disabled_passthrough" });
+  process.stdout.write(rawPrompt);
   cleanupTmpDir();
+  process.exit(0);
 }
 
 async function cmdResume(argv) {
@@ -1417,7 +1386,9 @@ async function cmdResume(argv) {
   const schemaName = opts.noSchema ? null : (opts.schema || "implementation-output");
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,
-    model: resolveModel(opts.model),
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     schemaName,
     cd: opts.cd,
   });
@@ -1577,7 +1548,9 @@ async function cmdSteer(argv) {
   const resumeCwd = opts.cd || record?.cwd || null;
   const result = await runCodexResume(prompt, {
     sessionId: opts.sessionId,
-    model: resolveModel(opts.model),
+    model: opts.model || null,
+    effort: opts.effort || null,
+    printArgs: opts.printArgs,
     schemaName: null,
     cd: resumeCwd,
   });
@@ -1602,6 +1575,8 @@ function parseOpts(argv) {
     prompt: null,
     write: false,
     model: null,
+    profile: null,
+    printArgs: false,
     effort: null,
     cd: null,
     sessionId: null,
@@ -1624,6 +1599,12 @@ function parseOpts(argv) {
         break;
       case "--model":
         opts.model = argv[++i];
+        break;
+      case "--profile":
+        opts.profile = argv[++i];
+        break;
+      case "--print-args":
+        opts.printArgs = true;
         break;
       case "--effort":
         opts.effort = argv[++i];
@@ -1695,7 +1676,7 @@ async function main() {
       "  codex-bridge.mjs implement  --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>] [--worktree <branch>] [--auto-commit [msg]]",
       "  codex-bridge.mjs spec-review --prompt <text|@file> [--model <m>] [--cd <dir>]",
       "  codex-bridge.mjs review     --prompt <text|@file> [--model <m>] [--cd <dir>]",
-      "  codex-bridge.mjs rescue     --prompt <text|@file> [--write] [--model <m>] [--effort <e>] [--cd <dir>]",
+      "  codex-bridge.mjs rescue     [DISABLED — spec D-A3; use plan-review/review/implement]",
       "  codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--no-schema]",
       "  codex-bridge.mjs enrich     --prompt <text|@file> [--model <m>] [--effort <e>] [--cd <dir>]",
       "  codex-bridge.mjs complete   --json --prompt <text|@file> [--system <text>] [--model <m>] [--effort <e>] [--timeout <ms>]",
@@ -1737,6 +1718,9 @@ async function main() {
       break;
     case "spec-review":
       await cmdSpecReview(argv);
+      break;
+    case "plan-review":
+      await cmdPlanReview(argv);
       break;
     case "review":
       await cmdReview(argv);
