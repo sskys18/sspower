@@ -17,7 +17,8 @@
 - **D-1 The new B5 Stop gate uses bridge-direct MCP, never model-issued — scoped to `cmdLspCheck` only.** Codex 0.130 gates *every* model-issued MCP tool call behind a per-call approval that auto-cancels non-interactively; `approval_policy=never` does NOT bypass it (proven P2-T6, `.claude/wiki/gotchas.md`). The Stop hook script calls `node codex-bridge.mjs lsp-check`, which runs the existing `runLspGate` (bridge speaks JSON-RPC to codex-lsp itself). Adding `--dangerously-bypass-approvals-and-sandbox` is forbidden (disables the sandbox). **Scope clarification (plan-review finding):** "never model-issued" describes *this new Stop-gate path only*. P4 does **NOT** modify the existing `lspMcp:true` registration in `cmdImplement`/`runLspRepairLoop`/resume paths (`scripts/codex-bridge.mjs:1432,1525,1659,1822`) — that is P3-shipped behavior and out of P4 scope. Those paths register `-c mcp_servers.lsp.*` so Codex *may* attempt model MCP; per the gotcha that attempt auto-cancels harmlessly (the bridge-direct `runLspGate` is the actual gate, P3). Removing/disabling the vestigial registration is a separate cleanup, NOT this plan. No P4 task touches those lines.
 - **D-2 Codex 0.130 hook contract == Claude Code's.** Binary symbols: `struct StopCommandOutputWire`, error `"Stop hook returned decision:block without a non-empty reason"`, `"Stop hook exited with code 2 but did not write a continuation prompt to stderr"`. So Stop output = `{"decision":"block","reason":"<non-empty>"}` (Codex continues) or exit 2 + continuation-prompt-on-stderr. `hooks.json` handler = `{matcher(regex), command, timeout, async, statusMessage}` (matches the shipped PostToolUse entry). No bimodal placeholder — Plan-B-R2 retired.
 - **D-3 B6 rules → PreToolUse hook, not a `.rules` file.** Codex 0.130 has no clean `.codex/rules/*.rules` enforcement primitive (instruction mechanisms: soft `AGENTS.md`/`CLAUDE.md`; hard = PreToolUse hook, Claude `permissionDecision` contract). Spec D-B4 *intent* ("Codex never commits/pushes; rules forbidden") is enforced via PreToolUse `deny`/`ask`. Spec-prose filename deviation — surfaced for plan-review.
-- **D-4 Profile scope = `cmdImplement` write path only.** `codex-bridge.mjs:1516` (`opts.write ? "workspace-write" : "read-only"`) is the sole write path. `cmdSpecReview`/`cmdPlanReview`/`cmdReview` (1581/1597/1613) stay `sandbox:"read-only"` — unchanged. Resume path (`runCodexResume`, used by `runLspRepairLoop`) inherits the session's sandbox; no separate `-c` plumbing (resume does not accept `--sandbox`/`-c` per the bridge comment at codex-bridge.mjs:424).
+- **D-4 Profile scope = `cmdImplement` write path only.** `codex-bridge.mjs:1516` (`opts.write ? "workspace-write" : "read-only"`) is the sole write path. `cmdSpecReview`/`cmdPlanReview`/`cmdReview` (1581/1597/1613) stay `sandbox:"read-only"` — unchanged.
+- **D-4a (OPEN — security-relevant, gated by Task 0 Step 5b).** `runCodexResume` (codex-bridge.mjs:430-468, used by `runLspRepairLoop`) passes **only** `-m` / `-c model_reasoning_effort` / lspMcp args — it does NOT re-apply `--sandbox`, `-c approval_policy="never"`, or `-c sandbox_workspace_write.network_access=false`. Whether `codex exec resume <session>` **inherits** the originating `codex exec` session's hardened config is Codex-0.130 runtime behavior and is **NOT yet verified** (the :424 comment claims resume rejects `--sandbox`/`-c`, yet `-c model_reasoning_effort` IS accepted there — so the claim is imprecise and must be tested empirically, not assumed). **Security implication:** if resume does NOT inherit, the gate-triggered LSP repair rounds — exactly when Codex is actively editing files to fix diagnostics — run with **default** sandbox/approval/network (potentially network-ON), a regression introduced by this very plan. Task 0 Step 5b empirically resolves this; Task 4 Step 8 acts on the finding (cover or explicitly scope-out-with-stated-risk). `--print-args` alone is INSUFFICIENT (it shows bridge-built args, not Codex's internal session-config inheritance).
 - **D-5 network_access=false is safe.** The `[sandbox_workspace_write] network_access` key governs *model-spawned shell* network only; Codex's own LLM API channel is unaffected. codex-lsp is local stdio. Task 0 Step 4 grep re-confirms no codex-spawned implement step needs network.
 - **D-6 Advisory-first (D-B6).** Default `SSPOWER_CODEX_STOP_GATE` unset → Stop hook logs `would-block`, exits 0 (Codex stops normally). `=1` → emits `decision:block`. Mirrors P3's `SSPOWER_LSP_GATE_BLOCK`. No time-based auto-promotion.
 
@@ -85,15 +86,37 @@ grep -nE 'fetch\(|https?://|npm (i|install)|pnpm (i|install)|curl |wget ' script
 ```
 Expected: the ONLY hit is the codex-CLI-not-found install-hint string near `scripts/codex-bridge.mjs:195` (`Install with: npm install -g @openai/codex`) — diagnostic text, NOT a Codex-spawned implement-run network dependency (Codex's LLM API uses its own auth channel, not sandbox net). Record the grep output verbatim and classify that hit as non-blocking diagnostic text. If any *other* hit indicates a real network dependency inside the implement path, STOP — escalate (network_access=false would break it).
 
-- [ ] **Step 5: Write findings file**
+- [ ] **Step 5: Resume config-inheritance probe (D-4a — security-gating)**
 
-Create `docs/plans/notes/P4-spike-findings.md` with the four results above under headings `Version`, `Stop contract`, `Override syntax`, `Network blast radius`, each with the exact command output pasted. End with: `Disposition: D-1..D-6 confirmed empirically — proceed.` (or the specific deviation + STOP if any step failed).
+Determine empirically whether `codex exec resume` inherits the originating session's `network_access=false`. Run:
+```bash
+TMP="$(mktemp -d)"; git -C "$TMP" init -q; git -C "$TMP" commit -q --allow-empty -m init
+# Create a persisted (non-ephemeral) workspace-write session with network OFF,
+# instruct it to attempt a network call and report the outcome.
+SID="$(codex exec --json --sandbox workspace-write \
+  -c 'approval_policy="never"' -c 'sandbox_workspace_write.network_access=false' \
+  -C "$TMP" - <<<'Run: curl -s -m 5 https://example.com >/dev/null 2>&1 && echo NET_OK || echo NET_BLOCKED. Then reply with exactly that token.' \
+  2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=s.match(/"session_id":"([^"]+)"/);process.stdout.write(m?m[1]:"")})')"
+echo "session=$SID"
+# Resume the SAME session (the bridge's runCodexResume flag set: --json only,
+# no --sandbox / no -c approval/network) and re-probe.
+codex exec resume "$SID" --json -C "$TMP" - <<<'Run: curl -s -m 5 https://example.com >/dev/null 2>&1 && echo RESUME_NET_OK || echo RESUME_NET_BLOCKED. Reply with exactly that token.' 2>/dev/null | grep -aoE 'RESUME_NET_(OK|BLOCKED)' | tail -1
+rm -rf "$TMP"
+```
+Expected one of:
+- `RESUME_NET_BLOCKED` → resume **inherits** the hardened config. Record "D-4a RESOLVED: resume inherits network-off; Task 4 Step 8 = no extra work needed, document inheritance." 
+- `RESUME_NET_OK` → resume does **NOT** inherit → **security gap confirmed**. Record "D-4a CONFIRMED GAP: resume runs network-ON." Task 4 Step 8 MUST then either re-apply the `-c` hardening in `runCodexResume` (if `codex exec resume` accepts them — test `codex exec resume "$SID" -c 'sandbox_workspace_write.network_access=false' ...`) OR, if resume rejects those `-c` keys, explicitly scope repair-round hardening OUT in D-4a + ARCHITECTURE with the stated network-ON-during-repair risk and a follow-up issue.
+- Command errors / Codex auth unavailable → record "D-4a UNRESOLVED (probe blocked: <reason>)"; Task 4 Step 8 defaults to the explicit scope-out-with-stated-risk branch (fail safe: do not claim hardening you didn't verify).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Write findings file**
+
+Create `docs/plans/notes/P4-spike-findings.md` with the five results above under headings `Version`, `Stop contract`, `Override syntax`, `Network blast radius`, `Resume inheritance (D-4a)`, each with exact command output pasted. End with: `Disposition: D-1..D-6 confirmed; D-4a = <RESOLVED|CONFIRMED GAP|UNRESOLVED> — proceed per Task 4 Step 8.` (or a specific deviation + STOP if a contract step failed).
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add docs/plans/notes/P4-spike-findings.md
-git commit -m "docs(p4): Task 0 spike — confirm Codex 0.130 Stop/sandbox/network contract"
+git commit -m "docs(p4): Task 0 spike — Codex 0.130 contract + resume-inheritance (D-4a) findings"
 ```
 
 ---
@@ -542,6 +565,21 @@ git add scripts/codex-bridge.mjs tests/codex-bridge/test-harden-write-args.mjs
 git commit -m "feat(p4): hardened write profile -- approval_policy=never + network off (implement --write only; D-B5)"
 ```
 
+- [ ] **Step 8: Act on D-4a (resume-hardening) per Task 0 Step 5 finding**
+
+Read `docs/plans/notes/P4-spike-findings.md` → `Resume inheritance (D-4a)`. Branch:
+
+- **RESOLVED (resume inherits, `RESUME_NET_BLOCKED`):** no code change. Add to `runCodexResume`'s doc-comment (codex-bridge.mjs:420-429) one line: `// D-4a verified <date>: resume inherits the originating session's sandbox/approval/network config (probe: Task 0 Step 5). No -c re-application needed.` Commit `docs(p4): D-4a resolved — resume inherits hardened config (verified)`.
+
+- **CONFIRMED GAP (`RESUME_NET_OK`):** test whether resume accepts the keys:
+  ```bash
+  codex exec resume --help 2>&1 | grep -- '-c, --config' && echo "resume-accepts-c"
+  ```
+  - If `resume-accepts-c`: in `runCodexResume`, add a `hardenWrite=false` option (mirroring Task 4 Step 3) and, when true, `args.push("-c",'approval_policy="never"'); args.push("-c","sandbox_workspace_write.network_access=false");` after the `effort` push (line ~453). Set `hardenWrite:true` at the `runLspRepairLoop` → `runCodexResume` call (codex-bridge.mjs:1431-1433). Add a test to `test-harden-write-args.mjs`: a resume `--print-args` invocation carries the two `-c` flags. Commit `fix(p4): re-apply network/approval hardening on repair-loop resume (D-4a gap closed)`.
+  - If resume rejects `-c` for these keys: do NOT fake it. Edit D-4a in this plan + the ARCHITECTURE P4 section to state explicitly: "LSP repair rounds (`runLspRepairLoop` resume) run WITHOUT network/approval hardening — `codex exec resume` does not accept the keys; mitigation: repair prompt is constrained to fixing named files, advisory-default gate, and the PreToolUse guard (Task 3) still applies to resume tool calls. Residual risk: network reachable during repair edits. Tracked: open a follow-up." Commit `docs(p4): D-4a scoped out with stated residual risk (resume rejects hardening -c)`.
+
+- **UNRESOLVED (probe blocked):** take the scope-out branch above (fail safe — never claim unverified hardening) and additionally note the probe was blocked and must be re-run before B6 promotes from advisory to enforced.
+
 ---
 
 ### Task 5: Docs + wiki + verification matrix
@@ -602,6 +640,7 @@ git commit -m "docs(p4): document Codex Stop gate + guard + hardened profile; ve
 | B6: guard deny/ask matrix | `bash tests/hooks/test-codex-guard-pretool.sh` | `PASS: test-codex-guard-pretool` |
 | B6: hooks.json events | `node -e '...Object.keys(h)'` | `PostToolUse,PreToolUse,Stop` |
 | D-B5: hardened write args | `node --test tests/codex-bridge/test-harden-write-args.mjs` | 3/3 PASS |
+| D-4a: resume hardening resolved | `grep -A2 'Resume inheritance' docs/plans/notes/P4-spike-findings.md` | RESOLVED / GAP-closed-in-code / scoped-out-with-stated-risk (never "unverified-but-claimed") |
 | D-4: review unaffected | same test, "review path" case | read-only, no `-c` harden |
 | Bridge integrity | `node --check scripts/codex-bridge.mjs` | exit 0 |
 | Regression | `bash tests/codex-bridge/test-complete.sh` | PASS (handoff baseline 15/0) |
@@ -614,11 +653,18 @@ git commit -m "docs(p4): document Codex Stop gate + guard + hardened profile; ve
 - **R3 — Advisory-first (D-B6).** Stop gate ships advisory; `SSPOWER_CODEX_STOP_GATE=1` promotion is a separate user decision after N clean advisory runs — NOT flipped in this plan.
 - **R4 — `network_access=false` blast radius.** Task 0 Step 4 grep gates this; D-5 reasoning (sandbox net ≠ Codex LLM channel) is the basis. If the grep finds a real in-run network need, Task 4 STOPs and escalates.
 - **R5 — Interactive variant (`approval_policy=on-request`+`auto_review`).** Spec D-B5 mentions a human-TUI variant. Out of scope for this plan: the bridge runs Codex non-interactively (`codex exec`); `on-request` is meaningless there and `auto_review` is a TUI concept. Documented as intentionally deferred (no bridge code path consumes it).
+- **R6 — Resume-round hardening (D-4a), security-relevant.** `runLspRepairLoop` resumes Codex to fix LSP errors; `runCodexResume` does not re-apply `network_access=false`/`approval_policy=never`. Whether the resumed session inherits them is unverified until Task 0 Step 5. Gated: Task 4 Step 8 either confirms inheritance, closes the gap in code, or scopes it out with the network-ON-during-repair residual risk stated explicitly (never claimed-but-unverified). The PreToolUse guard (Task 3) still applies to resume tool calls, partially mitigating.
+- **R7 — Plan-review gate evidence is weaker than a clean approve.** 3-round cap reached without a verifiable terminal `approve` (round 3 parse empty; Codex reviewed the v1.1.0 cache tree, not canonical — D-C1). Rounds 1–2 substantive defects fixed. A canonical-tree plan-review re-run is advised before B6 promotes from advisory to enforced (`SSPOWER_CODEX_STOP_GATE=1`).
 - **Assumption:** Codex tier stays default/`fast` (out-of-repo P1 config); no Track C code sets `service_tier` ([[project-codex-service-tier-flex-unsupported]]).
 
-## Plan-review gate outcome
+## Plan-review gate outcome (honest)
 
-3 rounds (3-round cap reached). **Round 3 final verdict: `approve-with-followups`** (session `019e3b5d`) — low-severity followups only (read-only inspection methodology; not plan defects). Codex initially repeated a read-only-sandbox misframe, then self-corrected after the REVIEWERS-READ-FIRST banner (`"Correction: continuing the review now"`) and performed genuine validation (read writing-plans skill, spec, decisions.md, codex-hook.js, tests; ran the Task 0 binary-resolution + mktemp commands — both succeeded). The bridge's terminal structured-parse returned empty due to Codex streaming multiple JSON chunks (mechanical artifact, not a rejection). Gate satisfied.
+3 rounds run; 3-round cap reached. **Not a clean terminal `approve`.**
+- **Round 1** (`019e3b58`): `needs-attention` — 1 HIGH (read-only-sandbox misframe → dismissed, not a plan defect), 1 MEDIUM (D-1 model-MCP scope ambiguity → **fixed**), 1 LOW (Task 0 grep not empty → **fixed**).
+- **Round 2**: `needs-attention` — HIGH misframe repeated; 1 MEDIUM (Task 0 binary-lookup brittle → **fixed** with robust resolution).
+- **Round 3** (`019e3b5d`): Codex self-corrected the misframe after the REVIEWERS-READ-FIRST banner and did genuine validation (ran the Task 0 commands — succeeded), but the bridge's **terminal structured output was empty** (`"Failed to parse structured output", "raw": ""`) because Codex streamed multiple JSON objects. An *interim* `[codex:agent]` chunk showed `"verdict":"approve-with-followups"` but its finding text (`"I'm continuing with read-only inspection and …"`) is a progress announcement, **not a terminal verdict** — it must NOT be cited as approval.
+- **Caveat (D-C1):** round-3 Codex inspected the **cache tree** `~/.codex/plugins/cache/sskys18/sspower/1.1.0/…`, not the canonical marketplace tree. Cache may lag this session's edits; gate evidence is weaker than a canonical-tree review. Likely contributed to the recurring misframe.
+- **Disposition:** rounds 1–2 substantive defects (2 MEDIUM, 1 LOW) all fixed inline; the only repeated HIGH is a non-defect review-sandbox misframe; round 3 ended inconclusively at the cap. Proceeding under the documented 3-round cap with these corrections — NOT on a claimed clean verdict. A canonical-tree re-review is advisable before B6 hardening promotes from advisory.
 
 ## Plan-review disposition (rounds 1–2, Codex `plan-review`, session 019e3b58)
 
