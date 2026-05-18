@@ -62,7 +62,7 @@ Before any edit, enumerate every consumer of the legacy paths and assert it matc
 ```
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   --include='*.js' --include='*.mjs' --include='*.sh' --include='*.md' . \
-  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/' \
+  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/|(^|/)scripts/sspower-migrate\.sh' \
   | sort > /tmp/sspower_consumers_plugin.txt
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   "$HOME/.claude/bin" "$HOME/.claude/skills/codex-health" 2>/dev/null | sort \
@@ -526,9 +526,11 @@ Verify whole-plugin sweep finds no stale runtime/doc path (excluding spec/plan/h
 ```
 grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   --include='*.js' --include='*.mjs' --include='*.sh' --include='*.md' . \
-  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/'
+  | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/|(^|/)scripts/sspower-migrate\.sh'
 ```
 Expected: empty. Any printed line is an unhandled consumer — fix it in this task before commit.
+
+> **Execution note (sweep scope):** `scripts/sspower-migrate.sh` is excluded from the sweep — it is the migrator and MUST name the legacy `sspower-codex-*` / `.sspower-diet` paths by definition. Surfaced at Task 11 (Task 8's sweep ran before Task 10 created the script). Exclusion added to the `grep -vE` in Task 0/8/11.
 
 > **Execution note (cross-task fix):** Task 3's prescribed replacement comment contained the literal `~/.claude/.sspower-diet`, which Task 8's sweep correctly flagged as a (false-positive) hit. Resolved by rewording that comment in `hooks/_diet-config.js` (and this plan's Task 3 block) to "The legacy dotfile diet flag is retired" — meaning preserved, sweep stays a strict zero-literal invariant. `hooks/_diet-config.js` is therefore also touched in this task's commit.
 
