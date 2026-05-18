@@ -73,7 +73,7 @@ Skills are loaded on demand by Claude Code's skill router. Each is one directory
 |-------|---------|
 | `codex-enrich` | Send a user prompt to Codex, return enriched prompt validated against the codebase. |
 | `codex-tracking` | List / inspect / kill / steer running bridge sessions. |
-| `codex-diagnostics` | Triage `~/.claude/sspower-codex.log` failures. |
+| `codex-diagnostics` | Triage `~/.claude/sspower/codex.log` failures. |
 
 ### Diet mode + tooling
 
@@ -322,7 +322,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Per-call codex options | `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
 | Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
-| Bridge log | `~/.claude/sspower-codex.log` (failures/diagnostics) |
+| Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
 
 ## Sync with upstream
 

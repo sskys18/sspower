@@ -57,7 +57,7 @@ function getDefaultMode() {
 }
 
 // Active-flag I/O now delegates to the single config file (~/.claude/sspower/
-// config.json) via _config.js. The legacy ~/.claude/.sspower-diet flag is
+// config.json) via _config.js. The legacy dotfile diet flag is
 // retired (see scripts/sspower-migrate.sh). flagPath args are accepted but
 // ignored for backward call-signature compatibility.
 const _cfg = require('./_config');

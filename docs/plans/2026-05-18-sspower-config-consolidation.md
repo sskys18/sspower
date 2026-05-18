@@ -295,7 +295,7 @@ Replace the flag I/O block (lines 59-118, from the `// Symlink-safe flag write` 
 
 ```javascript
 // Active-flag I/O now delegates to the single config file (~/.claude/sspower/
-// config.json) via _config.js. The legacy ~/.claude/.sspower-diet flag is
+// config.json) via _config.js. The legacy dotfile diet flag is
 // retired (see scripts/sspower-migrate.sh). flagPath args are accepted but
 // ignored for backward call-signature compatibility.
 const _cfg = require('./_config');
@@ -529,6 +529,8 @@ grep -rn 'sspower-codex-failures\|sspower-codex\.log\|\.sspower-diet' \
   | grep -vE '(^|/)docs/(specs|plans|reviews)/|(^|/)docs/[^/]*handoff|(^|/)\.git/|(^|/)\.claude/wiki/'
 ```
 Expected: empty. Any printed line is an unhandled consumer — fix it in this task before commit.
+
+> **Execution note (cross-task fix):** Task 3's prescribed replacement comment contained the literal `~/.claude/.sspower-diet`, which Task 8's sweep correctly flagged as a (false-positive) hit. Resolved by rewording that comment in `hooks/_diet-config.js` (and this plan's Task 3 block) to "The legacy dotfile diet flag is retired" — meaning preserved, sweep stays a strict zero-literal invariant. `hooks/_diet-config.js` is therefore also touched in this task's commit.
 
 Commit: `docs(sspower): update skill/README/ARCHITECTURE/CLAUDE paths to sspower/`
 

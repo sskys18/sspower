@@ -253,7 +253,7 @@ spec-review --> compliant
 The bridge + hook write errors and warnings to a single log file:
 
 ```
-~/.claude/sspower-codex.log
+~/.claude/sspower/codex.log
 ```
 
 One line per event, append-only, rotated at 1000 lines (keeps last 500).
