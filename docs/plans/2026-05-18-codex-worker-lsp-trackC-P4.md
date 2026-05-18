@@ -55,7 +55,7 @@ CODEX_WRAPPER="$(readlink -f "$(command -v codex)")"
 # npm global wrapper: <prefix>/lib/node_modules/@openai/codex/bin/codex.js
 # native blob:    .../@openai/codex/node_modules/@openai/codex-<plat>/vendor/<triple>/codex/codex
 CODEX_PKG_DIR="$(cd "$(dirname "$CODEX_WRAPPER")/.." && pwd)"
-CODEXNATIVE="$(find "$CODEX_PKG_DIR/node_modules/@openai" -maxdepth 3 -type f -name codex -path '*/vendor/*/codex/codex' 2>/dev/null | head -1)"
+CODEXNATIVE="$(find "$CODEX_PKG_DIR/node_modules/@openai" -type f -name codex -path '*/vendor/*/codex/codex' 2>/dev/null | head -1)"   # no -maxdepth: blob is ~5 levels deep (Task 0 verified)
 [ -z "$CODEXNATIVE" ] && { echo "STOP: codex native blob not found under $CODEX_PKG_DIR — record path layout in findings and escalate"; exit 1; }
 strings "$CODEXNATIVE" | grep -oE 'StopCommandOutputWire|approval_policy|sandbox_workspace_write|network_access|on-request' | sort -u
 ```
