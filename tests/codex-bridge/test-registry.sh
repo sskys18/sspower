@@ -13,9 +13,11 @@ STATE_DIR="$HOME/.claude/state/sspower/codex"
 # Clean slate (only files matching test-registry pattern, don't blow away other sessions)
 mkdir -p "$STATE_DIR"
 
-echo "[test] Spawning rescue in background"
+# `rescue` was disabled (spec D-A3); use `implement` to exercise the registry
+# round-trip — it produces registry-tracked sessions the same way rescue did.
+echo "[test] Spawning implement in background"
 START_TS=$(date -u +"%Y-%m-%dT%H:%M:%S")
-node "$BRIDGE" rescue --prompt "say hello and stop" > /tmp/test-rescue.out 2>&1 &
+node "$BRIDGE" implement --prompt "Say hello and stop. No file changes needed." --cd /tmp > /tmp/test-rescue.out 2>&1 &
 BRIDGE_PID=$!
 
 # Wait up to 60s for state file to appear (Codex cold start can be slow).
@@ -24,13 +26,13 @@ BRIDGE_PID=$!
 SID=""
 for i in $(seq 1 60); do
   SID=$(node "$BRIDGE" ps 2>/dev/null | jq -r --arg t "$START_TS" '
-    [.[] | select(.subcommand=="rescue" and .started_at >= $t)]
+    [.[] | select(.subcommand=="implement" and .started_at >= $t)]
     | .[0].session_id // empty
   ')
   [ -n "$SID" ] && break
   if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
     SID=$(node "$BRIDGE" ps 2>/dev/null | jq -r --arg t "$START_TS" '
-      [.[] | select(.subcommand=="rescue" and .started_at >= $t)]
+      [.[] | select(.subcommand=="implement" and .started_at >= $t)]
       | .[0].session_id // empty
     ')
     break

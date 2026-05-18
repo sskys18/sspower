@@ -398,8 +398,12 @@ EOF
     done
     IFS="$_OLDIFS"
   fi
-  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-}" = "off" ]; then SECURITY_ENABLED=0; fi
+  # SSPOWER_SECURITY_REVIEW=on force-enables (overrides path/branch gating).
   if [ "${SSPOWER_SECURITY_REVIEW:-}" = "on" ]; then SECURITY_ENABLED=1; fi
+  # Explicit OFF is authoritative and applied LAST — you can never run a
+  # security review with `--effort off`, so SEC_EFFORT=off (or REVIEW=off)
+  # disables regardless of a REVIEW=on force-enable above.
+  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-}" = "off" ]; then SECURITY_ENABLED=0; fi
   SEC_BRIDGE_ARGS=(review --prompt "@$SEC_PROMPT_FILE" --effort "$SEC_EFFORT")
   [ -n "$REPO_ROOT" ] && SEC_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
