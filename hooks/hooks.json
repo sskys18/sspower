@@ -60,12 +60,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/cmd-rewrite.sh\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-rewrite.sh\"",
             "timeout": 3
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-rewrite.sh\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/cmd-rewrite.sh\"",
             "timeout": 3
           },
           {
