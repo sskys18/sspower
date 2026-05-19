@@ -380,6 +380,7 @@ function runCodexExec(prompt, options = {}) {
     effort = null,
     cd = null,
     ephemeral = true,
+    hardenWrite = false,
     lspMcp = false,
   } = options;
 
@@ -390,6 +391,14 @@ function runCodexExec(prompt, options = {}) {
   args.push("--json");
   if (ephemeral) args.push("--ephemeral");
   args.push("--sandbox", sandbox);
+  // D-B5: hardened write profile. approval_policy=never (no interactive
+  // approvals in non-interactive exec) + network_access=false (model-spawned
+  // shell gets no network; Codex's own LLM channel is unaffected -- D-5).
+  // Scoped to the implement --write path only (D-4); reviews stay read-only.
+  if (hardenWrite) {
+    args.push("-c", 'approval_policy="never"');
+    args.push("-c", "sandbox_workspace_write.network_access=false");
+  }
   args.push("-o", resultFile);
 
   if (schema) args.push("--output-schema", schema);
@@ -434,6 +443,7 @@ function runCodexResume(prompt, options = {}) {
     effort = null,
     schemaName = null,
     cd = null,
+    hardenWrite = false,
     lspMcp = false,
   } = options;
 
@@ -452,6 +462,15 @@ function runCodexResume(prompt, options = {}) {
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
+  // D-4a: codex exec resume does NOT inherit the originating session's
+  // sandbox/approval/network config (Task 0 spike: resume ran network-ON).
+  // It DOES accept these -c overrides (verified: network blocked with them).
+  // Re-apply the same hardening as runCodexExec so repair-loop resumes are
+  // not a network-ON hole during gate-triggered edits.
+  if (hardenWrite) {
+    args.push("-c", 'approval_policy="never"');
+    args.push("-c", "sandbox_workspace_write.network_access=false");
+  }
   const _lspArgs = lspMcp ? lspMcpOverrideArgs() : [];
   for (const a of _lspArgs) args.push(a);
 
@@ -1429,7 +1448,7 @@ async function runLspRepairLoop(cwd, baseHead, sessionId, _lsp, blockMode) {
     let rr;
     try {
       rr = await runCodexResume(repairPrompt, {
-        sessionId, effort: "high", schemaName: "implementation-output", cd: cwd, lspMcp: true,
+        sessionId, effort: "high", schemaName: "implementation-output", cd: cwd, hardenWrite: true, lspMcp: true,
       });
     } catch {
       logEvent("warn", "bridge.lsp", { kind: "repair_resume_threw", round });
@@ -1516,6 +1535,7 @@ async function cmdImplement(argv) {
   const result = await runCodexExec(prompt, {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
+    hardenWrite: !!opts.write,
     profile: opts.profile || COMMAND_PROFILE["implement"],
     model: opts.model || null,
     effort: opts.effort || null,
@@ -1573,6 +1593,29 @@ async function cmdImplement(argv) {
   }
 
   output(result, { expectStructured: true });
+}
+
+// B5 backend: in-session Stop-gate diagnostics. Reuses the shipped
+// bridge-direct runLspGate (NEVER model-issued MCP -- Codex-0.130 gates
+// model MCP behind an un-bypassable per-call approval; see gotchas).
+// Always exits 0 and prints one JSON line (fail-open / D-B7).
+async function cmdLspCheck(argv) {
+  const out = { status: "skipped", decision: "clean", total_errors: 0, errors: [] };
+  try {
+    const opts = parseOpts(argv);
+    const cwd = path.resolve(opts.cd || ".");
+    if (!fs.existsSync(cwd)) { process.stdout.write(JSON.stringify(out) + "\n"); return; }
+    // baseHead=null -> lspChangedFiles diffs working tree vs HEAD (the
+    // uncommitted edits Codex just made this session).
+    const g = await runLspGate(cwd, null, false);
+    out.status = g.status;
+    out.decision = g.status === "errors" ? "would-block" : "clean";
+    out.total_errors = g.total_errors || 0;
+    out.errors = (g.errors || []).map((e) => ({ file: e.file, text: e.text }));
+  } catch (e) {
+    logEvent("warn", "bridge.lsp", { kind: "lsp_check_threw", msg: String(e && e.message) });
+  }
+  process.stdout.write(JSON.stringify(out) + "\n");
 }
 
 async function cmdSpecReview(argv) {
@@ -1656,6 +1699,7 @@ async function cmdResume(argv) {
     printArgs: opts.printArgs,
     schemaName,
     cd: opts.cd,
+    hardenWrite: true,
     lspMcp: true,
   });
   output(result, { expectStructured: !!schemaName });
@@ -1819,6 +1863,7 @@ async function cmdSteer(argv) {
     printArgs: opts.printArgs,
     schemaName: null,
     cd: resumeCwd,
+    hardenWrite: true,
     lspMcp: true,
   });
   output(result);
@@ -1983,6 +2028,9 @@ async function main() {
       break;
     case "implement":
       await cmdImplement(argv);
+      break;
+    case "lsp-check":
+      await cmdLspCheck(argv);
       break;
     case "spec-review":
       await cmdSpecReview(argv);

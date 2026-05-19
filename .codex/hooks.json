@@ -1,5 +1,18 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/codex-guard-pretool.sh",
+            "timeout": 10,
+            "statusMessage": "sspower guard (git/rm/install)"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "^(apply_patch|Write|Edit|MultiEdit|multi_edit|write|edit|multiedit)$",
@@ -9,6 +22,18 @@
             "command": ".codex/codex-lsp-posttool.sh",
             "timeout": 60,
             "statusMessage": "checking LSP diagnostics (advisory)"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".codex/codex-lsp-stop.sh",
+            "timeout": 130,
+            "statusMessage": "checking LSP before stop (advisory)"
           }
         ]
       }
