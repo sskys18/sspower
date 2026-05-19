@@ -2,7 +2,9 @@
 > Generated: 2026-05-19 (KST, updated post-P5-revalidation)
 
 ## Task
-sspower Codex-worker LSP gate. **P4 / Track C — SHIPPED & MERGED.** **P5 / Phase B7 — SHIPPED & MERGED LOCALLY to `main` (merge `82e3dad`, NOT pushed — `origin/main` still `9bc8121`).** No active build task.
+sspower Codex-worker LSP gate. **P4 / Track C — SHIPPED & MERGED.** **P5 / Phase B7 — SHIPPED & MERGED LOCALLY** (`82e3dad`). **semble-rewrite ownership fix — MERGED LOCALLY** (`main` @ `b7b227c`, NOT pushed — `origin/main` still `9bc8121`). No active build task.
+
+> ⚠️ **DEFERRED LIVE-SMOKE (must run in a FRESH session):** the semble-rewrite reorder fix (`0d13ee6`) is structurally + unit-verified but its live multi-hook effect is UNCONFIRMED — `hooks/hooks.json` loads at session start, so the editing session can't test it. In a new Claude Code session on `main`, run `ls -R <small dir>` and confirm it yields a `semble_rs tree …` **ask-prompt** (NOT rtk's `N files, M dirs` auto-run). If still rtk → reorder is ineffective; fall back to spec Approach A (skip-list in cmd-rewrite.sh). Spec/plan: `docs/specs|plans/2026-05-19-semble-rewrite-ownership-*`.
 
 ## Status
 ### Completed (merged to `main`, PR #8, mergeCommit `9bc8121`)
