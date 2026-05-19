@@ -2,7 +2,7 @@
 > Generated: 2026-05-19 (KST, updated post-P5-revalidation)
 
 ## Task
-sspower Codex-worker LSP gate. **P4 / Track C — SHIPPED & MERGED.** P5 semble_rs re-validation **DONE** (roadmap trigger now MET). No active build task.
+sspower Codex-worker LSP gate. **P4 / Track C — SHIPPED & MERGED.** **P5 / Phase B7 — SHIPPED & MERGED LOCALLY to `main` (merge `82e3dad`, NOT pushed — `origin/main` still `9bc8121`).** No active build task.
 
 ## Status
 ### Completed (merged to `main`, PR #8, mergeCommit `9bc8121`)
@@ -13,14 +13,20 @@ sspower Codex-worker LSP gate. **P4 / Track C — SHIPPED & MERGED.** P5 semble_
 - Tests green: node-check, test-lsp-check, test-complete 15/0, test-harden-write-args 4/0, test-codex-stop-gate, test-codex-guard-pretool (incl quoted/escaped-arg cases), hooks 3 events, test-integration 0 failed.
 - Branches cleaned: `feat/codex-worker-trackC` (local+remote) + all stale (trackB, design/, phase-a..d) deleted. Local branches = `main` only.
 
-- **P5 re-validation (2026-05-19)**: semble_rs re-measured on this repo (sspower, 307 files). Findings: `docs/plans/notes/P5-semble-revalidation-findings.md`. search ~89× win (stronger than spike), savings 84%, latency sub-second warm. Roadmap trigger MET.
+- **P5 re-validation (2026-05-19)**: semble_rs re-measured (sspower, 307 files). `docs/plans/notes/P5-semble-revalidation-findings.md`. search ~89× win, savings 84%, sub-second warm.
+
+### Completed — P5 / Phase B7 (merged local `main` `82e3dad`, 2026-05-19)
+- 4 advisory + fail-open Claude-side hooks: `hooks/semble-context.sh` (UserPromptSubmit `semble_rs plan` inject), `hooks/semble-rewrite.sh` (PreToolUse:Bash `ls -R`/`grep -R IDENT` → semble, **single explicit `ask`**, never deny, between cmd-rewrite & auto-review), `hooks/semble-session.sh` (SessionStart avail + time-bounded detached warm), `hooks/codex-lsp-posttool.sh` (PostToolUse codex-lsp on Claude's edits, **de-fanged** block→advisory). + hooks.json wiring, 4 test scripts, 3 committed `.cjs` fixtures, ARCHITECTURE P5 section + hook table.
+- Plan `docs/plans/2026-05-19-codex-worker-P5-semble-context-layer.md` — Codex plan-review **approve** (8 rounds; 3 findings refuted w/ primary evidence). Codex `implement --write` executed; independent test re-run 4/4 green; pre-flight branch-review **approve** (1 blocking root-glob data-loss in test-semble-context FIXED `0ebdb6f`). Merge gate: converged `approve-with-followups` + sec `approve`; stale per-branch round-counter reset (documented remedy, NOT `AUTO_REVIEW=off`).
+- All advisory-first (D-B6); semble_rs/codex-lsp pre-1.0 → every hook `command -v…||exit 0` + timeout (gtimeout/timeout/perl/unbounded-doc) + fail-open. DP-1 tree justified on gitignore-correctness, NOT discredited 3000×.
 
 ### In Progress
-- None. Findings note + this handoff uncommitted (new untracked file + modified handoff on `main`).
+- None. `main` is **ahead of `origin/main` by the P5 merge `82e3dad`** (local-only). handoff edit uncommitted.
 
 ## Resume Here
-1. **No active task.** Next forward move = plan **P5** (semble_rs context + command rewrite, spec Phase B7). Roadmap trigger now fully MET (P2–P4 shipped + semble_rs re-validated on a current working repo). Invoke `sspower:writing-plans` for P5 **only on explicit user go-ahead** (P5 is roadmap, not auto-start). Plan file: `docs/plans/2026-05-18-codex-worker-lsp-trackB-P2-P6.md` §P5. **Carry caveat** (see Gotchas): the spec §2 `tree` 3000× figure is a pathological-repo artifact — do NOT design B7's `ls -R`→`tree` rewrite around it; justify on correctness/gitignore-awareness instead.
-2. Optional: B5/B6 advisory→block promotion (D-B6, operator-gated, never automated) — flip `SSPOWER_CODEX_STOP_GATE=1` only after operator confirms N clean advisory runs. Not now.
+1. **No active task. P5 shipped local.** If publishing: `git push origin main` (auto-review gate will fire — latest verdict converged `approve-with-followups`; if `deny_rounds_cap`, the stale `.git/sspower-review-rounds-main` counter is the documented-remedy reset, the verdict itself passes). Then commit this handoff.
+2. Optional (operator-gated, never auto): D-B6 advisory→block promotion — P5 hooks ship advisory-only; flip a block-mode env ONLY after operator confirms N clean advisory runs. Distinct from P4's `SSPOWER_CODEX_STOP_GATE`. Not now.
+3. Spec roadmap remainder: **P6** (C4–C9 cleanup tail, spec §9) is the only unshipped phase. P3 (B3+B4 bridge MCP gate) already shipped in Track C.
 
 ## Decisions (do NOT revisit)
 - **B5 reuses bridge-direct `runLspGate` via `lsp-check`, never model MCP**: Codex 0.130 per-call model-MCP approval is un-bypassable (`approval_policy=never` doesn't lift it). Model-MCP path rejected — security/abort cost.
