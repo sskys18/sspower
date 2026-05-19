@@ -3,8 +3,25 @@ set -uo pipefail
 H="$(cd "$(dirname "$0")/../.." && pwd)/hooks/semble-rewrite.sh"
 command -v jq >/dev/null 2>&1 || { echo "SKIP: test-semble-rewrite (no jq - harness dep)"; exit 0; }
 FAIL=0; ok(){ echo "PASS: $1"; }; bad(){ echo "FAIL: $1 :: $2"; FAIL=1; }
+skip(){ echo "SKIP: $1"; }
 # jq builder - valid JSON even when the command contains quotes / regex chars.
 j(){ jq -nc --arg c "$1" '{tool_input:{command:$c}}'; }
+
+# Inv-4 (semble-independent): hooks.json reorder is actually in place -
+# semble-rewrite BEFORE cmd-rewrite, and auto-review is the LAST Bash hook
+# (last-anchored, not loose order). Must run even when semble_rs absent.
+HJ="$(cd "$(dirname "$0")/../.." && pwd)/hooks/hooks.json"
+if jq -e '
+  ([.hooks.PreToolUse[]|select(.matcher=="Bash")|.hooks[].command]) as $c
+  | ($c|map(test("semble-rewrite"))|index(true)) as $s
+  | ($c|map(test("cmd-rewrite"))|index(true)) as $m
+  | ($c|length) as $n
+  | ($s != null and $m != null and ($s < $m) and ($c[$n-1]|test("auto-review")))
+' "$HJ" >/dev/null 2>&1; then
+  ok "chain Inv-4: semble-rewrite<cmd-rewrite & auto-review LAST"
+else
+  bad "Inv-4 order" "$(jq -c '[.hooks.PreToolUse[]|select(.matcher=="Bash")|.hooks[].command]' "$HJ")"
+fi
 
 # The hook will not rewrite to a binary that is absent (it would emit a broken
 # command). So with no semble_rs the ONLY correct behavior is fail-open
@@ -57,5 +74,30 @@ done
 
 O="$(SSPOWER_SEMBLE_REWRITE=0 sh -c "printf '{\"tool_input\":{\"command\":\"ls -R\"}}' | '$H'")"
 [[ -z "$O" ]] && ok "disable env" || bad "disable env" "$O"
+
+# ── Reorder chain invariants (semble-dependent) ──────────────────────
+# Inv-1: semble-rewrite (now FIRST) emits ask + semble cmd on bare ls -R.
+O="$(j 'ls -R src' | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src")' >/dev/null \
+  && ok "chain Inv-1: semble first -> ask+tree" || bad "Inv-1" "$O"
+
+# Inv-2: semble's emitted command passes through cmd-rewrite untouched
+# (rtk has no semble_rs equivalent) -> semble's decision survives the chain.
+CR="$(cd "$(dirname "$0")/../.." && pwd)/hooks/cmd-rewrite.sh"
+if command -v rtk >/dev/null 2>&1; then
+  O="$(printf '{"tool_input":{"command":"semble_rs tree src"}}' | "$CR" 2>/dev/null)"
+  [[ -z "$O" ]] && ok "chain Inv-2: cmd-rewrite passthrough semble tree" || bad "Inv-2 (rtk grabbed semble_rs?)" "$O"
+  O="$(printf '{"tool_input":{"command":"semble_rs search --compact runLspGate ."}}' | "$CR" 2>/dev/null)"
+  [[ -z "$O" ]] && ok "chain Inv-2b: passthrough semble search" || bad "Inv-2b" "$O"
+else
+  skip "chain Inv-2 (rtk absent - cmd-rewrite no-ops, passthrough holds trivially)"
+fi
+
+# Inv-3: non-overlap command -> semble-rewrite no-ops (empty) so the
+# original reaches cmd-rewrite/rtk unchanged (rtk broad surface intact).
+for c in 'git status' 'cat foo.txt' 'npm install' 'ls -la'; do
+  O="$(j "$c" | "$H")"
+  [[ -z "$O" ]] && ok "chain Inv-3 non-overlap untouched: $c" || bad "Inv-3: $c" "$O"
+done
 
 [[ $FAIL -eq 0 ]] && echo "PASS: test-semble-rewrite" || { echo "FAIL: test-semble-rewrite"; exit 1; }

@@ -97,8 +97,8 @@ Configured in `hooks/hooks.json`. ESM root with hooks dir overridden to CJS via 
 | `UserPromptSubmit` | `diet-track.js` | sync, 5s | Reinforce diet on each turn. |
 | `UserPromptSubmit` | `codex-track-prompt.sh` | sync, 2s | Surface running/recent codex sessions. |
 | `UserPromptSubmit` | `semble-context.sh` | sync, 8s | Coding-intent `semble_rs plan` inject (advisory). |
-| `PreToolUse:Bash` | `cmd-rewrite.sh` | sync, 3s | Optional command rewriter (`rtk`) for token savings. |
-| `PreToolUse:Bash` | `semble-rewrite.sh` | sync, 3s | `ls -R` -> tree & `grep -R ident` -> search; both explicit ASK. |
+| `PreToolUse:Bash` | `semble-rewrite.sh` | sync, 3s | **Runs FIRST.** `ls -R`->`semble_rs tree` & `grep -R ident`->`semble_rs search`, both explicit ASK, gitignore-aware. Owns these 2 patterns. |
+| `PreToolUse:Bash` | `cmd-rewrite.sh` | sync, 3s | `rtk` token-saver for ALL OTHER commands (git/read/find/gh/pnpm...). Receives `semble_rs ...` for the 2 patterns and passes through (no rtk equiv). |
 | `PreToolUse:Bash` | `auto-spec-gate.sh` | sync, 600s | Spec-review gate at SDD chokepoints. |
 | `PreToolUse:Bash` | `auto-review.sh` | sync, 600s | Codex review gate at git/gh chokepoints. |
 | `PostToolUse:Write\|Edit\|MultiEdit` | `codex-lsp-posttool.sh` | sync, 6s | De-fanged advisory LSP on Claude's edits. |
@@ -587,12 +587,25 @@ Four Claude-side hooks, all advisory + fail-open (D-B6; semble_rs/codex-lsp pre-
 - `hooks/semble-context.sh` (UserPromptSubmit) - coding-intent-gated
   `semble_rs plan` repo orientation injected as `additionalContext`, char-capped,
   6 s hard timeout, fail-open. Gate mirrors the dead enrich gate in `prompt-submit`.
-- `hooks/semble-rewrite.sh` (PreToolUse:Bash, between cmd-rewrite & auto-review) -
+- `hooks/semble-rewrite.sh` (PreToolUse:Bash, **runs FIRST** - before
+  cmd-rewrite & auto-review) -
   `ls -R` -> `semble_rs tree` (gitignore-correct, DP-1; UPPERCASE-R only) and
   `grep -R <BARE_IDENT>` -> `semble_rs search --compact` (semantic != literal, DP-2),
   BOTH via explicit `permissionDecision:"ask"` (single emit path - no
   auto-allow surface; rewrites change semantics so are always confirmed).
   NEVER deny. Bails on any compound command; emitted paths shell-quoted.
+
+  **Hook ordering is load-bearing (2026-05-19).** Claude Code chains
+  `updatedInput` across sibling PreToolUse hooks in array order. When
+  `cmd-rewrite` ran first (shipped P5), rtk rewrote `ls -R`/`grep -R` to
+  `rtk ...` and the chained `semble-rewrite` no longer matched -> P5's
+  rewrite was dead. Fix = `semble-rewrite` first; it owns the 2 patterns,
+  emits `semble_rs ...`+ask, and `cmd-rewrite` passes that through (rtk
+  has no `semble_rs` equivalent, exit 1). This corrects the shipped P5
+  plan's DP-3 assumption (it claimed semble-rewrite would no-op as
+  already-rewritten; it actually no-op'd because rtk-prefixed - wrong
+  reason, zero value). rtk keeps its broad token-saving surface for
+  every other command. Spec: `docs/specs/2026-05-19-semble-rewrite-ownership-design.md`.
 - `hooks/semble-session.sh` (SessionStart) - availability line + DETACHED model
   warm (cold = one-time ~60 MB dl; never blocks session start).
 - `hooks/codex-lsp-posttool.sh` (PostToolUse:Write|Edit|MultiEdit) - vendored
