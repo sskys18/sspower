@@ -50,7 +50,19 @@ process.stdin.on("data", d => s += d).on("end", () => {
   const gitDestructive = (seg) => {
     if (!startCmd(seg, "git")) return false;
     let rest = seg.replace(/^\s*(?:\S*\/)?git\b/, "").trim();
-    const GLOBAL_WITH_ARG = /^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)(=\S+|\s+\S+)/;
+    // arg value, in BOTH the `=value` and ` value` forms, may be:
+    //   "quoted with spaces" | \x27quoted spaces\x27 | bare-no-space
+    // Quoted alternatives MUST precede the bare \S+ branch (\S+ stops at
+    // the first space and would otherwise derail subcommand parsing for
+    // paths with spaces, e.g. git -C "/a b/r" commit OR
+    // git --git-dir="/a b/.git" commit).
+    // bare branch: (?:\\.|\S)+ so a backslash-escaped space in an
+    // unquoted path (git -C /My\ Documents/r commit) is consumed as one
+    // value, not split at the literal space.
+    const ARGVAL = "(\"[^\"]*\"|\\x27[^\\x27]*\\x27|(?:\\\\.|\\S)+)";
+    const GLOBAL_WITH_ARG = new RegExp(
+      "^(-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--super-prefix)(=" +
+      ARGVAL + "|\\s+" + ARGVAL + ")");
     const GLOBAL_NOARG = /^(--paginate|--no-pager|--bare|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs|-p)\b/;
     let guard = 0;
     while (rest && guard++ < 20) {

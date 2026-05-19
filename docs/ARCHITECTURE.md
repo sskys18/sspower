@@ -528,8 +528,14 @@ events:
   segment-anchored or path-qualified (cooperative-worker scope; a
   non-leading occurrence can still `ask`, which is low-harm; tracked
   in followups). It does **NOT** defend against
-  deliberate adversarial evasion (deeper nesting, `xargs`,
-  `find -exec`, `eval`, command substitution) — that is
+  deliberate adversarial evasion — **shell quoting/escaping evasion
+  of the deny matcher** (exotic/concatenated quoting, `$'…'`,
+  variable/`$(…)` expansion of the binary or subcommand), deeper
+  shell nesting, `xargs`, `find -exec`, `eval`, command
+  substitution. The guard handles the routine cooperative quoting
+  forms (bare, single/double-quoted and `=`-form values with spaces,
+  backslash-escaped spaces) but a regex classifier **cannot** fully
+  reproduce shell word-splitting; exhaustive quoting-parse is
   architecturally out of scope at the PreToolUse layer. The real
   perimeter for adversarial cases is the hardened sandbox +
   `approval_policy=never` + `network_access=false` below; this hook

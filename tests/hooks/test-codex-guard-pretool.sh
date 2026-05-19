@@ -19,6 +19,12 @@ O="$(mk shell 'rm -rf build/' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "den
 # --- deny: bypass variants (the security-critical cases) ---
 O="$(mk shell 'git -C /tmp/x commit -m y' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-git-C-commit" || fail "deny-git-C-commit ($O)"
 O="$(mk shell 'git -c user.email=a@b push' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-git-c-push" || fail "deny-git-c-push ($O)"
+# quoted -C arg containing spaces (single-quoted; the dq form is the
+# symmetric regex branch but un-JSON-escapable via mk()'s naive printf).
+O="$(mk shell "git -C '/a b/repo' commit -m z" | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-git-C-spaces-sq" || fail "deny-git-C-spaces-sq ($O)"
+O="$(mk shell "git --git-dir='/a b/.git' commit -m z" | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-gitdir-eq-spaces" || fail "deny-gitdir-eq-spaces ($O)"
+O="$(mk shell 'git -C /My\\ Documents/r commit' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-git-C-bslash-space" || fail "deny-git-C-bslash-space ($O)"
+O="$(mk shell "git -C '/a b/r' -c k=v push" | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-multi-global-spaces" || fail "deny-multi-global-spaces ($O)"
 O="$(mk shell 'rm -r -f build' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-rm-r-f" || fail "deny-rm-r-f ($O)"
 O="$(mk shell 'rm --recursive --force d' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-rm-recursive" || fail "deny-rm-recursive ($O)"
 O="$(mk shell 'rm -fr d' | bash "$SH" 2>/dev/null)"; deny "$O" && pass "deny-rm-fr" || fail "deny-rm-fr ($O)"
