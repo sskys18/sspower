@@ -14,6 +14,12 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/diet-activate.js\"",
             "timeout": 5,
             "async": false
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-session.sh\"",
+            "timeout": 5,
+            "async": false
           }
         ]
       }
@@ -38,6 +44,12 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/codex-track-prompt.sh\"",
             "timeout": 2,
             "async": false
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-context.sh\"",
+            "timeout": 8,
+            "async": false
           }
         ]
       }
@@ -53,8 +65,26 @@
           },
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-rewrite.sh\"",
+            "timeout": 3
+          },
+          {
+            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/auto-review.sh\"",
             "timeout": 600
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/codex-lsp-posttool.sh\"",
+            "timeout": 6,
+            "async": false
           }
         ]
       }

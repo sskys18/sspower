@@ -92,12 +92,16 @@ Configured in `hooks/hooks.json`. ESM root with hooks dir overridden to CJS via 
 |-------|------|-------|---------|
 | `SessionStart` | `session-start` | sync | Boot tasks (wiki link, state dirs). |
 | `SessionStart` | `diet-activate.js` | sync, 5s | Activate diet mode (default `full`). |
+| `SessionStart` | `semble-session.sh` | sync, 5s | semble/codex-lsp availability + detached warm. |
 | `UserPromptSubmit` | `prompt-submit` | sync | Inject project wiki + global rules. |
 | `UserPromptSubmit` | `diet-track.js` | sync, 5s | Reinforce diet on each turn. |
 | `UserPromptSubmit` | `codex-track-prompt.sh` | sync, 2s | Surface running/recent codex sessions. |
+| `UserPromptSubmit` | `semble-context.sh` | sync, 8s | Coding-intent `semble_rs plan` inject (advisory). |
 | `PreToolUse:Bash` | `cmd-rewrite.sh` | sync, 3s | Optional command rewriter (`rtk`) for token savings. |
+| `PreToolUse:Bash` | `semble-rewrite.sh` | sync, 3s | `ls -R` -> tree & `grep -R ident` -> search; both explicit ASK. |
 | `PreToolUse:Bash` | `auto-spec-gate.sh` | sync, 600s | Spec-review gate at SDD chokepoints. |
 | `PreToolUse:Bash` | `auto-review.sh` | sync, 600s | Codex review gate at git/gh chokepoints. |
+| `PostToolUse:Write\|Edit\|MultiEdit` | `codex-lsp-posttool.sh` | sync, 6s | De-fanged advisory LSP on Claude's edits. |
 | `PreCompact` | `wiki-archive.sh` | async | Archive session into `<cwd>/.claude/wiki/`. |
 | `SessionEnd` | `wiki-archive.sh` | async | Same as PreCompact, on natural exit. |
 
@@ -575,6 +579,30 @@ model-spawned shell network is denied.)
 `SSPOWER_CODEX_STOP_GATE` is advisory→block per D-B6 (operator-gated,
 never automated), independent of `SSPOWER_LSP_GATE_BLOCK` /
 `SSPOWER_LSP_SELFREPAIR_BLOCK`.
+
+### P5 - semble_rs context layer (Phase B7, advisory)
+
+Four Claude-side hooks, all advisory + fail-open (D-B6; semble_rs/codex-lsp pre-1.0, R1):
+
+- `hooks/semble-context.sh` (UserPromptSubmit) - coding-intent-gated
+  `semble_rs plan` repo orientation injected as `additionalContext`, char-capped,
+  6 s hard timeout, fail-open. Gate mirrors the dead enrich gate in `prompt-submit`.
+- `hooks/semble-rewrite.sh` (PreToolUse:Bash, between cmd-rewrite & auto-review) -
+  `ls -R` -> `semble_rs tree` (gitignore-correct, DP-1; UPPERCASE-R only) and
+  `grep -R <BARE_IDENT>` -> `semble_rs search --compact` (semantic != literal, DP-2),
+  BOTH via explicit `permissionDecision:"ask"` (single emit path - no
+  auto-allow surface; rewrites change semantics so are always confirmed).
+  NEVER deny. Bails on any compound command; emitted paths shell-quoted.
+- `hooks/semble-session.sh` (SessionStart) - availability line + DETACHED model
+  warm (cold = one-time ~60 MB dl; never blocks session start).
+- `hooks/codex-lsp-posttool.sh` (PostToolUse:Write|Edit|MultiEdit) - vendored
+  codex-lsp on the just-edited file, **de-fanged**: codex-lsp's native
+  `decision:block` is stripped; only `additionalContext` surfaces (advisory, D-B6).
+
+OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate step);
+`semble_rs digest`; PreToolUse:Read deny-guard; Claude-side Stop block-gate
+(spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
+gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
 ## Sync with upstream
 
