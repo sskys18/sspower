@@ -714,10 +714,8 @@ fi
 # 5b. HARD cap: with a tiny MAX, the semble payload after the fixed prefix line
 # must not exceed MAX (+ the short truncation marker). semble-only.
 if (( HAVE_SEMBLE )); then
-  OUT="$(SSPOWER_SEMBLE_MAX_CHARS=64 "$H" <<EOF
-{"prompt":"fix the codex bridge resume repair loop and lsp gate","cwd":"$(pwd)"}
-EOF
-)"
+  # printf|hook (NOT heredoc) — no dependence on writable temp storage for stdin.
+  OUT="$(printf '{"prompt":"fix the codex bridge resume repair loop and lsp gate","cwd":"%s"}' "$(pwd)" | SSPOWER_SEMBLE_MAX_CHARS=64 "$H")"
   CTX="$(echo "$OUT" | jq -r '.hookSpecificOutput.additionalContext // ""')"
   # strip the fixed prefix line; remaining payload must be <= 64 + marker(16)
   PAY="${CTX#*$'\n'}"
@@ -728,16 +726,25 @@ fi
 
 # 6. fail-open when semble_rs binary is genuinely absent — deterministic:
 #    build a flat PATH shim with every needed tool symlinked EXCEPT semble_rs.
-SHIM="$(mktemp -d)"
-trap 'rm -f "$SHIM"/* 2>/dev/null; rmdir "$SHIM" 2>/dev/null' EXIT
-for b in bash sh jq git date dirname cat tr grep sed mkdir printf perl python3 node env timeout gtimeout; do
-  p="$(command -v "$b" 2>/dev/null)" && ln -s "$p" "$SHIM/$b" 2>/dev/null
-done
-OUT="$(PATH="$SHIM" "$H" <<EOF
-{"prompt":"fix the resume bug now","cwd":"$(pwd)"}
-EOF
-)"
-[[ -z "$OUT" ]] && ok "fail-open no-semble (deterministic shim)" || bad "fail-open no-semble ($OUT)"
+# SAFETY: install the cleanup trap ONLY after a successful mktemp -d, and guard
+# cleanup with [[ -n && -d ]] — an empty $SHIM must NEVER let `rm -f "$SHIM"/*`
+# expand to `/*` (root data-loss). If no writable temp dir → skip, not crash.
+SHIM="$(mktemp -d 2>/dev/null || true)"
+if [[ -z "${SHIM:-}" || ! -d "$SHIM" ]]; then
+  skip "fail-open no-semble (no writable temp dir for shim)"
+else
+  cleanup_shim() {
+    [[ -n "${SHIM:-}" && -d "$SHIM" ]] || return 0
+    rm -f "$SHIM"/* 2>/dev/null || true
+    rmdir "$SHIM" 2>/dev/null || true
+  }
+  trap cleanup_shim EXIT
+  for b in bash sh jq git date dirname cat tr grep sed mkdir printf perl python3 node env timeout gtimeout; do
+    p="$(command -v "$b" 2>/dev/null)" && ln -s "$p" "$SHIM/$b" 2>/dev/null
+  done
+  OUT="$(printf '{"prompt":"fix the resume bug now","cwd":"%s"}' "$(pwd)" | PATH="$SHIM" "$H")"
+  [[ -z "$OUT" ]] && ok "fail-open no-semble (deterministic shim)" || bad "fail-open no-semble ($OUT)"
+fi
 
 [[ $FAIL -eq 0 ]] && echo "PASS: test-semble-context" || { echo "FAIL: test-semble-context"; exit 1; }
 ```
