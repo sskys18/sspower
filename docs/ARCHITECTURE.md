@@ -530,13 +530,18 @@ events:
   in followups). It does **NOT** defend against
   deliberate adversarial evasion — **shell quoting/escaping evasion
   of the deny matcher** (exotic/concatenated quoting, `$'…'`,
-  variable/`$(…)` expansion of the binary or subcommand), deeper
+  variable/`$(…)` expansion of the binary or subcommand), **git
+  global-option forms outside the recognised set** (the strip-list of
+  `git` global options is finite; an *unrecognised* global token
+  before the subcommand can cause the matcher to read that token as
+  the subcommand and miss the real `commit`/`push`/`merge`), deeper
   shell nesting, `xargs`, `find -exec`, `eval`, command
-  substitution. The guard handles the routine cooperative quoting
-  forms (bare, single/double-quoted and `=`-form values with spaces,
-  backslash-escaped spaces) but a regex classifier **cannot** fully
-  reproduce shell word-splitting; exhaustive quoting-parse is
-  architecturally out of scope at the PreToolUse layer. The real
+  substitution. The guard handles the routine cooperative forms
+  (bare, single/double-quoted and `=`-form values with spaces,
+  backslash-escaped spaces, the common `-C`/`-c`/`--git-dir`/
+  `--work-tree`/… globals) but a regex classifier **cannot** fully
+  reproduce shell word-splitting + git option parsing; exhaustive
+  parse is architecturally out of scope at the PreToolUse layer. The real
   perimeter for adversarial cases is the hardened sandbox +
   `approval_policy=never` + `network_access=false` below; this hook
   is advisory + defense-in-depth on the routine path. Fail-open.
