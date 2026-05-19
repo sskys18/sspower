@@ -26,15 +26,33 @@ One verification obligation outstanding (Resume #1).
   (local-only; P5 + semble fix unpushed).
 
 ## Resume Here
-1. **FRESH-SESSION LIVE SMOKE (highest priority — the one unproven thing).**
-   In a NEW Claude Code session on `main`, run `ls -R hooks/__pycache__`.
-   Expect: a `semble_rs tree …` **ask-prompt**. If instead you get rtk's
-   `N files, M dirs (…)` auto-run with no prompt → the reorder is
-   INEFFECTIVE; implement spec **Approach A** (skip-list in
-   `hooks/cmd-rewrite.sh`: before `rtk rewrite`, if CMD matches semble's
-   `ls -R`/`grep -R IDENT` patterns → `exit 0` passthrough). Reason it
-   can't be tested in the editing session: hooks.json loads at session
-   start, not hot-reloaded.
+1. **FRESH-PROCESS LIVE SMOKE (highest priority — the one unproven thing).**
+   ⚠️ "Fresh session" = a **new `claude` CLI PROCESS** — fully QUIT
+   `claude` and relaunch. `/clear` is INSUFFICIENT: it clears the
+   conversation but the hook registry loads once at CLI-process start
+   and is NOT reloaded by `/clear`. A `/clear`-only attempt (2026-05-19)
+   produced a FALSE NEGATIVE — semble-rewrite.sh never executed (proven:
+   temp trace line never written) because that process predated commit
+   91cda0c; the smoke proved nothing and a wrongly-triggered Approach A
+   was reverted (tree clean).
+   - In the new process, on `main`, run **`ls -R skills`** (a dir with
+     semble-supported files). Do NOT use `hooks/__pycache__`: `.pyc` is
+     unsupported → `semble_rs tree` errors there (bad target too).
+   - Expect: a `semble_rs tree …` **ask-prompt**. If instead rtk's
+     `N files, M dirs (…)` auto-runs with no prompt → reorder (B)
+     INEFFECTIVE; implement spec **Approach A** (skip-list in
+     `hooks/cmd-rewrite.sh`: before `rtk rewrite`, if CMD matches
+     semble's `ls -R`/`grep -R IDENT` patterns → `exit 0` passthrough).
+   - Triage DONE (2026-05-19): wiring correct ON DISK (hooks.json
+     well-formed; all 3 Bash hooks `-rwxr-xr-x`, identical entry shape)
+     AND `semble-rewrite.sh` emits correct ask+`semble_rs` JSON run
+     standalone. So if a TRUE fresh-process smoke still fails → cause
+     narrowed to hook-engine `ask`+`updatedInput` honoring/chaining
+     semantics, NOT wiring → go straight to Approach A, skip wiring re-debug.
+   - Parked: an "Inv-A" shared-fixture drift-guard test (run both hooks
+     on shared inputs, assert cmd-rewrite skips ⇔ semble emits) was
+     drafted + passed 41/41 but is NOT committed — land only AFTER a
+     valid fresh-process smoke picks A or B.
 2. Optional: `git push origin main` to publish (auto-review re-fires;
    verdicts already converged `approve-with-followups`; if
    `deny_rounds_cap`, reset `.git/sspower-review-rounds-main` — that's
@@ -56,9 +74,13 @@ One verification obligation outstanding (Resume #1).
   see `docs/ARCHITECTURE.md`.
 
 ## Gotchas
-- **hooks.json loads at SESSION START — mid-session edits not hot-reloaded.**
-  Live hook-engine changes are unverifiable in the editing session; defer
-  to fresh-session smoke (Resume #1). [[feedback-hooks-json-session-start-load]]
+- **hook registry loads at CLI-PROCESS START — `/clear` does NOT reload it.**
+  `/clear` clears the conversation only; hooks added/reordered in commits
+  AFTER this CLI process launched are NOT active. A `/clear` "fresh
+  session" smoke is a FALSE NEGATIVE generator (proven 2026-05-19: empty
+  semble trace despite correct on-disk wiring). Only a full `claude`
+  quit+relaunch is a valid hook-engine smoke. Defer to Resume #1.
+  [[feedback-hooks-json-session-start-load]]
 - `git checkout main` then seeing tracked files "modified" = behind-ref
   view (fix lives in branch/merge commit), NOT data loss.
 - chained-shell-check scans commit-message/prompt TEXT: `&&`/`|`/`;` or
@@ -73,9 +95,12 @@ One verification obligation outstanding (Resume #1).
   [[feedback-codex-execute-workflow]]
 
 ## Context
-- **Branch**: `main` @ `1634ad9`, working tree clean, local-only
+- **Branch**: `main` (HEAD ≥ `81b4b78`), working tree clean (Approach A
+  experiment + temp trace fully reverted 2026-05-19), local-only
   (`origin/main` = `9bc8121`). Local branches = `main` only; no worktrees.
 - **Tests**: 4 hook suites `rc=0 PASS` (semble-context/rewrite/session/
-  codex-lsp-posttool) on merged `main`. hooks.json valid.
+  codex-lsp-posttool) on merged `main`. hooks.json valid. Standalone
+  semble-rewrite.sh confirmed emitting correct ask+`semble_rs` JSON.
 - **Unknowns**: live multi-hook reorder effect (Resume #1) — the only
-  thing not empirically proven. Everything else verified.
+  thing not empirically proven, and only verifiable in a true fresh
+  `claude` PROCESS (not `/clear`). Everything else verified.
