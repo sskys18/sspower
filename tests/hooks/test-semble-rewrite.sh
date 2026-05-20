@@ -75,6 +75,33 @@ done
 O="$(SSPOWER_SEMBLE_REWRITE=0 sh -c "printf '{\"tool_input\":{\"command\":\"ls -R\"}}' | '$H'")"
 [[ -z "$O" ]] && ok "disable env" || bad "disable env" "$O"
 
+# ── Quoted-path safety (Codex-flagged 2026-05-20) ────────────────────
+# Single-token matched-quote paths must dequote BEFORE %q, else %q escapes
+# the quotes into literal '"skills"' (ENOENT). Embedded-space quoted paths
+# tokenize as >1 path arg and already fall through (noop) - covered below.
+O="$(j 'ls -R "skills"' | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree skills")' >/dev/null \
+  && ok "ls -R \"skills\" -> ask, tree skills (dequoted)" || bad "ls -R dq path" "$O"
+
+O="$(j "ls -R 'skills'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree skills")' >/dev/null \
+  && ok "ls -R 'skills' -> ask, tree skills (dequoted)" || bad "ls -R sq path" "$O"
+
+O="$(j 'grep -R ident "src"' | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src")' >/dev/null \
+  && ok "grep -R ident \"src\" -> ask, search src (dequoted)" || bad "grep dq path" "$O"
+
+O="$(j "grep -R ident 'src'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src")' >/dev/null \
+  && ok "grep -R ident 'src' -> ask, search src (dequoted)" || bad "grep sq path" "$O"
+
+# Embedded-space quoted path: tokenizer splits inside quotes -> >1 path arg
+# -> bad=1 -> noop passthrough (correct fail-safe).
+for c in 'ls -R "src/my dir"' "ls -R 'src/my dir'" 'grep -R ident "src/my dir"'; do
+  O="$(j "$c" | "$H")"
+  [[ -z "$O" ]] && ok "embedded-space quoted -> noop: $c" || bad "embedded-space: $c" "$O"
+done
+
 # ── Reorder chain invariants (semble-dependent) ──────────────────────
 # Inv-1: semble-rewrite (now FIRST) emits ask + semble cmd on bare ls -R.
 O="$(j 'ls -R src' | "$H")"

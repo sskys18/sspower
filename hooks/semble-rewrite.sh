@@ -31,6 +31,24 @@ esac
 # is literal-safe regardless of path characters.
 shq() { printf '%q' "$1"; }
 
+# Strip matched outer quote pair (single OR double) from a single token.
+# Tokenization (`set -f; TOK=( $CMD )`) splits on whitespace, so a token like
+# `"skills"` arrives with literal quote chars - %q would then escape them
+# into `\"skills\"`, producing a path named `"skills"` (ENOENT). Embedded-
+# space quoted paths (`"src/my dir"`) tokenize as >1 token and are rejected
+# earlier as `bad=1` (>1 path arg), so this helper only handles the safe
+# single-token case.
+dequote() {
+  local s="$1"
+  if (( ${#s} >= 2 )); then
+    local f="${s:0:1}" l="${s: -1}"
+    if [[ ( "$f" == '"' && "$l" == '"' ) || ( "$f" == "'" && "$l" == "'" ) ]]; then
+      s="${s:1:${#s}-2}"
+    fi
+  fi
+  printf '%s' "$s"
+}
+
 # SINGLE emit path: EXPLICIT permissionDecision:"ask" for BOTH ls and grep.
 # Rationale (DP-1/DP-2): the rewrite changes semantics (gitignore-aware tree !=
 # `ls -R`; semantic search != literal grep) and may drop modifier flags - so it
@@ -72,6 +90,7 @@ if [[ "${TOK[0]}" == "ls" ]]; then
     fi
   done
   if (( bad == 0 && has_R == 1 )); then
+    patharg="$(dequote "${patharg:-.}")"
     emit_ask "semble_rs tree $(shq "${patharg:-.}")" \
       "semble-rewrite: ls -R -> semble_rs tree (gitignore-aware; drops ls modifier flags - confirm)"
   fi
@@ -97,7 +116,8 @@ if [[ "${TOK[0]}" == "grep" ]]; then
     # means a non-R/r flag slipped past the leading-flag loop -> disqualify.
     # Also no trailing tokens beyond a single path arg.
     if (( i == ${#TOK[@]} )) && [[ "$patharg" != -* ]]; then
-      pat="${pat%\"}"; pat="${pat#\"}"; pat="${pat%\'}"; pat="${pat#\'}"
+      pat="$(dequote "$pat")"
+      patharg="$(dequote "$patharg")"
       if [[ "$pat" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
         emit_ask "semble_rs search --compact $(shq "$pat") $(shq "$patharg")" \
           "semble-rewrite: grep -R -> semble_rs search (semantic!=literal - confirm the substitution)"
