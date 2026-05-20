@@ -1,113 +1,140 @@
 # Session Handoff
-> Generated: 2026-05-20 KST
+> Generated: 2026-05-20 (post-pruning session)
 
 ## Task
-sspower Codex-worker LSP gate. P4/Track C + P5/B7 + semble-rewrite
-ownership fix — ALL SHIPPED, MERGED to `main`, and **PUSHED TO ORIGIN**.
-Resume #1 fresh-process smoke discharged 2026-05-20 (Approach B
-confirmed). semble-rewrite hardened (quote-type-aware bail; always-sq
-emit; bash 3.2 shq fix). No active build.
+sspower plugin pruning + workflow hardening. Removed redundancy
+(codex-enrich, auto-apply, MAX_ROUNDS=2 override, always-on auto-
+surface). Added skill-usage telemetry + tightened verify-before-fix
+rule. Phase E (wiki ↔ sspower-mem consolidation) deliberately deferred.
 
 ## Status
-### Completed (origin/main @ `da54a97`; local main one doc-commit ahead until this handoff is pushed)
-- **P2–P4 / Track C**: codex-lsp vendored; bridge MCP gate + repair
-  loop; `lsp-check` + Stop gate; guard pretool + AGENTS.md.
-- **P5 / Phase B7**: 4 advisory fail-open Claude-side hooks + tests +
-  fixtures.
-- **semble-rewrite ownership** (Approach B = hooks.json reorder):
-  semble-rewrite FIRST in PreToolUse:Bash. Live-confirmed by fresh-
-  process smoke 2026-05-20.
-- **semble-rewrite quoting hardening** (this session, 4 commits):
-  - `41407f4` dequote single-token paths (round-1 fix).
-  - `b306efc` bail on unquoted globs (round-2 fix).
-  - `da54a97` quote-type aware bail (var/tilde/cmd-sub) + always-sq
-    emit (printf %q tilde leak fix) + bash 3.2 shq via printf -v.
-    Also README + P5 plan superseded note.
-- **Push to origin succeeded** after auto-review converged
-  (`9bc8121..da54a97`). 17 commits.
+### Completed this session (origin/main @ `b802e9f`; claude-config @ `c979d14`)
+- **codex-enrich removed** (`a589048`, `9d77fc1`): whole skill dir +
+  bridge `cmdEnrich` + 140 LOC hook block + all 3 dangling refs in
+  bridge --help/COMMAND_PROFILE/log comment. 22→21 skills, -334 LOC net.
+- **Auto-apply removed** (`ad88559`): `SSPOWER_REVIEW_AUTO_APPLY` env
+  + `git apply --3way` block gone. Patches now SAVE-only to
+  `.claude/sspower/proposed-fixes/round-N.patch`. Manual `git apply`
+  required.
+- **Auto-surface opt-in** (`7a04817`, `b802e9f`):
+  `hooks/codex-track-prompt.sh` body gated on `SSPOWER_CODEX_SURFACE=on`.
+  Default OFF saves ~300-500 tokens/turn. Tests updated to opt in +
+  new gate assertion (test 8). 8/8 PASS.
+- **Brainstorm lifecycle fixed** (`b2681b6`): Test 5 rewritten to
+  match server.cjs:326-337 robustness design (bad startup pid →
+  disable monitoring + rely on idle timeout, NOT self-terminate).
+  9/9 PASS (was 6/3 of non-skipped).
+- **Followups drained** (`7d8eda7`, `194924f`, `b399357`): 7 advisory
+  items closed — gh-pr-merge header drift, --full-auto stale comments,
+  resume test mandatory output, codex-tracking --cd wording, CLAUDE.md
+  agent map, plan-review precision, gitignore auto-guard
+  (`ensure_sspower_excluded` worktree-safe via `git rev-parse
+  --absolute-git-dir`).
+- **claude-config** (`3c552b1`, `b0b1a5b`, `c979d14`): stripped 4
+  stale sspower env vars from `~/.claude/settings.json`
+  (MAX_ROUNDS=2 override, ENRICH=1, SECURITY_EFFORT, SANITY_REVIEW).
+  Added `/daily` section 2k — skill-usage counts from JSONL
+  `tool_use` events, written to today's daily note. Vault-path
+  resolved per 2c convention. Idempotent.
+- **Memory rule shipped**: `feedback_codex_review_verify_before_fix.md`
+  — verify Codex blocking/advisory claims against actual code before
+  patching. Applied consistently this session (caught D-A5
+  contradiction, refuted 1 stale-doc advisory, accepted worktree-
+  helper patch on its merits).
 
 ### In Progress
-- None. Tree clean. Local `main` ahead by exactly this handoff commit
-  until pushed; the 17-commit feature backlog is on `origin/main` @
-  `da54a97`.
+- None. All gates green, all trees clean, both repos synced.
 
 ## Resume Here
-1. Optional: re-draft Inv-A shared-fixture drift-guard test (run
-   `semble-rewrite.sh` + `cmd-rewrite.sh` on shared inputs, assert
-   cmd-rewrite SKIPS ⇔ semble EMITS `ask`). Prior draft (41/41 green)
-   never committed and is lost — re-draft fresh. CI safety, not
-   blocking; B is smoke-proven + auto-review approved.
-2. Roadmap: **P6** (C4–C9 cleanup tail, spec §9) — only unshipped
-   phase, not triggered. D-B6 advisory→block promotion stays
-   operator-gated.
-3. Optional polish: address remaining followups in
-   `.claude/sspower/followups.md` (advisory backlog accumulated from
-   prior rounds — none blocking).
+1. **Wait ≥3 days, then run `/daily`** and read the new "Skill Usage"
+   section to inform a real skill-audit pass (P-E). Demote unused
+   skills to `experimental/` or delete; merge high-overlap routing.
+2. **Phase E**: start with `/writing-plans` against the consolidation
+   spec. Rewrite `hooks/wiki-archive.py` write tail to call
+   `sspower-mem add` instead of direct file appends; rewrite
+   `hooks/session-start` to append `sspower-mem search` to
+   `additionalContext`. Bundles the 10 remaining sspower_mem
+   hardening followups (digest bounds, sanitization, lock open).
+3. **Optional**: re-draft Inv-A shared-fixture drift-guard test
+   (semble-rewrite + cmd-rewrite on shared inputs; assert
+   cmd-rewrite SKIPS ⇔ semble EMITS `ask`). Prior 41/41-green draft
+   lost; B is smoke-proven so this is CI safety only.
 
 ## Decisions (do NOT revisit)
-- **semble-rewrite owns `ls -R`/`grep -R` via hooks.json REORDER
-  (Approach B)** — live-CONFIRMED by fresh-process smoke 2026-05-20.
-  A (skip-list) / C (merged-hook) rejected.
-- **semble-rewrite always single-quote-wraps emitted args** (not
-  printf %q). Reason: bash 3.2's %q does not escape a leading `~`,
-  leaking tilde expansion through single-quoted-intent inputs. Single-
-  quote wrap also disables every other shell expansion uniformly.
-- **dequote_to tracks QTYPE** ('', "'", '"') so callers can bail on
-  unquoted expansion intent (`ls -R $HOME`) while honoring single-
-  quoted literal intent (`ls -R '$DIR'` → literal `$DIR`).
-- rtk kept (broad surface: git/read/find/gh); wholesale removal rejected.
-- P5 hooks advisory-first (D-B6); DP-1 tree justified on gitignore-
-  correctness, NOT discredited spec-§2 3000× figure.
-- P2–P4 (bridge-direct `lsp-check` never model-MCP; `.codex/*`
-  supervisor-authored; cooperative-worker guard) — locked, see
-  ARCHITECTURE.md.
+- **Auto-apply removed entirely** (not just flipped default): one
+  channel mixed verified-mechanical-typos with unsolicited-refactors;
+  user could not tell them apart at push time. Save-only forces a
+  deliberate read.
+- **Auto-surface default OFF**: cost ~300-500 tokens/turn even when
+  no codex work is relevant. Opt-in via
+  `export SSPOWER_CODEX_SURFACE=on` only when actively driving codex.
+- **codex-enrich deleted, not revived**: spec D-A2 disabled it for a
+  notice-injection bug. `semble-context.sh` already provides the
+  same "code structure context on coding-intent prompts" via
+  `semble_rs` rust binary — lower cost, no Codex spawn, no 20-90s
+  latency. Revival would have been redundant.
+- **auto-spec-gate.sh stays UNWIRED in hooks.json** (per D-A5
+  2026-05-18 spec): `writing-plans` SKILL.md HARD-GATE already runs
+  `bridge plan-review` explicitly. Re-wiring at hook level was
+  attempted this session (commit dropped) — it duplicated the
+  HARD-GATE for the case where you commit plan markdown without
+  going through `/writing-plans`, which the user confirmed does not
+  happen.
+- **`ensure_sspower_excluded` uses `git rev-parse --absolute-git-dir`**,
+  not `[ -d "$_repo/.git" ]`: linked worktrees have `.git` as a FILE
+  pointing to `<common>/.git/worktrees/<name>/`. rev-parse handles
+  all layouts (regular, linked-worktree, bare-with-worktree). Codex
+  flagged the original directory check; verified correct, accepted.
+- **MAX_ROUNDS back to default 3**: removed
+  `SSPOWER_REVIEW_MAX_ROUNDS=2` from `~/.claude/settings.json`.
+  Hook default is 3 (auto-review.sh:213 `:-3`).
+- **All prior session's decisions remain locked**: semble-rewrite
+  Approach B (live-confirmed), always-sq emit, dequote_to QTYPE
+  tracking, rtk kept, P5 advisory-first, P2-P4 LSP gate locked.
+  See ARCHITECTURE.md.
 
 ## Gotchas
 - **Hook registry loads at CLI-PROCESS start. `/clear` does NOT reload it.**
-  Valid hook-engine smoke = full `claude` quit+relaunch. Disambiguate
-  non-execution vs engine-honor failure with a temp trace
-  (`echo … >> /tmp/x.log`) at hook top.
+  Valid hook-engine smoke = full `claude` quit+relaunch.
   [[feedback-hooks-json-session-start-load]]
-- **bash 3.2 mis-parses `'\\''` inline inside `${var//pat/rep}`** —
-  even though the same idiom works on the command line. Build the
-  4-char replacement (`'\''`) via `printf -v _r '%s%s%s%s' "'" '\' "'" "'"`
-  and substitute via `${1//\'/$_r}`. macOS default bash is 3.2.57; hooks
-  must remain 3.2-compatible.
-- **bash 3.2 `printf %q` does NOT escape a leading `~`** — `~/src` is
-  emitted as `~/src` (not `\~/src`), so always-single-quote wrap is
-  the correct fix when user intent is literal.
-- **Auto-review iteration cap** = 3 rounds per branch (CLAUDE.md);
-  tunable via `SSPOWER_REVIEW_MAX_ROUNDS`. Each push attempt increments
-  `<repo>/.git/sspower-review-rounds-<branch>`; at cap, push is denied
-  with `deny_rounds_cap`. Observed this session: deny fired at 2/2 with
-  default config (env may have lowered the cap). Remedy: `rm` the
-  counter file (stale-counter remedy per CLAUDE.md), NOT
-  `AUTO_REVIEW=off`. Counter persists across push attempts within the
-  same branch.
-- `git checkout main` showing tracked files "modified" = behind-ref
-  view, NOT data loss.
-- chained-shell-check scans command TEXT: `&&`/`|`/`;` trips it — run
-  chokepoints standalone (no trailing `; tail`), commit via `-F /tmp/file`.
-- `git diff`/`ls -l` rtk-wrapped by cmd-rewrite → mangled; prefix
-  `CMD_REWRITER=__none__` for true output. (Same bypass useful for
-  validating semble-rewrite shape.)
-- `.claude/` gitignored — `git add .claude/...` ERRORS/aborts the
-  stage; durable rationale goes in `docs/`.
-- Codex `implement --write @plan.md` stalls on plan's trailing "Which
-  approach?" — prepend explicit EXECUTE directive.
-  [[feedback-codex-execute-workflow]]
-- Uncommitted in-session test drafts can be silently lost when the
-  session's other work is reverted — commit (or stash with explicit
-  label) BEFORE any revert.
+- **Verify Codex claims before patching**: every blocking/advisory
+  is a hypothesis until you open the cited file/line. This session
+  caught one architectural conflict (D-A5) and one stale-doc false-
+  flag by following the rule.
+  [[feedback-codex-review-verify-before-fix]]
+- **bash 3.2 quirks active**: `'\\''` inline mis-parses inside
+  `${var//pat/rep}`; `printf %q` does not escape leading `~`. Workarounds
+  documented in `hooks/semble-rewrite.sh`.
+  [[feedback-bash-portability]]
+- **`find` is rtk-wrapped**: when scripting against the file system
+  inside a skill / hook with unusual flags (`-newermt`, `-print0`
+  pipelines, `-mtime`), `export CMD_REWRITER=__none__` first. Inline
+  `CMD_REWRITER=__none__ find ...` in `$(...)` loses the env
+  depending on shell. The `/daily` 2k counter uses the export form
+  for reliability.
+- **Auto-review cap = 3 (default), but counter persists**: deny at
+  `N/3` requires `rm <repo>/.git/sspower-review-rounds-<branch>` to
+  reset. NOT `SSPOWER_AUTO_REVIEW=off` (that's the bypass escape).
+- **chained-shell-check** trips on `&&`/`|`/`;` around chokepoints.
+  Run `git commit` standalone, commit message via `-F /tmp/file`.
+- **`.claude/` gitignored** in this repo. `ensure_sspower_excluded`
+  helper now adds `.claude/sspower/` to `<repo>/.git/info/exclude`
+  in CONSUMING repos automatically on first auto-review run.
+- **Uncommitted in-session work is fragile**: prior session's
+  41/41-green Inv-A drift-guard test was lost when other work
+  was reverted. Commit or stash with an explicit label BEFORE any
+  rollback.
 
 ## Context
-- **Branch**: local `main` one doc-commit ahead of `origin/main` @
-  `da54a97`; pushing this handoff brings them in sync. Tree clean.
-  `main` only; no worktrees.
-- **Tests**: all 8 hook suites green
-  (codex-guard-pretool, codex-lsp-posttool, codex-stop-gate, diet-off,
-   integration, semble-context, semble-rewrite, semble-session).
-  semble-rewrite gained 22 new test cases this session
-  (quoted-path dequote, unquoted-glob bail, var/tilde/cmd-sub bail,
-   single-quoted-literal honor, embedded-sq escape).
+- **Branch**: `main` @ `b802e9f`, tree clean, == `origin/main`. No
+  worktrees.
+- **claude-config**: separate repo, `main` @ `c979d14`, == `origin/main`.
+  Holds `/daily` skill + global settings.
+- **Tests**: 9 sspower hook suites green. test-track-prompt-hook
+  added gate assertion (test 8). 10/10 codex-bridge suites incl.
+  test-skip-git-flag. brainstorm-server windows-lifecycle 9/9
+  (was 0/3 of non-skipped at session start).
+- **Surface delta**: -334 LOC, 22→21 skills, 1 bridge subcommand
+  removed, 1 hook simplified 162→23 LOC, 1 env var removed (auto-
+  apply), 4 stale env vars removed from user settings.
 - **Unknowns**: none.
