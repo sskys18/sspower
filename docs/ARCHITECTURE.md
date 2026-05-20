@@ -23,7 +23,7 @@ sspower/
 ├── skills/<skill>/SKILL.md      # 22 skills + per-skill references/
 ├── hooks/                       # Lifecycle hooks (SessionStart, UserPromptSubmit, PreToolUse, …)
 ├── scripts/                     # codex-bridge.mjs, codex-registry.mjs
-├── agents/                      # Subagent prompts (code-reviewer, codex-rescue)
+├── agents/                      # Subagent prompts (code-reviewer, codex-rescue, security-reviewer, sanity-reviewer)
 ├── commands/                    # Slash command entrypoints (.toml/.md)
 ├── schemas/                     # Structured-output JSON schemas for Codex
 ├── docs/                        # This doc, plans, specs, customization notes

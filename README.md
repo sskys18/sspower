@@ -318,6 +318,8 @@ sspower/
   agents/
     code-reviewer.md           -- Claude review subagent
     codex-rescue.md            -- Codex delegation subagent
+    security-reviewer.md       -- Manual security pass (vuln/auth/crypto)
+    sanity-reviewer.md         -- Independent second opinion (real-blocker-only)
   hooks/
     session-start              -- Injects using-sspower context
     prompt-submit              -- Skill reminder + Codex enrichment (gated)

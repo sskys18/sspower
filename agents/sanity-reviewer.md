@@ -47,8 +47,10 @@ Return JSON matching the auto-review schema:
     {
       "severity": "blocking | advisory",
       "title": "short label",
+      "body": "detailed explanation",
       "file": "path/to/file",
       "line_start": 42,
+      "line_end": 50,
       "recommendation": "what to do (specific, mechanical)",
       "suggested_patch": null
     }
@@ -56,6 +58,10 @@ Return JSON matching the auto-review schema:
   "assessment": "1-3 sentences. Lead with whether you see a real blocker."
 }
 ```
+
+Schema reference: `schemas/quality-review-output.json` — all eight
+fields (`severity, title, body, file, line_start, line_end,
+recommendation, suggested_patch`) are required per issue.
 
 Verdicts:
 

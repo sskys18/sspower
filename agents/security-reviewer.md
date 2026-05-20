@@ -50,8 +50,10 @@ Return JSON exactly matching the auto-review schema so the result can be appende
     {
       "severity": "blocking | advisory",
       "title": "short label",
+      "body": "detailed explanation",
       "file": "path/to/file",
       "line_start": 42,
+      "line_end": 50,
       "recommendation": "what to do",
       "suggested_patch": null
     }
@@ -59,6 +61,10 @@ Return JSON exactly matching the auto-review schema so the result can be appende
   "assessment": "1-3 sentence summary"
 }
 ```
+
+Schema reference: `schemas/quality-review-output.json` — all eight
+fields (`severity, title, body, file, line_start, line_end,
+recommendation, suggested_patch`) are required per issue.
 
 ## Boundaries
 
