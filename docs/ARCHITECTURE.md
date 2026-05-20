@@ -118,13 +118,12 @@ Intercepts `git push`, `git merge`, `gh pr create`, `gh pr ready` (NOT `gh pr me
 
 To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then read the file.
 
-**Verdict assembly** (parallel main + security review):
+**Verdict assembly** (single MAIN reviewer):
 
-1. Spawn main + security codex reviewers in parallel (security disabled when `SSPOWER_SECURITY_REVIEW=off` or `SSPOWER_SECURITY_EFFORT=off`).
-2. Each verdict normalized to `{approve, approve-with-followups, needs-attention, unknown}` — anything else falls to `unknown` (denies).
-3. Disabled security reviewer treated as `approve` (single-reviewer mode); enabled-but-empty raw response → `unknown` (fail closed).
-4. Combined verdict: any `unknown` → `unknown`; else any `needs-attention` → `needs-attention`; else any `approve-with-followups` → `approve-with-followups`; else `approve`.
-5. Result wrapped via `jq` → `{"verdict": "...", "issues": [...]}`. Jq failure also → `unknown`.
+1. Spawn one codex MAIN reviewer on the branch diff. Security + sanity reviewers were removed from auto-review — invoke `agents/security-reviewer.md` (vuln pass) or `agents/sanity-reviewer.md` (independent second opinion) manually via the Agent tool when wanted.
+2. Verdict normalized to `{approve, approve-with-followups, needs-attention, unknown}` — anything else falls to `unknown` (denies).
+3. Empty MAIN response (all reviewers timed out): `kind=codex_timeout_allow` → exit 0 ALLOW (infra-failure carve-out).
+4. Result wrapped via `jq` → `{"verdict": "...", "issues": [...]}`. Jq failure → `unknown` (denies).
 
 **Loop guards** (defense against runaway review chains):
 
@@ -147,13 +146,12 @@ SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s; 10min)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
 SSPOWER_REVIEW_AUTO_APPLY=on          # Auto-apply codex's suggested patches
 SSPOWER_REVIEW_PROFILE                # Override round-aware main-review profile (unset → tier-derived)
-SSPOWER_SECURITY_REVIEW=on            # Run security reviewer in parallel
-SSPOWER_SECURITY_EFFORT=xhigh         # Reasoning effort for security pass
-SSPOWER_SECURITY_REPOS                # ':'-list of repo paths forced to security tier (built-in default list)
-SSPOWER_SANITY_REVIEW=off             # Enable extra sanity pass (set on)
-SSPOWER_SANITY_EFFORT=medium          # Sanity-pass effort (off|low|medium|high|xhigh)
 SSPOWER_REVIEW_SKIP_PATTERN           # Branch-name globs that skip review
 SSPOWER_REVIEW_STRICT_PATTERN         # Branch-name globs forced to xhigh
+# Security + sanity reviewers were removed from auto-review.sh.
+# Invoke on demand via subagents:
+#   agents/security-reviewer.md  — vuln / auth / crypto pass
+#   agents/sanity-reviewer.md    — independent second opinion (real-blocker-only)
 
 # LSP gate (scripts/codex-bridge.mjs, .codex/codex-lsp-posttool.sh, scripts/lib/codex-lsp-path.mjs)
 SSPOWER_LSP_GATE_BLOCK=1              # Promote bridge B3/B4 post-run gate would-block → block (default advisory)
@@ -184,7 +182,7 @@ When the round counter hits 3 without converging, the hook emits a deny pointing
 
 Direct integration with the Codex CLI (`@openai/codex`). Skills, agents, and the auto-review hook all dispatch through this bridge — no separate Claude Code plugin involved.
 
-Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subcommand to a profile via `COMMAND_PROFILE` (`complete`→`quick`; `implement`/`review`/`spec-review`/`plan-review`→`normal`) and passes `-p <profile>`. **`resume` is excluded — `codex exec resume` has no `--profile`; it inherits root `config.toml` (root `service_tier=flex` is load-bearing) and only emits explicit `--model`/`--effort` overrides.** Explicit `--profile`/`--model`/`--effort` patch individual fields of the selected profile (see `scripts/codex-bridge.mjs` `parseOpts`/`runCodexExec`). `auto-review.sh` security pass keeps `xhigh` via `SSPOWER_SECURITY_EFFORT`.
+Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subcommand to a profile via `COMMAND_PROFILE` (`complete`→`quick`; `implement`/`review`/`spec-review`/`plan-review`→`normal`) and passes `-p <profile>`. **`resume` is excluded — `codex exec resume` has no `--profile`; it inherits root `config.toml` (root `service_tier=flex` is load-bearing) and only emits explicit `--model`/`--effort` overrides.** Explicit `--profile`/`--model`/`--effort` patch individual fields of the selected profile (see `scripts/codex-bridge.mjs` `parseOpts`/`runCodexExec`).
 
 ### Subcommands
 
@@ -348,7 +346,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Hook registration | `hooks/hooks.json` |
 | Skill instructions | `skills/<name>/SKILL.md` |
 | Codex CLI defaults | `~/.codex/config.toml` (model, sandbox, profiles, projects.trust_level) |
-| Auto-review tunables | env vars (`SSPOWER_AUTO_REVIEW`, `SSPOWER_REVIEW_*`, `SSPOWER_SECURITY_*`) |
+| Auto-review tunables | env vars (`SSPOWER_AUTO_REVIEW`, `SSPOWER_REVIEW_*`) |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
 | Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |

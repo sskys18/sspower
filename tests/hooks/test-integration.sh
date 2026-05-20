@@ -29,7 +29,7 @@
 #   - bridge NOT spawned on run 2 (stub args file empty)
 #   - rounds counter NOT incremented on run 2 (auto-review.sh:599 gates
 #     the increment on CACHE_HIT=0)
-#   - the codex-spawn-only log line `kind=parallel_review_done` appears
+#   - the codex-spawn-only log line `kind=review_done` appears
 #     exactly once (run 1 miss) across both runs
 
 set -u
@@ -257,7 +257,7 @@ assert_eq "rounds<cap: bridge reached" "1" \
 # (c) Verdict cache hit — auto-review.sh:219-252, 599
 # =====================================================================
 echo "[(c) verdict cache]"
-# Fresh log so parallel_review_done count is scoped to this group.
+# Fresh log so review_done count is scoped to this group.
 : > "$LOG_FILE"
 REPO_C=$(make_repo "$WORK/repo_c")
 
@@ -267,30 +267,30 @@ REPO_C=$(make_repo "$WORK/repo_c")
 # emits NO log line on a cache hit (the cached RESULT is read silently
 # at :245-252). The real, observable cache-hit signals are therefore:
 #   1. bridge NOT spawned on run 2 (stub args file empty), and
-#   2. the spawn-only log line `kind=parallel_review_done`
+#   2. the spawn-only log line `kind=review_done`
 #      (auto-review.sh:591, inside the `if [ -z "$RESULT" ]` block)
 #      stays at exactly 1 across both runs.
 
 # Run 1: cache MISS -> stub bridge runs, writes the verdict cache, logs
-# parallel_review_done once.
+# review_done once.
 : > "$ARGS_FILE"
 out=$(run_hook "$REPO_C" 'git push' 2>/dev/null); rc=$?
 assert_eq "run1 (miss): exit 0" "0" "$rc"
 assert_eq "run1 (miss): bridge spawned" "1" \
   "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
-assert_eq "run1 (miss): parallel_review_done logged once" "1" \
-  "$(grep -c 'kind="parallel_review_done"' "$LOG_FILE" 2>/dev/null; true)"
+assert_eq "run1 (miss): review_done logged once" "1" \
+  "$(grep -c 'kind="review_done"' "$LOG_FILE" 2>/dev/null; true)"
 
 # Run 2: identical repo state + identical diff -> same DIFF_HASH ->
-# cache HIT. Stub bridge must NOT run; no new parallel_review_done line
+# cache HIT. Stub bridge must NOT run; no new review_done line
 # (it lives inside the spawn-only block).
 : > "$ARGS_FILE"
 out=$(run_hook "$REPO_C" 'git push' 2>/dev/null); rc=$?
 assert_eq "run2 (hit): exit 0" "0" "$rc"
 assert_eq "run2 (hit): NO codex spawn (cache-served)" "0" \
   "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
-assert_eq "run2 (hit): parallel_review_done still once total" "1" \
-  "$(grep -c 'kind="parallel_review_done"' "$LOG_FILE" 2>/dev/null; true)"
+assert_eq "run2 (hit): review_done still once total" "1" \
+  "$(grep -c 'kind="review_done"' "$LOG_FILE" 2>/dev/null; true)"
 
 # Sanity: the cache file the hook keyed on actually exists under the
 # sandboxed XDG_CACHE_HOME (proves we exercised the real cache path and
@@ -339,7 +339,7 @@ assert_eq "(d1) needs-attention: DENY emitted" "1" \
 assert_eq "(d1) needs-attention: deny_verdict logged" "1" \
   "$(grep -c 'kind="deny_verdict"' "$LOG_FILE" 2>/dev/null; true)"
 # Anchor on the deny_verdict line specifically: `main_verdict="..."`
-# (parallel_review_done, :591) also contains verdict="needs-attention"
+# (review_done, :591) also contains verdict="needs-attention"
 # as a substring, so match the leading-space `kind="deny_verdict"
 # verdict="..."` shape (:680) to avoid the false double count.
 assert_eq "(d1) needs-attention: verdict in deny_verdict log" "1" \
@@ -368,66 +368,10 @@ assert_eq "(d2) unparseable: deny_verdict verdict=unknown" "1" \
 assert_eq "(d2) unparseable: combined=unknown logged" "1" \
   "$(grep -c 'combined="unknown"' "$LOG_FILE" 2>/dev/null; true)"
 
-# --- (d2b) empty MAIN reviewer (sec present) -> unknown -> DENY ------
-# IMPORTANT real-hook behavior (auto-review.sh:500-504): if MAIN_RAW
-# AND SEC_RAW AND SANITY_RAW are ALL empty, the hook treats it as
-# infra failure -> kind="codex_timeout_allow" -> exit 0 (ALLOW, NOT
-# deny). So an empty MAIN alone with security disabled would ALLOW.
-# To isolate the "empty single reviewer -> unknown -> deny" assembly
-# path we keep SECURITY enabled returning approve: MAIN_RAW="" (jq //
-# "unknown", :512) but SEC_RAW present -> not all-empty -> COMBINED
-# unknown (:554) -> fail-closed deny. This also documents the
-# all-empty allow carve-out so the test encodes the true contract.
-REPO_D2B=$(make_repo "$WORK/repo_d2b")
-: > "$ARGS_FILE"; : > "$LOG_FILE"
-out=$(run_hook "$REPO_D2B" 'git push' \
-  "$NO_CACHE SSPOWER_SECURITY_REVIEW=on SSPOWER_SECURITY_EFFORT=medium SSPOWER_STUB_MAIN_VERDICT=skip SSPOWER_STUB_SEC_VERDICT=approve" 2>/dev/null); rc=$?
-assert_eq "(d2b) empty-main: exit 0" "0" "$rc"
-assert_eq "(d2b) empty-main: fail-closed DENY" "1" \
-  "$(printf '%s' "$out" | grep -c '"permissionDecision": "deny"' || true)"
-assert_eq "(d2b) empty-main: main_verdict=unknown logged" "1" \
-  "$(grep -c 'main_verdict="unknown"' "$LOG_FILE" 2>/dev/null; true)"
-assert_eq "(d2b) empty-main: combined=unknown logged" "1" \
-  "$(grep -c 'combined="unknown"' "$LOG_FILE" 2>/dev/null; true)"
-assert_eq "(d2b) empty-main: NOT codex_timeout_allow (sec present)" "0" \
-  "$(grep -c 'kind="codex_timeout_allow"' "$LOG_FILE" 2>/dev/null; true)"
-
-# --- (d4) multi-source precedence: main approve + security blocks ----
-# SSPOWER_SECURITY_REVIEW=on force-enables the security reviewer
-# (auto-review.sh:404) regardless of repo path. Main=approve,
-# Security=needs-attention. COMBINED must resolve to needs-attention
-# (security keeps full blocking power, :556) and the merged issue list
-# must carry the security source tag (:572,:578) — surfaced via the
-# SEC issue title in the deny payload.
-REPO_D4=$(make_repo "$WORK/repo_d4")
-: > "$ARGS_FILE"; : > "$LOG_FILE"
-out=$(run_hook "$REPO_D4" 'git push' \
-  "$NO_CACHE SSPOWER_SECURITY_REVIEW=on SSPOWER_SECURITY_EFFORT=medium SSPOWER_STUB_MAIN_VERDICT=approve SSPOWER_STUB_SEC_VERDICT=needs-attention" 2>/dev/null); rc=$?
-assert_eq "(d4) main-ok+sec-block: exit 0" "0" "$rc"
-assert_eq "(d4) main-ok+sec-block: DENY (security blocks)" "1" \
-  "$(printf '%s' "$out" | grep -c '"permissionDecision": "deny"' || true)"
-assert_eq "(d4) main-ok+sec-block: combined=needs-attention" "1" \
-  "$(grep -c 'combined="needs-attention"' "$LOG_FILE" 2>/dev/null; true)"
-# Per-source verdicts both logged on parallel_review_done (:591).
-assert_eq "(d4) main verdict=approve logged" "1" \
-  "$(grep -c 'main_verdict="approve"' "$LOG_FILE" 2>/dev/null; true)"
-assert_eq "(d4) sec verdict=needs-attention logged" "1" \
-  "$(grep -c 'sec_verdict="needs-attention"' "$LOG_FILE" 2>/dev/null; true)"
-# Merged issue list carries the SECURITY source's issue (merge :572,:578).
-assert_eq "(d4) security issue surfaced in deny reason" "1" \
-  "$(printf '%s' "$out" | grep -c 'SEC issue needs-attention' || true)"
-
-# --- (d5) precedence: followups < needs-attention ---------------------
-# Main approve-with-followups + security needs-attention -> the
-# needs-attention rung wins over the followups rung (:556 before :558).
-REPO_D5=$(make_repo "$WORK/repo_d5")
-: > "$ARGS_FILE"; : > "$LOG_FILE"
-out=$(run_hook "$REPO_D5" 'git push' \
-  "$NO_CACHE SSPOWER_SECURITY_REVIEW=on SSPOWER_SECURITY_EFFORT=medium SSPOWER_STUB_MAIN_VERDICT=approve-with-followups SSPOWER_STUB_SEC_VERDICT=needs-attention" 2>/dev/null); rc=$?
-assert_eq "(d5) fups+block: DENY" "1" \
-  "$(printf '%s' "$out" | grep -c '"permissionDecision": "deny"' || true)"
-assert_eq "(d5) fups+block: combined=needs-attention (block wins)" "1" \
-  "$(grep -c 'combined="needs-attention"' "$LOG_FILE" 2>/dev/null; true)"
+# NOTE: (d2b)/(d4)/(d5) removed when SECURITY + SANITY reviewers moved
+# out of auto-review.sh into manual subagents (see
+# agents/security-reviewer.md). Single-reviewer paths (d3/d1/d2) above
+# cover the verdict-assembly contract end-to-end.
 
 echo
 echo "passed: $PASS"

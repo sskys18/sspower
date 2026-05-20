@@ -27,14 +27,11 @@
 #   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min)
 #   SSPOWER_REVIEW_MAX_ROUNDS  (default 3)
 #   SSPOWER_REVIEW_AUTO_APPLY  (default on; set off to disable patch apply)
-#   SSPOWER_SECURITY_REVIEW    (default on;     set off to skip security pass)
-#   SSPOWER_SECURITY_EFFORT    (default xhigh;  off|low|medium|high|xhigh)
-#   SSPOWER_SANITY_REVIEW      (default off;    set on to enable sanity pass)
-#   SSPOWER_SANITY_EFFORT      (default medium; off|low|medium|high|xhigh)
-#                              Sanity runs only at round 0 on non-strict
-#                              branches. Purpose: break round-escalation
-#                              loops by downgrading noisy main verdicts to
-#                              advisory when a second reviewer disagrees.
+#
+# Security + sanity reviewers were removed from auto-review. They run as
+# manual subagents — see `agents/security-reviewer.md` and
+# `agents/sanity-reviewer.md`. Auto-review runs MAIN only; advisory
+# issues land in `<repo>/.claude/sspower/followups.md`.
 
 set -u
 
@@ -311,294 +308,60 @@ Do NOT propose stylistic refactors or unrequested features beyond what's
 necessary to fix the diff.
 EOF
 
-  # Security review prompt (senior security engineer perspective)
-  SEC_PROMPT_FILE=$(mktemp -t sspower-autoreview-sec-XXXXXX)
-  cat > "$SEC_PROMPT_FILE" <<EOF
-Act as a senior security engineer. Review the branch diff at $DIFF_FILE for
-security vulnerabilities and defensive gaps. Read the repo at
-${REPO_ROOT:-cwd} to verify; do not rely on the diff alone.
-
-Specifically look for:
-  - Authentication/authorization bugs (missing checks, broken access control,
-    IDOR, privilege escalation, session/token mishandling)
-  - Input validation: injection (SQL, NoSQL, command, LDAP, XPath), XSS,
-    CSRF, SSRF, path traversal, open redirect, HTTP header injection
-  - Secrets exposure: hardcoded credentials, tokens in logs/errors/git,
-    insecure storage, env var leaks
-  - Crypto misuse: weak algorithms, hardcoded keys/IVs, insecure random,
-    bad signature verification, padding oracles, missing HMAC
-  - Race conditions, TOCTOU, insecure deserialization
-  - Insecure defaults (open ports, debug enabled, permissive CORS, weak TLS)
-  - Dependency risks: known-vulnerable libs introduced/upgraded
-  - Logging/monitoring gaps for security events
-  - Insufficient rate limiting, DoS amplification
-
-For each issue set severity:
-  - "blocking" for any exploitable vuln, data exposure, or auth bypass.
-  - "advisory" for hardening recommendations and defense-in-depth.
-
-For mechanical fixes (input sanitization stub, missing auth check, secret
-removal), include 'suggested_patch' as unified diff. For design issues set
-'suggested_patch' to null.
-
-Verdicts:
-  - "approve"                  : no security issues found.
-  - "approve-with-followups"   : only advisory hardening notes; ship + follow up.
-  - "needs-attention"          : at least one blocking security issue.
-
-Be precise. Cite file:line. Avoid speculative threats not realized in this diff.
-EOF
-
-  # Sanity / second-opinion review prompt. Runs in parallel at round 0 only,
-  # to break false-deny loops: when the main reviewer flags noise (style,
-  # speculative refactor, low-effort hallucination), sanity acts as a second
-  # pair of eyes focused strictly on real correctness blockers.
-  SANITY_PROMPT_FILE=$(mktemp -t sspower-autoreview-sanity-XXXXXX)
-  cat > "$SANITY_PROMPT_FILE" <<EOF
-Act as a second pair of eyes on the branch diff at $DIFF_FILE. Your sole
-job is to independently judge whether the diff has any **blocking** bug:
-correctness regression, data loss / corruption, crash, broken contract
-with callers, or auth/permission bypass that the main reviewer might
-have missed OR exaggerated.
-
-Read the repo at ${REPO_ROOT:-cwd} to verify. Do NOT rely on the diff
-alone.
-
-EXPLICITLY IGNORE:
-  - Style, naming, formatting, comment density
-  - "Could be refactored / abstracted / simplified"
-  - Test coverage suggestions (unless the change visibly broke a test)
-  - Documentation drift (covered by main reviewer)
-  - Speculative future scenarios not realized in this diff
-  - Performance micro-optimizations
-
-For each real blocker found:
-  - severity: "blocking" only if there is a concrete failure mode the
-    reader can name in one sentence (e.g., "passes null to .toLowerCase()
-    when input.email is undefined → TypeError on signup").
-  - severity: "advisory" for anything you would mention but would not
-    block a push for.
-
-If you find nothing concrete, return verdict "approve" with empty
-issues list. Do not invent issues to look thorough.
-
-Verdicts:
-  - "approve"                  : no real blocker.
-  - "approve-with-followups"   : only advisory observations.
-  - "needs-attention"          : at least one concrete blocking bug.
-
-For mechanical fixes include 'suggested_patch' as unified diff. For
-design issues set 'suggested_patch' to null.
-EOF
-
   MAIN_BRIDGE_ARGS=(review --prompt "@$MAIN_PROMPT_FILE" --profile "$ROUND_PROFILE")
   [ -n "$REPO_ROOT" ] && MAIN_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
 
-  SSPOWER_SECURITY_REPOS="${SSPOWER_SECURITY_REPOS:-/Users/sskys/blockwavelabs/custody-dashboard-solution:/Users/sskys/blockwavelabs/danal/pay-chain:/Users/sskys/blockwavelabs/danal/danalstable-frontend:/Users/sskys/blockwavelabs/danal/danalstablecoin-backend:/Users/sskys/blockwavelabs/infinite-block/security}"
-  SEC_EFFORT="${SSPOWER_SECURITY_EFFORT:-xhigh}"
-  SECURITY_ENABLED=0
-  _repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
-  if [ "$BRANCH_TIER" = "strict" ]; then
-    SECURITY_ENABLED=1
-  elif [ -n "$_repo_root" ]; then
-    _OLDIFS="$IFS"; IFS=':'
-    for _p in $SSPOWER_SECURITY_REPOS; do
-      case "$_repo_root" in "$_p"*) SECURITY_ENABLED=1 ;; esac
-    done
-    IFS="$_OLDIFS"
-  fi
-  # SSPOWER_SECURITY_REVIEW=on force-enables (overrides path/branch gating).
-  if [ "${SSPOWER_SECURITY_REVIEW:-}" = "on" ]; then SECURITY_ENABLED=1; fi
-  # Explicit OFF is authoritative and applied LAST — you can never run a
-  # security review with `--effort off`, so SEC_EFFORT=off (or REVIEW=off)
-  # disables regardless of a REVIEW=on force-enable above.
-  if [ "$SEC_EFFORT" = "off" ] || [ "${SSPOWER_SECURITY_REVIEW:-}" = "off" ]; then SECURITY_ENABLED=0; fi
-  SEC_BRIDGE_ARGS=(review --prompt "@$SEC_PROMPT_FILE" --effort "$SEC_EFFORT")
-  [ -n "$REPO_ROOT" ] && SEC_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
-
-  # Sanity reviewer: round 0 only, parallel with main + security.
-  # Purpose: break the round 0 → 1 → 2 → cap loop when main @ low/high
-  # produces a noisy needs-attention. Runs at medium effort with a
-  # blocker-only prompt; if main says deny but sanity says approve,
-  # we downgrade main's findings to advisory followups instead of
-  # blocking the push and forcing another round.
-  SANITY_EFFORT="${SSPOWER_SANITY_EFFORT:-medium}"
-  SANITY_ENABLED=0
-  if [ "${SSPOWER_SANITY_REVIEW:-off}" = "on" ] && [ "$BRANCH_TIER" != "strict" ] && [ "$SANITY_EFFORT" != "off" ]; then
-    SANITY_ENABLED=1
-  fi
-  SANITY_BRIDGE_ARGS=(review --prompt "@$SANITY_PROMPT_FILE" --effort "$SANITY_EFFORT")
-  [ -n "$REPO_ROOT" ] && SANITY_BRIDGE_ARGS+=(--cd "$REPO_ROOT")
-
-  # Tier-aware timeout: max(main, security) since they run in parallel
+  # Effort-aware timeout (MAIN only — security/sanity moved to manual subagents)
   if [ -n "${SSPOWER_REVIEW_TIMEOUT:-}" ]; then
     REVIEW_TIMEOUT="$SSPOWER_REVIEW_TIMEOUT"
-    MAIN_TIMEOUT="$REVIEW_TIMEOUT"
-    SEC_TIMEOUT="$REVIEW_TIMEOUT"
-    SANITY_TIMEOUT="$REVIEW_TIMEOUT"
   else
     case "$ROUND_EFFORT" in
-      low|minimal) MAIN_TIMEOUT=60 ;;
-      medium)      MAIN_TIMEOUT=90 ;;
-      high)        MAIN_TIMEOUT=120 ;;
-      xhigh)       MAIN_TIMEOUT=180 ;;
-      *)           MAIN_TIMEOUT=90 ;;
+      low|minimal) REVIEW_TIMEOUT=60 ;;
+      medium)      REVIEW_TIMEOUT=90 ;;
+      high)        REVIEW_TIMEOUT=120 ;;
+      xhigh)       REVIEW_TIMEOUT=180 ;;
+      *)           REVIEW_TIMEOUT=90 ;;
     esac
-    case "$SEC_EFFORT" in
-      low|minimal) SEC_TIMEOUT=60 ;;
-      medium)      SEC_TIMEOUT=90 ;;
-      high)        SEC_TIMEOUT=120 ;;
-      xhigh)       SEC_TIMEOUT=180 ;;
-      *)           SEC_TIMEOUT=180 ;;
-    esac
-    case "$SANITY_EFFORT" in
-      low|minimal) SANITY_TIMEOUT=60 ;;
-      medium)      SANITY_TIMEOUT=90 ;;
-      high)        SANITY_TIMEOUT=120 ;;
-      xhigh)       SANITY_TIMEOUT=180 ;;
-      *)           SANITY_TIMEOUT=90 ;;
-    esac
-    REVIEW_TIMEOUT=$MAIN_TIMEOUT
-    [ "$SEC_TIMEOUT"    -gt "$REVIEW_TIMEOUT" ] && REVIEW_TIMEOUT=$SEC_TIMEOUT
-    [ "$SANITY_ENABLED" = "1" ] && [ "$SANITY_TIMEOUT" -gt "$REVIEW_TIMEOUT" ] && REVIEW_TIMEOUT=$SANITY_TIMEOUT
   fi
 
-  # ---------- Spawn parallel reviews ----------
+  # ---------- Spawn main review ----------
   MAIN_RESULT_FILE=$(mktemp -t sspower-autoreview-mainresult-XXXXXX)
-  SEC_RESULT_FILE=$(mktemp -t sspower-autoreview-secresult-XXXXXX)
-  SANITY_RESULT_FILE=$(mktemp -t sspower-autoreview-sanityresult-XXXXXX)
 
-  log_event info hook.auto-review kind=parallel_review_start branch="$BRANCH" \
-    main_effort="$ROUND_PROFILE" \
-    sec_effort="$([ "$SECURITY_ENABLED" = "1" ] && echo "$SEC_EFFORT" || echo "off")" \
-    sanity_effort="$([ "$SANITY_ENABLED" = "1" ] && echo "$SANITY_EFFORT" || echo "off")" \
-    timeout="${REVIEW_TIMEOUT}s"
+  log_event info hook.auto-review kind=review_start branch="$BRANCH" \
+    main_effort="$ROUND_PROFILE" timeout="${REVIEW_TIMEOUT}s"
 
   if command -v timeout &>/dev/null; then
-    timeout "$MAIN_TIMEOUT" node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null &
-    MAIN_PID=$!
-    if [ "$SECURITY_ENABLED" = "1" ]; then
-      timeout "$SEC_TIMEOUT" node "$BRIDGE" "${SEC_BRIDGE_ARGS[@]}" > "$SEC_RESULT_FILE" 2>/dev/null &
-      SEC_PID=$!
-    fi
-    if [ "$SANITY_ENABLED" = "1" ]; then
-      timeout "$SANITY_TIMEOUT" node "$BRIDGE" "${SANITY_BRIDGE_ARGS[@]}" > "$SANITY_RESULT_FILE" 2>/dev/null &
-      SANITY_PID=$!
-    fi
+    timeout "$REVIEW_TIMEOUT" node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null
   else
-    node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null &
-    MAIN_PID=$!
-    if [ "$SECURITY_ENABLED" = "1" ]; then
-      node "$BRIDGE" "${SEC_BRIDGE_ARGS[@]}" > "$SEC_RESULT_FILE" 2>/dev/null &
-      SEC_PID=$!
-    fi
-    if [ "$SANITY_ENABLED" = "1" ]; then
-      node "$BRIDGE" "${SANITY_BRIDGE_ARGS[@]}" > "$SANITY_RESULT_FILE" 2>/dev/null &
-      SANITY_PID=$!
-    fi
+    node "$BRIDGE" "${MAIN_BRIDGE_ARGS[@]}" > "$MAIN_RESULT_FILE" 2>/dev/null
   fi
 
-  wait "$MAIN_PID" 2>/dev/null || true
-  [ "$SECURITY_ENABLED" = "1" ] && wait "$SEC_PID" 2>/dev/null || true
-  [ "$SANITY_ENABLED" = "1" ] && wait "$SANITY_PID" 2>/dev/null || true
-
   MAIN_RAW=$(cat "$MAIN_RESULT_FILE" 2>/dev/null)
-  SEC_RAW=$(cat "$SEC_RESULT_FILE" 2>/dev/null)
-  SANITY_RAW=$(cat "$SANITY_RESULT_FILE" 2>/dev/null)
-  rm -f "$MAIN_PROMPT_FILE" "$SEC_PROMPT_FILE" "$SANITY_PROMPT_FILE" "$MAIN_RESULT_FILE" "$SEC_RESULT_FILE" "$SANITY_RESULT_FILE"
+  rm -f "$MAIN_PROMPT_FILE" "$MAIN_RESULT_FILE"
 
-  if [ -z "$MAIN_RAW" ] && [ -z "$SEC_RAW" ] && [ -z "$SANITY_RAW" ]; then
-    log_event warn hook.auto-review kind=codex_timeout_allow timeout="${REVIEW_TIMEOUT}s" branch="$BRANCH" reason="all_failed"
-    echo "[auto-review] WARNING: all reviewers failed/timed out (${REVIEW_TIMEOUT}s); allowing push without review." >&2
+  if [ -z "$MAIN_RAW" ]; then
+    log_event warn hook.auto-review kind=codex_timeout_allow timeout="${REVIEW_TIMEOUT}s" branch="$BRANCH" reason="main_empty"
+    echo "[auto-review] WARNING: main reviewer failed/timed out (${REVIEW_TIMEOUT}s); allowing push without review." >&2
     exit 0
   fi
 
-  # If one failed, treat that side as approve to not block on infra error
-  # Default the MAIN verdict to "unknown" (denies) on parse failure: a
-  # garbled main response must NOT slip through as approve. The SECURITY
-  # verdict, in contrast, defaults to "approve" when the reviewer was
-  # disabled (SEC_RAW empty by design); only treat empty as "unknown" if
-  # the security reviewer was supposed to run.
+  # Verdict assembly — MAIN only. Fail-closed on parse failure: a garbled
+  # main response must NOT slip through as approve.
   MAIN_VERDICT=$(echo "$MAIN_RAW" | jq -r '.verdict // "unknown"' 2>/dev/null || echo "unknown")
-  if [ "$SECURITY_ENABLED" = "1" ]; then
-    SEC_VERDICT=$(echo "$SEC_RAW" | jq -r '.verdict // "unknown"' 2>/dev/null || echo "unknown")
-  else
-    SEC_VERDICT="approve"
-  fi
-  if [ "$SANITY_ENABLED" = "1" ]; then
-    SANITY_VERDICT=$(echo "$SANITY_RAW" | jq -r '.verdict // "unknown"' 2>/dev/null || echo "unknown")
-  else
-    SANITY_VERDICT="n/a"
-  fi
-
   case "$MAIN_VERDICT" in
     approve|approve-with-followups|needs-attention) ;;
     *) MAIN_VERDICT="unknown" ;;
   esac
-  case "$SEC_VERDICT" in
-    approve|approve-with-followups|needs-attention) ;;
-    *) SEC_VERDICT="unknown" ;;
-  esac
-  case "$SANITY_VERDICT" in
-    approve|approve-with-followups|needs-attention|n/a) ;;
-    *) SANITY_VERDICT="unknown" ;;
-  esac
+  COMBINED_VERDICT="$MAIN_VERDICT"
 
-  # Sanity downgrade: at round 0, if main says "needs-attention" but sanity
-  # independently says "approve" (or approve-with-followups), the second
-  # pair of eyes did not see a real blocker — treat main's findings as
-  # advisory rather than blocking. This breaks round 0 → 1 → 2 → cap loops
-  # where main @ low effort produces a noisy false deny.
-  # Sanity is NEVER allowed to flip an "approve" main into a deny.
-  SANITY_DOWNGRADED=0
-  EFFECTIVE_MAIN_VERDICT="$MAIN_VERDICT"
-  if [ "$SANITY_ENABLED" = "1" ] \
-     && [ "$MAIN_VERDICT" = "needs-attention" ] \
-     && { [ "$SANITY_VERDICT" = "approve" ] || [ "$SANITY_VERDICT" = "approve-with-followups" ]; }; then
-    EFFECTIVE_MAIN_VERDICT="approve-with-followups"
-    SANITY_DOWNGRADED=1
-  fi
+  MAIN_ISSUES=$(echo "$MAIN_RAW" | jq -c '[(.issues // [])[] | . + {_source:"main"}]' 2>/dev/null || echo "[]")
 
-  # Combined verdict: any unknown denies; otherwise needs-attention > followups > approve.
-  # Security keeps full blocking power. Main is mediated through EFFECTIVE_MAIN_VERDICT.
-  if [ "$EFFECTIVE_MAIN_VERDICT" = "unknown" ] || [ "$SEC_VERDICT" = "unknown" ]; then
-    COMBINED_VERDICT="unknown"
-  elif [ "$EFFECTIVE_MAIN_VERDICT" = "needs-attention" ] || [ "$SEC_VERDICT" = "needs-attention" ]; then
-    COMBINED_VERDICT="needs-attention"
-  elif [ "$EFFECTIVE_MAIN_VERDICT" = "approve-with-followups" ] || [ "$SEC_VERDICT" = "approve-with-followups" ]; then
-    COMBINED_VERDICT="approve-with-followups"
-  else
-    COMBINED_VERDICT="approve"
-  fi
-
-  # Merge issue lists; tag each by source. When sanity downgrades, main's
-  # blockers are re-tagged as advisory so they land in followups.md instead
-  # of producing a deny payload.
-  if [ "$SANITY_DOWNGRADED" = "1" ]; then
-    MAIN_ISSUES=$(echo "$MAIN_RAW" | jq -c '[(.issues // [])[] | . + {_source:"main", severity:"advisory", _downgraded_by:"sanity"}]' 2>/dev/null || echo "[]")
-  else
-    MAIN_ISSUES=$(echo "$MAIN_RAW" | jq -c '[(.issues // [])[] | . + {_source:"main"}]' 2>/dev/null || echo "[]")
-  fi
-  SEC_ISSUES=$(echo "$SEC_RAW"  | jq -c '[(.issues // [])[] | . + {_source:"security"}]' 2>/dev/null || echo "[]")
-  if [ "$SANITY_ENABLED" = "1" ]; then
-    SANITY_ISSUES=$(echo "$SANITY_RAW" | jq -c '[(.issues // [])[] | . + {_source:"sanity"}]' 2>/dev/null || echo "[]")
-  else
-    SANITY_ISSUES="[]"
-  fi
-  COMBINED_ISSUES=$(echo "${MAIN_ISSUES:-[]} ${SEC_ISSUES:-[]} ${SANITY_ISSUES:-[]}" | jq -s 'add // []' 2>/dev/null || echo "[]")
-
-  # Drop _main/_security fields — they were unused downstream and including
-  # them via --argjson breaks the entire jq call when raw responses contain
-  # extra text or invalid JSON, leaving RESULT="" and VERDICT="unknown"
-  # despite COMBINED_VERDICT being correct (caused spurious deny loops).
-  # Fallback to unknown (denies) if jq still fails — never pass-through a
-  # verdict assembled from data we couldn't parse.
-  RESULT=$(jq -n --arg v "$COMBINED_VERDICT" --argjson i "$COMBINED_ISSUES" '{verdict:$v, issues:$i}' 2>/dev/null)
+  RESULT=$(jq -n --arg v "$COMBINED_VERDICT" --argjson i "${MAIN_ISSUES:-[]}" '{verdict:$v, issues:$i}' 2>/dev/null)
   if [ -z "$RESULT" ]; then
     RESULT='{"verdict":"unknown","issues":[{"severity":"blocking","summary":"verdict assembly failed"}]}'
   fi
 
-  log_event info hook.auto-review kind=parallel_review_done branch="$BRANCH" main_verdict="$MAIN_VERDICT" sec_verdict="$SEC_VERDICT" sanity_verdict="$SANITY_VERDICT" sanity_downgraded="$SANITY_DOWNGRADED" combined="$COMBINED_VERDICT"
+  log_event info hook.auto-review kind=review_done branch="$BRANCH" main_verdict="$MAIN_VERDICT" combined="$COMBINED_VERDICT"
 
   echo "$RESULT" > "$CACHE_FILE"
 fi
