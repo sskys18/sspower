@@ -1,162 +1,21 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook for sspower plugin.
+# UserPromptSubmit hook: inject the skill-routing reminder.
 #
-# Two jobs:
-#   1. Inject the skill-routing reminder (survives compaction).
-#   2. Optionally enrich coding-intent prompts via Codex (read-only repo scan).
+# Prompt enrichment was removed (spec D-A2): codex `enrich` had a
+# disabled-notice injection bug and duplicated what semble-context.sh
+# now provides via the much-faster `semble_rs` rust binary. The
+# remaining job here is to keep the skill-routing reminder in front of
+# the model so it survives compaction.
 #
-# Enrichment is gated — skipped for trivial prompts, slash commands, and
-# opt-out prefixes. Fails open: any error → raw prompt passes through.
-#
-# Opt-out: start prompt with "raw:" or "noenrich:" to skip enrichment.
-# Disable entirely: export SSPOWER_ENRICH=0 in environment.
-# Tune timeout: export SSPOWER_ENRICH_TIMEOUT=60 (seconds, default 180).
-# Length gate:  export SSPOWER_ENRICH_MAX_CHARS=4000 (default 2000 — prompts
-#               longer than this are assumed to already carry context).
+# Fail-open: a JSON write failure must NOT block prompt submission.
 
-set -euo pipefail
-
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-BRIDGE="${PLUGIN_ROOT}/scripts/codex-bridge.mjs"
-DIAG_LOG="${HOME}/.claude/sspower/codex.log"
-
-log_hook() {
-  # $1 = kind (error|warn|info)  $2 = key=value pairs
-  local ts
-  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  mkdir -p "$(dirname "$DIAG_LOG")" 2>/dev/null
-  printf '%s [%s] hook.enrich %s\n' "$ts" "$1" "$2" >> "$DIAG_LOG" 2>/dev/null || true
-}
+set -uo pipefail
 
 REMINDER="sspower: BEFORE responding, check which skills apply (even 1% chance = invoke via Skill tool). Priority: process skills first (brainstorming, systematic-debugging), then implementation skills (test-driven-development, writing-plans, executing-plans, subagent-driven-development). Rigid skills (TDD, debugging): follow exactly. Flexible skills: adapt to context. If about to claim done: verification-before-completion. If completing a feature: requesting-code-review. Skip only for pure Q&A with zero coding/planning intent."
 
-# Hook receives JSON via stdin: { "prompt": "...", "cwd": "...", ... }
-INPUT="$(cat)"
+# Drain stdin so the supervisor sees a consumed pipe. We do not act on
+# the prompt body anymore; semble-context.sh handles per-prompt context.
+cat >/dev/null 2>&1 || true
 
-extract_field() {
-  # crude JSON field extractor using jq if present, else python, else sed fallback
-  local field="$1"
-  if command -v jq >/dev/null 2>&1; then
-    printf '%s' "$INPUT" | jq -r ".${field} // empty"
-  elif command -v python3 >/dev/null 2>&1; then
-    printf '%s' "$INPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('${field}','') or '', end='')"
-  else
-    # best-effort fallback; may fail on complex prompts
-    printf '%s' "$INPUT" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
-  fi
-}
-
-USER_PROMPT="$(extract_field prompt)"
-CWD="$(extract_field cwd)"
-[[ -z "$CWD" ]] && CWD="$(pwd)"
-
-emit_json() {
-  local ctx="$1"
-  # Escape for JSON: backslash, double-quote, newline, tab, carriage return
-  ctx="${ctx//\\/\\\\}"
-  ctx="${ctx//\"/\\\"}"
-  ctx="${ctx//$'\n'/\\n}"
-  ctx="${ctx//$'\r'/\\r}"
-  ctx="${ctx//$'\t'/\\t}"
-  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "$ctx"
-}
-
-# ── Gate: decide whether to enrich ────────────────────────────────────
-
-should_enrich() {
-  return 1   # enrich disabled (spec D-A2) — never enrich
-  # Disabled by env
-  [[ "${SSPOWER_ENRICH:-1}" == "0" ]] && return 1
-
-  # Bridge not available
-  [[ ! -x "$(command -v node 2>/dev/null)" ]] && return 1
-  [[ ! -f "$BRIDGE" ]] && return 1
-
-  # Empty or too-short prompt
-  [[ -z "$USER_PROMPT" ]] && return 1
-  (( ${#USER_PROMPT} < 20 )) && return 1
-
-  # Already rich — skip to save latency (caller supplied their own context)
-  local max_chars="${SSPOWER_ENRICH_MAX_CHARS:-2000}"
-  [[ "$max_chars" =~ ^[0-9]+$ ]] || max_chars=2000
-  # Force base-10 so leading-zero values don't trigger bash octal parsing (e.g. 08).
-  (( ${#USER_PROMPT} > 10#$max_chars )) && return 1
-
-  # Slash commands
-  [[ "$USER_PROMPT" =~ ^/ ]] && return 1
-
-  # Opt-out prefix
-  [[ "$USER_PROMPT" =~ ^(raw:|noenrich:|RAW:) ]] && return 1
-
-  # Pure read / meta prompts
-  local lc
-  lc="$(printf '%s' "$USER_PROMPT" | tr '[:upper:]' '[:lower:]')"
-  case "$lc" in
-    "what is"*|"what's"*|"show"*|"list"*|"explain"*|"describe"*|"tell me"*) return 1 ;;
-    "hi"|"hello"|"hey"|"thanks"|"thank you"|"ok"|"yes"|"no"|"done"|"go"|"push") return 1 ;;
-    "help"|"status"|"why"*) return 1 ;;
-  esac
-
-  # Require coding-intent keyword
-  if echo "$lc" | grep -qE '\b(add|fix|build|refactor|implement|change|write|create|debug|update|modify|remove|delete|rename|move|migrate|port|wire|ship|integrate|setup|install|configure|test|bug|error|broken|failing|crash)\b'; then
-    return 0
-  fi
-
-  return 1
-}
-
-# ── Build context ─────────────────────────────────────────────────────
-
-CONTEXT="$REMINDER"
-
-if should_enrich; then
-  # Write prompt to temp file to avoid arg-escaping hell
-  TMP_PROMPT="$(mktemp -t sspower-enrich.XXXXXX)"
-  printf '%s' "$USER_PROMPT" > "$TMP_PROMPT"
-  trap 'rm -f "$TMP_PROMPT"' EXIT
-
-  # Call bridge with portable timeout. Fail-open on any error.
-  # Default 180s — typical enrichment on medium repos runs 20-90s; large repos
-  # (this one, ~200k input tokens) run ~120s with margin. Override via SSPOWER_ENRICH_TIMEOUT.
-  ENRICH_TIMEOUT="${SSPOWER_ENRICH_TIMEOUT:-180}"
-  [[ "$ENRICH_TIMEOUT" =~ ^[0-9]+$ ]] || ENRICH_TIMEOUT=180
-  # Strip leading zeros so downstream binaries get a clean decimal.
-  ENRICH_TIMEOUT=$((10#$ENRICH_TIMEOUT))
-  # Pick timeout binary: gtimeout (brew coreutils) > timeout > perl alarm fallback.
-  # Use argv arrays (no eval) to prevent shell injection via env vars.
-  ENRICH_ARGS=(node "$BRIDGE" enrich --prompt "@$TMP_PROMPT" --cd "$CWD" --effort minimal)
-  if command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_ARGS=(gtimeout "$ENRICH_TIMEOUT")
-  elif command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_ARGS=(timeout "$ENRICH_TIMEOUT")
-  else
-    # perl-based portable timeout
-    TIMEOUT_ARGS=(perl -e 'alarm shift; exec @ARGV' "$ENRICH_TIMEOUT")
-  fi
-
-  ENRICHED=""
-  ENRICH_START="$(date +%s)"
-  if ENRICHED="$("${TIMEOUT_ARGS[@]}" "${ENRICH_ARGS[@]}" 2>/dev/null)"; then
-    ENRICH_DUR=$(( $(date +%s) - ENRICH_START ))
-    if [[ -n "$ENRICHED" && "$ENRICHED" != "$USER_PROMPT" ]]; then
-      CONTEXT="${CONTEXT}
-
-[codex-enriched prompt — validated against actual repo]:
-${ENRICHED}"
-      log_hook info "kind=enriched dur=${ENRICH_DUR}s cwd=$CWD"
-    else
-      log_hook warn "kind=passthrough_empty dur=${ENRICH_DUR}s cwd=$CWD"
-    fi
-  else
-    RC=$?
-    ENRICH_DUR=$(( $(date +%s) - ENRICH_START ))
-    if [[ "$RC" == "124" || "$RC" == "142" ]]; then
-      log_hook warn "kind=timeout dur=${ENRICH_DUR}s cwd=$CWD"
-    else
-      log_hook error "kind=bridge_failed rc=$RC dur=${ENRICH_DUR}s cwd=$CWD"
-    fi
-  fi
-fi
-
-emit_json "$CONTEXT"
+printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "$REMINDER"
 exit 0

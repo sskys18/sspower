@@ -4,7 +4,7 @@
 # error / missing semble_rs / timeout -> emit nothing, exit 0.
 #
 # Disable: export SSPOWER_SEMBLE=0
-# Opt-out per-prompt: prompt starts with raw: RAW: nosemble: NOSEMBLE: noenrich:
+# Opt-out per-prompt: prompt starts with raw: RAW: nosemble: NOSEMBLE:
 # Tune: SSPOWER_SEMBLE_TIMEOUT (s, default 6), SSPOWER_SEMBLE_MAX_CHARS (default 3000)
 #
 # CLI signature (verified `semble_rs plan --help` + run): `semble_rs plan
@@ -53,7 +53,7 @@ MAX_CHARS=$((10#$MAX_CHARS))
 (( ${#USER_PROMPT} > 8000 )) && emit_nothing   # already context-rich
 
 [[ "$USER_PROMPT" =~ ^/ ]] && emit_nothing
-[[ "$USER_PROMPT" =~ ^(raw:|RAW:|nosemble:|NOSEMBLE:|noenrich:) ]] && emit_nothing
+[[ "$USER_PROMPT" =~ ^(raw:|RAW:|nosemble:|NOSEMBLE:) ]] && emit_nothing
 
 LC="$(printf '%s' "$USER_PROMPT" | tr '[:upper:]' '[:lower:]')"
 case "$LC" in

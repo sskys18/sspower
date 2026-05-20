@@ -1685,16 +1685,6 @@ async function cmdRescue(argv) {
   process.exit(2);
 }
 
-async function cmdEnrich(argv) {
-  const opts = parseOpts(argv);
-  const rawPrompt = resolvePrompt(opts.prompt);
-  process.stderr.write("[codex:enrich] disabled (spec D-A2) — passing raw prompt through\n");
-  logEvent("info", "bridge.enrich", { kind: "disabled_passthrough" });
-  process.stdout.write(rawPrompt);
-  cleanupTmpDir();
-  process.exit(0);
-}
-
 async function cmdResume(argv) {
   const opts = parseOpts(argv);
   const prompt = resolvePrompt(opts.prompt);
@@ -2055,9 +2045,6 @@ async function main() {
       break;
     case "resume":
       await cmdResume(argv);
-      break;
-    case "enrich":
-      await cmdEnrich(argv);
       break;
     case "complete":
       await cmdComplete(argv);
