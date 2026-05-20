@@ -8,6 +8,10 @@ set -euo pipefail
 HOOK="$(dirname "$0")/../../hooks/codex-track-prompt.sh"
 [ -x "$HOOK" ] || { echo "FAIL: hook not executable at $HOOK"; exit 1; }
 
+# Hook is now opt-in (default OFF) to save tokens in normal sessions.
+# Tests must enable it explicitly to exercise the body.
+export SSPOWER_CODEX_SURFACE=on
+
 # Isolate test from real state by pointing to a fake HOME.
 TEST_HOME=$(mktemp -d -t cx-track-test.XXXXXX)
 trap "rm -rf '$TEST_HOME'" EXIT
@@ -96,5 +100,16 @@ COUNT=$(echo "$OUT" | grep -c "id=0600000" || true)
 [ "$COUNT" = "5" ] || { echo "FAIL: expected 5 lines (cap), got $COUNT. Output: $OUT"; exit 1; }
 echo "[test 7] MAX_LINES cap: PASS"
 
+# Test 8: opt-in gate — without SSPOWER_CODEX_SURFACE=on the hook must
+# stay silent even with live sessions in the registry.
+mk_record "07000000-gate-test" "running" "rescue" "exec" "$NOW_ISO" "$MY_PID" "$MY_PID"
+OUT=$(HOME="$TEST_HOME" env -u SSPOWER_CODEX_SURFACE "$HOOK")
+[ -z "$OUT" ] || { echo "FAIL: hook surfaced output when gate unset: $OUT"; exit 1; }
+OUT=$(HOME="$TEST_HOME" SSPOWER_CODEX_SURFACE=off "$HOOK")
+[ -z "$OUT" ] || { echo "FAIL: hook surfaced output when gate=off: $OUT"; exit 1; }
+OUT=$(HOME="$TEST_HOME" SSPOWER_CODEX_SURFACE=1 "$HOOK")
+[ -z "$OUT" ] || { echo "FAIL: hook surfaced output when gate=1 (only 'on' opens): $OUT"; exit 1; }
+echo "[test 8] opt-in gate: PASS"
+
 echo ""
-echo "PASS: all 7 tests passed"
+echo "PASS: all 8 tests passed"
