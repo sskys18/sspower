@@ -140,9 +140,14 @@ git_in_repo() {
 # Fail-open: any error is non-fatal, the hook continues. $1 = repo root.
 ensure_sspower_excluded() {
   local _repo="$1"
-  [ -d "$_repo/.git" ] || return 0
-  local _exclude="$_repo/.git/info/exclude"
-  mkdir -p "$_repo/.git/info" 2>/dev/null || return 0
+  # Use git itself to resolve the .git dir — handles linked worktrees
+  # (where $_repo/.git is a FILE pointing to .git/worktrees/<name>/)
+  # and bare/cloned-from-bare layouts. --absolute-git-dir is in git 2.13+.
+  local _git_dir
+  _git_dir=$(git -C "$_repo" rev-parse --absolute-git-dir 2>/dev/null) || return 0
+  [ -n "$_git_dir" ] || return 0
+  local _exclude="$_git_dir/info/exclude"
+  mkdir -p "$_git_dir/info" 2>/dev/null || return 0
   [ -f "$_exclude" ] || touch "$_exclude" 2>/dev/null || return 0
   grep -qxF ".claude/sspower/" "$_exclude" 2>/dev/null && return 0
   printf '\n# sspower: per-repo state — do not track\n.claude/sspower/\n' >> "$_exclude" 2>/dev/null || true
