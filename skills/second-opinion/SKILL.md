@@ -23,16 +23,17 @@ digraph route {
     "Review before merge" [shape=box];
     "High risk?" [shape=diamond];
 
-    "codex-bridge implement (--write)" [shape=box, style=filled, fillcolor="#ffcccc"];
-    "codex-bridge review" [shape=box, style=filled, fillcolor="#ccffcc"];
-    "codex-bridge review (adversarial prompt)" [shape=box, style=filled, fillcolor="#ccccff"];
+    "sanity-reviewer subagent" [shape=box, style=filled, fillcolor="#ccffcc"];
+    "security-reviewer subagent" [shape=box, style=filled, fillcolor="#ccccff"];
+    "codex-bridge implement (--write, explicit opt-in)" [shape=box, style=filled, fillcolor="#ffcccc"];
 
     "Why do you need a second opinion?" -> "Stuck after 2+ fix attempts" [label="stuck"];
     "Why do you need a second opinion?" -> "Review before merge" [label="review"];
-    "Stuck after 2+ fix attempts" -> "codex-bridge implement (--write)";
+    "Stuck after 2+ fix attempts" -> "sanity-reviewer subagent" [label="fresh eyes"];
+    "Stuck after 2+ fix attempts" -> "codex-bridge implement (--write, explicit opt-in)" [label="rescue requested"];
     "Review before merge" -> "High risk?";
-    "High risk?" -> "codex-bridge review (adversarial prompt)" [label="yes"];
-    "High risk?" -> "codex-bridge review" [label="no"];
+    "High risk?" -> "security-reviewer subagent" [label="yes"];
+    "High risk?" -> "sanity-reviewer subagent" [label="no"];
 }
 ```
 
