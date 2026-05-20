@@ -7,7 +7,7 @@ Fork of [Superpowers](https://github.com/obra/superpowers) v5.0.5 — customized
 ```
 skills/          — one dir per skill, each with SKILL.md + references/
 hooks/           — SessionStart (diet-activate + semble-session), UserPromptSubmit (diet-track + codex-track-prompt + semble-context), PreToolUse:Bash (semble-rewrite → cmd-rewrite → auto-review, in that order; semble-rewrite owns `ls -R`/`grep -R <IDENT>` first so rtk does not auto-run them), PostToolUse:Write|Edit|MultiEdit (codex-lsp-posttool), PreCompact + SessionEnd (wiki-archive)
-agents/          — subagent prompts (code-reviewer, codex-rescue)
+agents/          — subagent prompts (code-reviewer, codex-rescue, security-reviewer, sanity-reviewer)
 scripts/         — codex-bridge.mjs (native Codex CLI integration), codex-registry.mjs (session state for tracking), sspower_mem/ (Python package for sspower-mem memory CLI; uv/uvx-runnable)
 schemas/         — structured output contracts for Codex (implementation, spec-review, quality-review)
 commands/        — slash command entrypoints (diet, diet-commit, diet-review, codex-track)

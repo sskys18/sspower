@@ -26,12 +26,14 @@ OUT=$(node "$BRIDGE" review --print-args --prompt "x" --cd /tmp 2>/dev/null)
 assert_has "review (exec)" "$OUT"
 
 # `resume` -> runCodexResume — needs --session-id placeholder
-OUT=$(node "$BRIDGE" resume --print-args --prompt "x" --session-id deadbeef-dead-beef-dead-beefdeadbeef --cd /tmp 2>/dev/null || true)
-# resume may emit empty if subcommand unrecognized; tolerate but warn.
-if [ -n "$OUT" ]; then
-  assert_has "resume (exec resume)" "$OUT"
-else
-  echo "SKIP: resume subcommand did not emit args (likely no --print-args support on this path)"
+# Mandatory: if resume silently emits nothing, the --skip-git-repo-check
+# regression for the resume code path is undetected. Treat empty output
+# as a hard failure (not a tolerated skip).
+OUT=$(node "$BRIDGE" resume --print-args --prompt "x" --session-id deadbeef-dead-beef-dead-beefdeadbeef --cd /tmp 2>/dev/null)
+if [ -z "$OUT" ]; then
+  echo "FAIL: resume --print-args emitted no output — regression in resume path"
+  exit 1
 fi
+assert_has "resume (exec resume)" "$OUT"
 
 echo "PASS: test-skip-git-flag"

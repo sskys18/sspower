@@ -6,7 +6,9 @@
 #   - `git merge ...`        (local merge that bypasses push)
 #   - `gh pr create ...`     (open PR)
 #   - `gh pr ready ...`      (mark draft PR ready for review)
-#   - `gh pr merge ...`      (merge PR)
+# `gh pr merge` is intentionally NOT a chokepoint here: by merge time the
+# diff was already reviewed at PR open/ready, and the local branch diff
+# this hook computes is not necessarily the diff being merged.
 # Runs a Codex review of the branch diff vs upstream (or main).
 #
 # Loop guards (in order):

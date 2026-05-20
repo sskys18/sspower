@@ -369,7 +369,9 @@ function lspMcpOverrideArgs() {
 
 /**
  * Run `codex exec` for fresh tasks (implement, review, rescue).
- * Supports --output-schema, --sandbox, -C, --full-auto.
+ * Supports --output-schema, --sandbox, -C, --skip-git-repo-check.
+ * Note: --full-auto was removed upstream; sandbox/approval/network are
+ * controlled via the hardenWrite -c options instead.
  */
 function runCodexExec(prompt, options = {}) {
   const {
@@ -433,8 +435,9 @@ function runCodexExec(prompt, options = {}) {
 /**
  * Run `codex exec resume` for fix loops.
  * Only supports flags that `codex exec resume` accepts:
- * SESSION_ID, --last, --full-auto, -m, -o, --json
+ * SESSION_ID, --last, --skip-git-repo-check, -m, -o, --json
  * Does NOT support --sandbox, -C, --output-schema, --ephemeral.
+ * Note: --full-auto was removed upstream.
  *
  * Since --output-schema is unavailable for resume, we wrap the prompt
  * with an explicit JSON instruction when a schema name is provided.

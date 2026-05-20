@@ -115,7 +115,7 @@ This SIGTERMs the Codex child process recorded in `pid` (NOT the node bridge wra
 
 ## Caveats
 
-- **Codex trust gate**: codex >= 0.131 refuses non-git CWDs unless `--skip-git-repo-check` is passed. The bridge **passes this flag unconditionally** on both `exec` and `exec resume` paths because callers always pass an explicit `--cd cdAbs`; the trust-dir guard is not a useful security boundary for our local invocations. Non-git CWDs (e.g. `/tmp`) work transparently.
+- **Codex trust gate**: codex >= 0.131 refuses non-git CWDs unless `--skip-git-repo-check` is passed. The bridge **passes this flag unconditionally** on both `exec` and `exec resume` paths. The bridge accepts an optional `--cd <path>` which is normalized to `cdAbs` and passed as `-C` when present; when no `--cd` is supplied, codex inherits the spawn cwd. Either way, the trust-dir guard is not a useful security boundary for our local invocations, so non-git CWDs (e.g. `/tmp`) work transparently.
 - **Rollout flush timing**: short-lived sessions (where Codex completes in <2s) may not produce a rollout artifact, which means `steer` cannot resume them. Use a longer-running prompt or rely on `kill` instead.
 - **Two pids per record**: `pid` is Codex's child (signal target for `kill`/`steer`); `bridge_pid` is the node wrapper (use this to correlate "I just dispatched bridge — which session is mine?"). Always match dispatches by `bridge_pid`, not by `pid`.
 - **`kill` and `steer` refuse to signal stale records**: if `markStale` flips the status to `stale`/`done`/`error`/`killed`, the bridge will not SIGTERM the recorded pid (PID may have been reused by another OS process). For stale records, manually verify with `ps -p <pid>` then `kill <pid>` directly if needed.
