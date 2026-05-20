@@ -9,8 +9,16 @@
 # busy registries can't blow context budget.
 #
 # Hard timeout: 1s. Disk IO only — no network, no codex calls.
+#
+# Default: OFF (opt-in). Surfacing on every prompt costs ~300-500 tokens
+# per turn even when no codex work is relevant. Enable per-shell with
+# `export SSPOWER_CODEX_SURFACE=on`, or globally in settings.json env.
+# Set to `silent`/`0` to be explicit; anything other than "on" is off.
 
 set -euo pipefail
+
+# Opt-in gate.
+[ "${SSPOWER_CODEX_SURFACE:-off}" = "on" ] || exit 0
 
 STATE_DIR="$HOME/.claude/state/sspower/codex"
 
