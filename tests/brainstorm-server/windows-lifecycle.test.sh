@@ -254,10 +254,15 @@ else
   SERVER_PID=""
 fi
 
-# ========== Test 5: Bad OWNER_PID causes shutdown (control) ==========
+# ========== Test 5: Bad OWNER_PID disables monitoring (relies on idle timeout) ==========
 
 echo ""
-echo "--- Control: Bad OWNER_PID causes shutdown ---"
+echo "--- Bad OWNER_PID: disable monitoring, rely on idle timeout ---"
+# Design (server.cjs:326-337): if BRAINSTORM_OWNER_PID is dead at startup,
+# the PID resolution was wrong (common on WSL/Tailscale SSH/cross-user).
+# Server logs `owner-pid-invalid`, sets `ownerPid = null`, and STAYS UP
+# — relying on the idle timeout instead. Earlier test expected self-
+# termination; that contradicted the documented robustness design.
 
 mkdir -p "$TEST_DIR/control"
 
@@ -282,23 +287,41 @@ if ! wait_for_server_info "$TEST_DIR/control"; then
 else
   pass "Control server starts with bad OWNER_PID=$BAD_PID"
 
-  echo "  Waiting ~75s for lifecycle check to kill server..."
+  # The server should log owner-pid-invalid IMMEDIATELY at startup
+  # (synchronous validation in server.cjs:329-337). Allow ~3s for the
+  # log line to flush.
+  sleep 3
+  if grep -q '"type":"owner-pid-invalid"' "$TEST_DIR/control/.server.log" 2>/dev/null; then
+    pass "Control server logs 'owner-pid-invalid' at startup"
+  else
+    fail "Control server logs 'owner-pid-invalid' at startup" \
+         "Log tail: $(tail -5 "$TEST_DIR/control/.server.log" 2>/dev/null)"
+  fi
+
+  # After ~75s the lifecycle check has run ~1 time. Server should still
+  # be alive because ownerPid was disabled (set to null), and idle
+  # timeout is 30min not 75s.
+  echo "  Waiting ~75s to verify server stays alive (monitoring disabled)..."
   sleep 75
 
   if kill -0 "$CONTROL_PID" 2>/dev/null; then
-    fail "Control server self-terminates with bad OWNER_PID" \
-         "Server is still alive (expected it to die)"
-    kill "$CONTROL_PID" 2>/dev/null || true
+    pass "Control server stays alive past lifecycle check (bad pid -> monitoring disabled)"
   else
-    pass "Control server self-terminates with bad OWNER_PID"
+    fail "Control server stays alive past lifecycle check (bad pid -> monitoring disabled)" \
+         "Server died unexpectedly. Log tail: $(tail -5 "$TEST_DIR/control/.server.log" 2>/dev/null)"
   fi
 
+  # And the log should NOT contain `owner process exited` — that path
+  # is reserved for a real owner death detected by the periodic check,
+  # not for a startup-invalid pid.
   if grep -q "owner process exited" "$TEST_DIR/control/.server.log" 2>/dev/null; then
-    pass "Control server logs 'owner process exited'"
+    fail "Control server does NOT log 'owner process exited' for startup-invalid pid" \
+         "Found 'owner process exited' which belongs to the periodic-check path"
   else
-    fail "Control server logs 'owner process exited'" \
-         "Log tail: $(tail -5 "$TEST_DIR/control/.server.log" 2>/dev/null)"
+    pass "Control server does NOT log 'owner process exited' for startup-invalid pid"
   fi
+
+  kill "$CONTROL_PID" 2>/dev/null || true
 fi
 
 wait "$CONTROL_PID" 2>/dev/null || true
