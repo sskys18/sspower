@@ -134,6 +134,20 @@ git_in_repo() {
   fi
 }
 
+# Idempotent: append `.claude/sspower/` to <repo>/.git/info/exclude when
+# the target is a git repo and the entry isn't already there. Repo-local
+# (NOT .gitignore — that's a tracked file the user may not want us editing).
+# Fail-open: any error is non-fatal, the hook continues. $1 = repo root.
+ensure_sspower_excluded() {
+  local _repo="$1"
+  [ -d "$_repo/.git" ] || return 0
+  local _exclude="$_repo/.git/info/exclude"
+  mkdir -p "$_repo/.git/info" 2>/dev/null || return 0
+  [ -f "$_exclude" ] || touch "$_exclude" 2>/dev/null || return 0
+  grep -qxF ".claude/sspower/" "$_exclude" 2>/dev/null && return 0
+  printf '\n# sspower: per-repo state — do not track\n.claude/sspower/\n' >> "$_exclude" 2>/dev/null || true
+}
+
 # Per-repo bypass file.
 SKIP_REPO_ROOT=$(git_in_repo rev-parse --show-toplevel 2>/dev/null || true)
 [ -n "$SKIP_REPO_ROOT" ] && [ -f "$SKIP_REPO_ROOT/.sspower-skip-auto-review" ] && exit 0
@@ -384,6 +398,7 @@ case "$VERDICT" in
       ADV_COUNT=$(echo "$RESULT" | jq -r '[.issues // [] | .[] | select(.severity == "advisory")] | length' 2>/dev/null)
       if [ "${ADV_COUNT:-0}" -gt 0 ]; then
         mkdir -p "$REPO_ROOT/.claude/sspower"
+        ensure_sspower_excluded "$REPO_ROOT"
         FOLLOWUPS_FILE="$REPO_ROOT/.claude/sspower/followups.md"
         {
           echo
@@ -408,6 +423,7 @@ SAVED_COUNT=0
 if [ -n "$REPO_ROOT" ]; then
   PATCH_DIR="$REPO_ROOT/.claude/sspower/proposed-fixes"
   mkdir -p "$PATCH_DIR"
+  ensure_sspower_excluded "$REPO_ROOT"
   PATCH_FILE="$PATCH_DIR/round-$((ROUNDS + 1)).patch"
   echo "$RESULT" | jq -r '
     .issues // []

@@ -53,7 +53,7 @@ Skills are loaded on demand by Claude Code's skill router. Each is one directory
 |-------|---------|
 | `using-sspower` | Meta-router. Fires every turn, surfaces relevant skills. |
 | `brainstorming` | Design before code. Reads project wiki for prior decisions. |
-| `writing-plans` | Multi-step plan from spec. HARD-GATE: runs `bridge spec-review`. |
+| `writing-plans` | Multi-step plan from spec. HARD-GATE: runs `bridge plan-review` (findings-shaped review of the plan; distinct from `spec-review` which checks impl-vs-spec compliance). |
 | `executing-plans` | Walk a written plan with checkpoints. |
 | `subagent-driven-development` | Independent-task execution with per-task `bridge spec-review` + `bridge review`. |
 | `dispatching-parallel-agents` | Fan out 2+ independent tasks. |
