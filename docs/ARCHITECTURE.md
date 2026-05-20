@@ -144,7 +144,9 @@ SSPOWER_AUTO_REVIEW=off               # Full bypass (emergencies)
 SSPOWER_REVIEW_TIMEOUT=90             # Per-call codex timeout (s)
 SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s; 10min)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
-SSPOWER_REVIEW_AUTO_APPLY=on          # Auto-apply codex's suggested patches
+# Auto-apply was removed: suggested patches are saved to
+# <repo>/.claude/sspower/proposed-fixes/round-N.patch for manual review.
+# Inspect the patch and `git apply` it yourself if the diff is acceptable.
 SSPOWER_REVIEW_PROFILE                # Override round-aware main-review profile (unset → tier-derived)
 SSPOWER_REVIEW_SKIP_PATTERN           # Branch-name globs that skip review
 SSPOWER_REVIEW_STRICT_PATTERN         # Branch-name globs forced to xhigh
@@ -334,7 +336,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | File | Source | Purpose |
 |------|--------|---------|
 | `followups.md` | `approve-with-followups` verdicts | Advisory issues to address later |
-| `proposed-fixes/round-N.patch` | Codex's suggested patches | Auto-applied via `git apply --3way` when `SSPOWER_REVIEW_AUTO_APPLY=on` (default) |
+| `proposed-fixes/round-N.patch` | Codex's suggested patches | Saved for manual review only (auto-apply was removed). Read the patch and `git apply` it yourself if accepted. |
 
 `.claude/` is typically already gitignored; if not, add `.claude/` (or `.claude/sspower/`) to the consuming-repo `.gitignore`.
 

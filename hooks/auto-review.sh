@@ -28,7 +28,8 @@
 #   SSPOWER_REVIEW_TIMEOUT     (default 90s)
 #   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min)
 #   SSPOWER_REVIEW_MAX_ROUNDS  (default 3)
-#   SSPOWER_REVIEW_AUTO_APPLY  (default on; set off to disable patch apply)
+#   (auto-apply removed — patches are saved to .claude/sspower/proposed-fixes/round-N.patch
+#    for manual review; use `git apply` on accepted patches yourself.)
 #
 # Security + sanity reviewers were removed from auto-review. They run as
 # manual subagents — see `agents/security-reviewer.md` and
@@ -397,14 +398,14 @@ case "$VERDICT" in
     ;;
 esac
 
-# ---------- Apply suggested patches (if any) ----------
-APPLIED=0
-APPLIED_COUNT=0
-# C7: make opt-out observable. Best-effort (log_event is self-shielding).
-if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" = "off" ]; then
-  log_event info hook.auto-review kind=auto_apply_skipped branch="$BRANCH" round="$((ROUNDS + 1))"
-fi
-if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" != "off" ] && [ -n "$REPO_ROOT" ]; then
+# ---------- Save suggested patches (manual review only) ----------
+# Auto-apply was removed: applying patches automatically mixed verified
+# mechanical fixes with unsolicited refactors through one channel, and
+# the user couldn't tell which was which at push time. Patches now SAVE
+# only; the user reads .claude/sspower/proposed-fixes/round-N.patch and
+# decides whether to `git apply` it.
+SAVED_COUNT=0
+if [ -n "$REPO_ROOT" ]; then
   PATCH_DIR="$REPO_ROOT/.claude/sspower/proposed-fixes"
   mkdir -p "$PATCH_DIR"
   PATCH_FILE="$PATCH_DIR/round-$((ROUNDS + 1)).patch"
@@ -416,18 +417,8 @@ if [ "${SSPOWER_REVIEW_AUTO_APPLY:-on}" != "off" ] && [ -n "$REPO_ROOT" ]; then
   ' > "$PATCH_FILE" 2>/dev/null || true
 
   if [ -s "$PATCH_FILE" ]; then
-    if git_in_repo apply --check "$PATCH_FILE" 2>/dev/null; then
-      if git_in_repo apply --3way "$PATCH_FILE" 2>/dev/null; then
-        APPLIED=1
-        APPLIED_COUNT=$(echo "$RESULT" | jq -r '[.issues // [] | .[] | select(.suggested_patch != null and .suggested_patch != "")] | length' 2>/dev/null)
-        # C7: audit trail for auto-applied patch. Best-effort; never abort the hook.
-        { mkdir -p "$REPO_ROOT/.claude/sspower" && \
-          printf '%s branch=%s round=%s patch=%s head=%s\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BRANCH" "$((ROUNDS + 1))" "$PATCH_FILE" \
-            "$(git_in_repo rev-parse HEAD 2>/dev/null)" \
-            >> "$REPO_ROOT/.claude/sspower/applied-patches.log"; } 2>/dev/null || true
-      fi
-    fi
+    SAVED_COUNT=$(echo "$RESULT" | jq -r '[.issues // [] | .[] | select(.suggested_patch != null and .suggested_patch != "")] | length' 2>/dev/null)
+    log_event info hook.auto-review kind=patches_saved branch="$BRANCH" round="$((ROUNDS + 1))" count="$SAVED_COUNT"
   else
     rm -f "$PATCH_FILE"
   fi
@@ -444,8 +435,8 @@ SUMMARY=$(echo "$RESULT" | jq -r '
 ' 2>/dev/null)
 
 NEW_ROUNDS=$((ROUNDS + 1))
-if [ "$APPLIED" = "1" ]; then
-  REASON=$(printf 'Codex auto-review blocked (round %s/%s).\n%s\n\n%s suggested patch(es) AUTO-APPLIED to your working tree. Review the changes, re-stage, commit, and push again.\n\nBypass: SSPOWER_AUTO_REVIEW=off (emergencies). Auto-apply off: SSPOWER_REVIEW_AUTO_APPLY=off.' "$NEW_ROUNDS" "$ROUNDS_CAP" "$SUMMARY" "$APPLIED_COUNT")
+if [ "$SAVED_COUNT" -gt 0 ] 2>/dev/null; then
+  REASON=$(printf 'Codex auto-review blocked (round %s/%s).\n%s\n\n%s suggested patch(es) saved to .claude/sspower/proposed-fixes/round-%s.patch — review and `git apply` manually if accepted.\n\nBypass: SSPOWER_AUTO_REVIEW=off (emergencies).' "$NEW_ROUNDS" "$ROUNDS_CAP" "$SUMMARY" "$SAVED_COUNT" "$NEW_ROUNDS")
 else
   REASON=$(printf 'Codex auto-review blocked (round %s/%s).\n%s\n\nFix the issues, commit, and push again. Bypass: SSPOWER_AUTO_REVIEW=off.' "$NEW_ROUNDS" "$ROUNDS_CAP" "$SUMMARY")
 fi
@@ -453,7 +444,7 @@ fi
 # Persist denied diff hash for next-run stability bypass detection.
 [ -n "$LAST_DENY_FILE" ] && echo "$DIFF_HASH" > "$LAST_DENY_FILE"
 
-log_event warn hook.auto-review kind=deny_verdict verdict="${VERDICT:-unknown}" branch="$BRANCH" round="$NEW_ROUNDS/$ROUNDS_CAP" applied="$APPLIED" effort="${ROUND_EFFORT:-default}"
+log_event warn hook.auto-review kind=deny_verdict verdict="${VERDICT:-unknown}" branch="$BRANCH" round="$NEW_ROUNDS/$ROUNDS_CAP" saved="$SAVED_COUNT" effort="${ROUND_EFFORT:-default}"
 jq -n --arg reason "$REASON" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
