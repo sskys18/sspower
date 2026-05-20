@@ -389,6 +389,10 @@ function runCodexExec(prompt, options = {}) {
 
   const args = ["exec"];
   args.push("--json");
+  // codex >= 0.131 refuses non-git CWDs unless --skip-git-repo-check is set.
+  // Bridge callers pass an explicit --cd (normalized to cdAbs below); the
+  // trust-dir guard is not a useful boundary for our local invocations.
+  args.push("--skip-git-repo-check");
   if (ephemeral) args.push("--ephemeral");
   args.push("--sandbox", sandbox);
   // D-B5: hardened write profile. approval_policy=never (no interactive
@@ -459,6 +463,8 @@ function runCodexResume(prompt, options = {}) {
   }
 
   args.push("--json");
+  // codex >= 0.131: same non-git CWD guard applies to `exec resume`.
+  args.push("--skip-git-repo-check");
   args.push("-o", resultFile);
   if (model) args.push("-m", model);
   if (effort) args.push("-c", `model_reasoning_effort="${effort}"`);
