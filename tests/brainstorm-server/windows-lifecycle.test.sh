@@ -318,13 +318,17 @@ BRAINSTORM_OWNER_PID="" \
 BRAINSTORM_PORT=$((49152 + RANDOM % 16383)) \
   node "$SERVER_JS" > "$TEST_DIR/stop-test/.server.log" 2>&1 &
 STOP_TEST_PID=$!
-echo "$STOP_TEST_PID" > "$TEST_DIR/stop-test/.server.pid"
 
 if ! wait_for_server_info "$TEST_DIR/stop-test"; then
   fail "Stop-test server starts" "Server did not start"
   kill "$STOP_TEST_PID" 2>/dev/null || true
   STOP_TEST_PID=""
 else
+  # stop-server.sh reads ${SESSION_DIR}/state/server.pid; we spawn the
+  # server directly (no start-server.sh wrapper) so write the PID file
+  # at the canonical location ourselves.
+  mkdir -p "$TEST_DIR/stop-test/state"
+  echo "$STOP_TEST_PID" > "$TEST_DIR/stop-test/state/server.pid"
   bash "$STOP_SCRIPT" "$TEST_DIR/stop-test" >/dev/null 2>&1 || true
   sleep 1
 
