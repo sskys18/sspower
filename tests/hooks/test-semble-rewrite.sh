@@ -102,6 +102,25 @@ for c in 'ls -R "src/my dir"' "ls -R 'src/my dir'" 'grep -R ident "src/my dir"';
   [[ -z "$O" ]] && ok "embedded-space quoted -> noop: $c" || bad "embedded-space: $c" "$O"
 done
 
+# Unquoted glob/brace/bracket -> user wanted shell expansion; hook cannot
+# expand at PreToolUse without arbitrary FS access -> noop passthrough.
+# Quoted same -> literal path (kept; %q makes shq emit-safe).
+for c in 'ls -R *.md' 'ls -R src/[id]' 'ls -R foo?' 'ls -R {a,b}' \
+         'grep -R ident *.md' 'grep -R ident src/[id]'; do
+  O="$(j "$c" | "$H")"
+  [[ -z "$O" ]] && ok "unquoted glob -> noop: $c" || bad "unquoted glob: $c" "$O"
+done
+
+# Quoted glob characters = intended-literal; emit literal path via %q
+# (backslash-escaped, shell-equivalent to single-quoted form).
+O="$(j "ls -R 'src/[id]'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src/\\[id\\]")' >/dev/null \
+  && ok "ls -R 'src/[id]' -> ask, literal bracket (escaped)" || bad "ls quoted bracket" "$O"
+
+O="$(j "grep -R ident 'src/[id]'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src/\\[id\\]")' >/dev/null \
+  && ok "grep -R ident 'src/[id]' -> ask, literal bracket (escaped)" || bad "grep quoted bracket" "$O"
+
 # ── Reorder chain invariants (semble-dependent) ──────────────────────
 # Inv-1: semble-rewrite (now FIRST) emits ask + semble cmd on bare ls -R.
 O="$(j 'ls -R src' | "$H")"

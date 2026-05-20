@@ -19,10 +19,10 @@ CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')"
 [[ -z "$CMD" ]] && exit 0
 
 # Bail ONLY on command-structure metacharacters (compound/redirect/subshell).
-# Glob/brace/bracket/tilde in a single path token are valid filenames - they
-# are made literal-safe by `set -f` (no expansion during tokenize) + `shq`
-# (quoted on emit), so they are NOT pre-rejected (that contradicted shq and
-# dropped legit paths like `src/[id]`).
+# Glob/brace/bracket in a single path token: kept ONLY when originally quoted
+# (caller wanted literal `src/[id]`). Unquoted globs imply user wanted shell
+# expansion and are bailed on at the call site after dequote_to + has_glob_meta -
+# we cannot expand at PreToolUse without arbitrary FS access.
 case "$CMD" in
   *'|'*|*'&'*|*';'*|*'>'*|*'<'*|*'$('*|*'`'*|*$'\n'*) exit 0 ;;
 esac
@@ -31,23 +31,32 @@ esac
 # is literal-safe regardless of path characters.
 shq() { printf '%q' "$1"; }
 
-# Strip matched outer quote pair (single OR double) from a single token.
-# Tokenization (`set -f; TOK=( $CMD )`) splits on whitespace, so a token like
-# `"skills"` arrives with literal quote chars - %q would then escape them
-# into `\"skills\"`, producing a path named `"skills"` (ENOENT). Embedded-
-# space quoted paths (`"src/my dir"`) tokenize as >1 token and are rejected
-# earlier as `bad=1` (>1 path arg), so this helper only handles the safe
-# single-token case.
-dequote() {
-  local s="$1"
-  if (( ${#s} >= 2 )); then
-    local f="${s:0:1}" l="${s: -1}"
-    if [[ ( "$f" == '"' && "$l" == '"' ) || ( "$f" == "'" && "$l" == "'" ) ]]; then
-      s="${s:1:${#s}-2}"
+# Strip matched outer quote pair (single OR double) from a single token,
+# writing the result to varname $1 and setting global DEQUOTED=0|1.
+# Tokenization (`set -f; TOK=( $CMD )`) splits on whitespace, so `"skills"`
+# arrives with literal quote chars - %q would then escape them into
+# `\"skills\"` (ENOENT). Embedded-space quoted paths tokenize as >1 token
+# and are rejected earlier as bad=1, so this helper handles only the safe
+# single-token case. The DEQUOTED flag lets callers distinguish user-
+# intended-literal (was quoted -> keep glob chars literal) from user-
+# intended-shell-expansion (was unquoted -> bail rather than emit literal).
+dequote_to() {
+  local _v="$1" _s="$2"
+  DEQUOTED=0
+  if (( ${#_s} >= 2 )); then
+    local _f="${_s:0:1}" _l="${_s: -1}"
+    if [[ ( "$_f" == '"' && "$_l" == '"' ) || ( "$_f" == "'" && "$_l" == "'" ) ]]; then
+      _s="${_s:1:${#_s}-2}"
+      DEQUOTED=1
     fi
   fi
-  printf '%s' "$s"
+  printf -v "$_v" '%s' "$_s"
 }
+
+# True if $1 contains shell glob/brace metacharacters. Unquoted globs in
+# the original command imply user wanted shell expansion; we cannot expand
+# at PreToolUse without arbitrary FS access -> caller bails (passthrough).
+has_glob_meta() { [[ "$1" == *[\*\?\[\{]* ]]; }
 
 # SINGLE emit path: EXPLICIT permissionDecision:"ask" for BOTH ls and grep.
 # Rationale (DP-1/DP-2): the rewrite changes semantics (gitignore-aware tree !=
@@ -90,8 +99,10 @@ if [[ "${TOK[0]}" == "ls" ]]; then
     fi
   done
   if (( bad == 0 && has_R == 1 )); then
-    patharg="$(dequote "${patharg:-.}")"
-    emit_ask "semble_rs tree $(shq "${patharg:-.}")" \
+    dequote_to patharg "${patharg:-.}"
+    # Unquoted glob -> user wanted shell expansion -> passthrough.
+    if (( DEQUOTED == 0 )) && has_glob_meta "$patharg"; then exit 0; fi
+    emit_ask "semble_rs tree $(shq "$patharg")" \
       "semble-rewrite: ls -R -> semble_rs tree (gitignore-aware; drops ls modifier flags - confirm)"
   fi
 fi
@@ -116,8 +127,11 @@ if [[ "${TOK[0]}" == "grep" ]]; then
     # means a non-R/r flag slipped past the leading-flag loop -> disqualify.
     # Also no trailing tokens beyond a single path arg.
     if (( i == ${#TOK[@]} )) && [[ "$patharg" != -* ]]; then
-      pat="$(dequote "$pat")"
-      patharg="$(dequote "$patharg")"
+      dequote_to pat "$pat"
+      dequote_to patharg "$patharg"; patharg_dq=$DEQUOTED
+      # pat must match bare-identifier regex below (no glob chars allowed),
+      # so only patharg needs the unquoted-glob guard.
+      if (( patharg_dq == 0 )) && has_glob_meta "$patharg"; then exit 0; fi
       if [[ "$pat" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
         emit_ask "semble_rs search --compact $(shq "$pat") $(shq "$patharg")" \
           "semble-rewrite: grep -R -> semble_rs search (semantic!=literal - confirm the substitution)"
