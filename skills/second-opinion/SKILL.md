@@ -56,15 +56,20 @@ SSPOWER_PLUGIN_ROOT=$(dirname "$(dirname "$(find ~/.claude/plugins -name codex-b
 ```
 
 1. **Check diff size:** `git diff --shortstat`
-2. **Pick the right path** based on flow above:
-   - **Before-merge / stuck-after-2-attempts:** route to the
-     `sanity-reviewer` subagent — independent second opinion,
-     real-blocker-only (per CLAUDE.md, since security + sanity
-     reviewers were removed from auto-review.sh).
-   - **Stuck (rescue):** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement --write --cd . --prompt @/tmp/rescue-prompt.md`
+2. **Pick the right path** — read-only opinion vs write-capable rescue
+   are deliberately separate; the user can request either explicitly:
+   - **Want fresh eyes (read-only second opinion):** route to the
+     `sanity-reviewer` subagent — independent correctness pass,
+     real-blocker-only, no writes. Use for *before-merge* and the
+     "I'm stuck after 2+ attempts, am I missing something obvious?"
+     case (per CLAUDE.md line 22).
+   - **Want unblocked (write-capable rescue):** explicit user opt-in
+     only. `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement --write --cd . --prompt @/tmp/rescue-prompt.md`
+     This MODIFIES files; do not invoke just because the user is
+     stuck — ask first.
    - **Standard review:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review --cd . --prompt @/tmp/review-prompt.md`
-   - **Adversarial review (security in scope):** route to
-     `security-reviewer` subagent (vuln / auth / crypto pass).
+   - **Security in scope:** route to the `security-reviewer` subagent
+     (vuln / auth / crypto pass).
 3. **Present Codex / subagent output verbatim** — do NOT paraphrase or filter
 4. **If issues found:** ask user which to address, fix, re-run (max 2 iterations)
 5. **If approved:** proceed

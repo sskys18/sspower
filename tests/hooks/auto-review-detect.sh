@@ -540,6 +540,28 @@ HOOKIN
   assert_eq "depth>=1: bridge skipped" "0" \
     "$(test -s "$ARGS_FILE" && echo 1 || echo 0)"
 
+  # ---------- Empty-main timeout-allow contract (post-bd0f74e) ----------
+  # After security/sanity reviewers were removed, MAIN is the only voice.
+  # If MAIN returns empty (timeout/spawn failure), auto-review.sh:343-346
+  # fails OPEN with kind=codex_timeout_allow. Regression-test that path
+  # by stubbing the bridge to print nothing.
+  STUB_EMPTY=$(mktemp -d -t sspower-stubempty-XXXXXX)
+  mkdir -p "$STUB_EMPTY/scripts"
+  cat > "$STUB_EMPTY/scripts/codex-bridge.mjs" <<'STUBE'
+// Simulate a bridge that produces NO stdout (timeout / spawn failure).
+// auto-review.sh treats empty MAIN_RAW as fail-open.
+process.exit(0);
+STUBE
+  out=$(cd "$REPO_OUT" && SSPOWER_TEST_ARGS_FILE="$ARGS_FILE" \
+    CLAUDE_PLUGIN_ROOT="$STUB_EMPTY" \
+    bash "$REVIEW" <<HOOKIN
+{"tool_input":{"command":"git push"}}
+HOOKIN
+  ); rc=$?
+  assert_eq "empty-main: fail-open exit 0" "0" "$rc"
+  assert_eq "empty-main: no deny payload" "0" "$(printf '%s' "$out" | grep -c '"deny"' || true)"
+  rm -rf "$STUB_EMPTY"
+
   rm -rf "$STUB_ROOT" "$REPO_OUT" "$ARGS_FILE"
   unset SSPOWER_REVIEW_CACHE_TTL
 else

@@ -127,7 +127,8 @@ Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and
 |  --> Claude reviewer subagent    |
 |                                  |
 |  second-opinion  [HARD GATE]     |
-|  --> independent Codex review    |
+|  --> sanity / security subagents |
+|      OR Codex review / rescue    |
 |                                  |
 |  finishing-a-development-branch  |
 |  --> merge / PR / keep / discard |
@@ -233,7 +234,7 @@ spec-review --> compliant
 | `dispatching-parallel-agents` | Collaboration | Concurrent independent work |
 | `requesting-code-review` | Review | Dispatch reviewer subagent |
 | `receiving-code-review` | Review | Handle feedback with technical rigor |
-| `second-opinion` | Review | Independent Codex review (hard gate) |
+| `second-opinion` | Review | Routes to `sanity-reviewer`/`security-reviewer` subagents or Codex `review`/`implement --write` depending on scope (hard gate) |
 | `verification-before-completion` | QA | Evidence before claims |
 | `using-git-worktrees` | Workflow | Isolated workspace setup |
 | `finishing-a-development-branch` | Workflow | Merge/PR/keep/discard + cleanup |
