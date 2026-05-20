@@ -9,7 +9,7 @@ confirmed). semble-rewrite hardened (quote-type-aware bail; always-sq
 emit; bash 3.2 shq fix). No active build.
 
 ## Status
-### Completed (origin/main @ `da54a97`)
+### Completed (origin/main @ `da54a97`; local main one doc-commit ahead until this handoff is pushed)
 - **P2–P4 / Track C**: codex-lsp vendored; bridge MCP gate + repair
   loop; `lsp-check` + Stop gate; guard pretool + AGENTS.md.
 - **P5 / Phase B7**: 4 advisory fail-open Claude-side hooks + tests +
@@ -27,7 +27,9 @@ emit; bash 3.2 shq fix). No active build.
   (`9bc8121..da54a97`). 17 commits.
 
 ### In Progress
-- None. Tree clean. `main` == `origin/main` == `da54a97`.
+- None. Tree clean. Local `main` ahead by exactly this handoff commit
+  until pushed; the 17-commit feature backlog is on `origin/main` @
+  `da54a97`.
 
 ## Resume Here
 1. Optional: re-draft Inv-A shared-fixture drift-guard test (run
@@ -74,11 +76,14 @@ emit; bash 3.2 shq fix). No active build.
 - **bash 3.2 `printf %q` does NOT escape a leading `~`** — `~/src` is
   emitted as `~/src` (not `\~/src`), so always-single-quote wrap is
   the correct fix when user intent is literal.
-- **Auto-review iteration cap** = 2 rounds per branch by default. Each
-  push attempt increments `<repo>/.git/sspower-review-rounds-<branch>`;
-  at cap, push is denied with `deny_rounds_cap`. Remedy: `rm` the
-  counter file (stale-counter remedy per CLAUDE.md), NOT `AUTO_REVIEW=off`.
-  Counter persists across push attempts within the same branch.
+- **Auto-review iteration cap** = 3 rounds per branch (CLAUDE.md);
+  tunable via `SSPOWER_REVIEW_MAX_ROUNDS`. Each push attempt increments
+  `<repo>/.git/sspower-review-rounds-<branch>`; at cap, push is denied
+  with `deny_rounds_cap`. Observed this session: deny fired at 2/2 with
+  default config (env may have lowered the cap). Remedy: `rm` the
+  counter file (stale-counter remedy per CLAUDE.md), NOT
+  `AUTO_REVIEW=off`. Counter persists across push attempts within the
+  same branch.
 - `git checkout main` showing tracked files "modified" = behind-ref
   view, NOT data loss.
 - chained-shell-check scans command TEXT: `&&`/`|`/`;` trips it — run
@@ -96,7 +101,8 @@ emit; bash 3.2 shq fix). No active build.
   label) BEFORE any revert.
 
 ## Context
-- **Branch**: `main` @ `da54a97`, tree clean, == `origin/main`.
+- **Branch**: local `main` one doc-commit ahead of `origin/main` @
+  `da54a97`; pushing this handoff brings them in sync. Tree clean.
   `main` only; no worktrees.
 - **Tests**: all 8 hook suites green
   (codex-guard-pretool, codex-lsp-posttool, codex-stop-gate, diet-off,
