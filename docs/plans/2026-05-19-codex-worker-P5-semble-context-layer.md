@@ -56,6 +56,11 @@ and fails OPEN. semble_rs is pre-1.0 (R1): `command -v … || exit 0` everywhere
   command (cmd-rewrite emitted `updatedInput`), Claude re-invokes PreToolUse with
   the rewritten command; semble-rewrite re-reads `.tool_input.command` from stdin
   each call and no-ops when its patterns don't match — no coordination state needed.
+  > **SUPERSEDED 2026-05-19** — see `docs/specs/2026-05-19-semble-rewrite-ownership-spec.md`
+  > and `docs/plans/2026-05-19-semble-rewrite-ownership-plan.md`. Final order is
+  > **semble-rewrite.sh → cmd-rewrite.sh → auto-review.sh** (semble-rewrite owns
+  > `ls -R` / `grep -R <IDENT>` so rtk does not auto-run them). Live-confirmed
+  > by fresh-process smoke 2026-05-20.
 - **DP-4 PostToolUse codex-lsp is DE-FANGED to advisory.** codex-lsp
   `hook post-tool-use` natively emits `{"decision":"block",...}` (verified in
   `tools/codex-lsp/dist/codex-hook.js`). P5 is advisory-first (D-B6). The wrapper

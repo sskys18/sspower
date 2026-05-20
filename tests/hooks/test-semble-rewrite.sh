@@ -36,29 +36,29 @@ fi
 
 # ls -> EXPLICIT permissionDecision:"ask" (single emit path; no auto-allow).
 O="$(j 'ls -R src' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''src'\''")' >/dev/null \
   && ok "ls -R -> ask" || bad "ls -R ask" "$O"
 
 O="$(j 'ls -l -R src' | "$H")"   # separated flags must still classify
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''src'\''")' >/dev/null \
   && ok "ls -l -R src (separated) -> ask" || bad "ls separated" "$O"
 
 O="$(j 'ls -laR' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree .")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''.'\''")' >/dev/null \
   && ok "ls -laR -> ask, tree ." || bad "ls -laR" "$O"
 
 # grep -> EXPLICIT permissionDecision:"ask" (DP-2 - not unset fall-through).
 O="$(j 'grep -R runLspGate src' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact runLspGate src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''runLspGate'\'' '\''src'\''")' >/dev/null \
   && ok "grep ident -> explicit ask" || bad "grep ask" "$O"
 
 O="$(j 'grep -r ident' | "$H")"  # -r, default path .
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident .")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''ident'\'' '\''.'\''")' >/dev/null \
   && ok "grep -r ident -> ask, path defaults ." || bad "grep -r default path" "$O"
 
 # DP-2 locked: separated recursive flags `grep -R -r x .` classify correctly.
 O="$(j 'grep -R -r x .' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact x .")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''x'\'' '\''.'\''")' >/dev/null \
   && ok "grep -R -r x . (separated recursive flags) -> ask" || bad "grep separated -R -r" "$O"
 
 # ls ask assertions covered above.
@@ -80,19 +80,19 @@ O="$(SSPOWER_SEMBLE_REWRITE=0 sh -c "printf '{\"tool_input\":{\"command\":\"ls -
 # the quotes into literal '"skills"' (ENOENT). Embedded-space quoted paths
 # tokenize as >1 path arg and already fall through (noop) - covered below.
 O="$(j 'ls -R "skills"' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree skills")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''skills'\''")' >/dev/null \
   && ok "ls -R \"skills\" -> ask, tree skills (dequoted)" || bad "ls -R dq path" "$O"
 
 O="$(j "ls -R 'skills'" | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree skills")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''skills'\''")' >/dev/null \
   && ok "ls -R 'skills' -> ask, tree skills (dequoted)" || bad "ls -R sq path" "$O"
 
 O="$(j 'grep -R ident "src"' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''ident'\'' '\''src'\''")' >/dev/null \
   && ok "grep -R ident \"src\" -> ask, search src (dequoted)" || bad "grep dq path" "$O"
 
 O="$(j "grep -R ident 'src'" | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''ident'\'' '\''src'\''")' >/dev/null \
   && ok "grep -R ident 'src' -> ask, search src (dequoted)" || bad "grep sq path" "$O"
 
 # Embedded-space quoted path: tokenizer splits inside quotes -> >1 path arg
@@ -111,20 +111,44 @@ for c in 'ls -R *.md' 'ls -R src/[id]' 'ls -R foo?' 'ls -R {a,b}' \
   [[ -z "$O" ]] && ok "unquoted glob -> noop: $c" || bad "unquoted glob: $c" "$O"
 done
 
-# Quoted glob characters = intended-literal; emit literal path via %q
-# (backslash-escaped, shell-equivalent to single-quoted form).
+# Variable expansion / tilde / command substitution -> bail (cannot
+# expand at PreToolUse). Tilde only at start of token expands.
+for c in 'ls -R $HOME' 'ls -R "$DIR"' 'ls -R ~/src' 'ls -R ~user/src' \
+         'ls -R `pwd`' 'ls -R "`pwd`"' \
+         'grep -R ident $HOME' 'grep -R ident "$DIR"' 'grep -R ident ~/src'; do
+  O="$(j "$c" | "$H")"
+  [[ -z "$O" ]] && ok "shell-expand -> noop: $c" || bad "shell-expand: $c" "$O"
+done
+
+# Single-quoted = NO expansion in bash -> literal path is correct.
+O="$(j "ls -R '\$DIR'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''$DIR'\''")' >/dev/null \
+  && ok "ls -R '\$DIR' -> ask, literal \$DIR (single-quoted)" || bad "ls sq-var" "$O"
+
+O="$(j "ls -R '~/src'" | "$H")"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''~/src'\''")' >/dev/null \
+  && ok "ls -R '~/src' -> ask, literal ~/src (single-quoted)" || bad "ls sq-tilde" "$O"
+
+# Quoted glob characters = intended-literal; shq always single-quote-wraps.
 O="$(j "ls -R 'src/[id]'" | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src/\\[id\\]")' >/dev/null \
-  && ok "ls -R 'src/[id]' -> ask, literal bracket (escaped)" || bad "ls quoted bracket" "$O"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''src/[id]'\''")' >/dev/null \
+  && ok "ls -R 'src/[id]' -> ask, literal bracket (sq-wrapped)" || bad "ls quoted bracket" "$O"
 
 O="$(j "grep -R ident 'src/[id]'" | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact ident src/\\[id\\]")' >/dev/null \
-  && ok "grep -R ident 'src/[id]' -> ask, literal bracket (escaped)" || bad "grep quoted bracket" "$O"
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs search --compact '\''ident'\'' '\''src/[id]'\''")' >/dev/null \
+  && ok "grep -R ident 'src/[id]' -> ask, literal bracket (sq-wrapped)" || bad "grep quoted bracket" "$O"
+
+# Path containing embedded single-quote -> shq escapes via '\''. Use --arg
+# to dodge the quote-thicket; build the expected string in shell first.
+EMBED_EXP="semble_rs tree 'it'\\''s'"
+O="$(j "ls -R \"it's\"" | "$H")"
+echo "$O" | jq -e --arg e "$EMBED_EXP" '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command==$e)' >/dev/null \
+  && ok "ls -R \"it's\" -> ask, sq-escape embedded quote" || bad "ls embedded sq" "$O"
 
 # ── Reorder chain invariants (semble-dependent) ──────────────────────
 # Inv-1: semble-rewrite (now FIRST) emits ask + semble cmd on bare ls -R.
 O="$(j 'ls -R src' | "$H")"
-echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree src")' >/dev/null \
+echo "$O" | jq -e '(.hookSpecificOutput.permissionDecision=="ask") and (.hookSpecificOutput.updatedInput.command=="semble_rs tree '\''src'\''")' >/dev/null \
   && ok "chain Inv-1: semble first -> ask+tree" || bad "Inv-1" "$O"
 
 # Inv-2: semble's emitted command passes through cmd-rewrite untouched

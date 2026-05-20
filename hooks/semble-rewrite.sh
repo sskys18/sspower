@@ -27,36 +27,56 @@ case "$CMD" in
   *'|'*|*'&'*|*';'*|*'>'*|*'<'*|*'$('*|*'`'*|*$'\n'*) exit 0 ;;
 esac
 
-# Shell-quote every value interpolated into the emitted command so the rewrite
-# is literal-safe regardless of path characters.
-shq() { printf '%q' "$1"; }
+# Single-quote-wrap every value interpolated into the emitted command. Bash
+# single-quoted strings disable ALL expansion (glob, brace, var, command,
+# tilde) - safer than %q, which on bash 3.2 does not escape a leading ~.
+# Embedded single-quotes are escaped via the standard '\'' shell idiom.
+shq() {
+  # bash 3.2 mis-parses inline `'\\''` inside ${//}; build the 4-char
+  # replacement ( ' \ ' ' ) via printf and substitute, then sq-wrap.
+  local _r; printf -v _r '%s%s%s%s' "'" '\' "'" "'"
+  printf "'%s'" "${1//\'/$_r}"
+}
 
 # Strip matched outer quote pair (single OR double) from a single token,
-# writing the result to varname $1 and setting global DEQUOTED=0|1.
-# Tokenization (`set -f; TOK=( $CMD )`) splits on whitespace, so `"skills"`
-# arrives with literal quote chars - %q would then escape them into
-# `\"skills\"` (ENOENT). Embedded-space quoted paths tokenize as >1 token
-# and are rejected earlier as bad=1, so this helper handles only the safe
-# single-token case. The DEQUOTED flag lets callers distinguish user-
-# intended-literal (was quoted -> keep glob chars literal) from user-
-# intended-shell-expansion (was unquoted -> bail rather than emit literal).
+# writing the result to varname $1 and setting global QTYPE to '' (none),
+# "'" (single), or '"' (double). Tokenization (`set -f; TOK=( $CMD )`)
+# splits on whitespace, so `"skills"` arrives with literal quote chars -
+# %q would then escape them into `\"skills\"` (ENOENT). The QTYPE flag
+# lets callers distinguish user-intended-literal from user-intended-
+# expansion at the right granularity: single-quote disables all expansion;
+# double-quote disables only glob/brace/tilde; unquoted enables everything.
+# Embedded-space quoted paths tokenize as >1 token and are rejected earlier
+# as bad=1, so this helper handles only the safe single-token case.
 dequote_to() {
   local _v="$1" _s="$2"
-  DEQUOTED=0
+  QTYPE=''
   if (( ${#_s} >= 2 )); then
     local _f="${_s:0:1}" _l="${_s: -1}"
-    if [[ ( "$_f" == '"' && "$_l" == '"' ) || ( "$_f" == "'" && "$_l" == "'" ) ]]; then
-      _s="${_s:1:${#_s}-2}"
-      DEQUOTED=1
+    if [[ "$_f" == '"' && "$_l" == '"' ]]; then
+      _s="${_s:1:${#_s}-2}"; QTYPE='"'
+    elif [[ "$_f" == "'" && "$_l" == "'" ]]; then
+      _s="${_s:1:${#_s}-2}"; QTYPE="'"
     fi
   fi
   printf -v "$_v" '%s' "$_s"
 }
 
-# True if $1 contains shell glob/brace metacharacters. Unquoted globs in
-# the original command imply user wanted shell expansion; we cannot expand
-# at PreToolUse without arbitrary FS access -> caller bails (passthrough).
-has_glob_meta() { [[ "$1" == *[\*\?\[\{]* ]]; }
+# True if the shell would expand any character in $2 given quote type $1.
+# qtype="'": nothing expands (always safe).
+# qtype='"': only $ / backtick / backslash expand.
+# qtype='':  everything expands - glob (*?[{), brace, var ($), command (`),
+#            escape (\); tilde only at the start of the token.
+unsafe_meta() {
+  local _q="$1" _s="$2"
+  case "$_q" in
+    "'") return 1 ;;
+    '"') case "$_s" in *\$*|*\`*|*\\*) return 0 ;; esac; return 1 ;;
+    '')  case "$_s" in *\**|*\?*|*\[*|*\{*|*\$*|*\`*|*\\*) return 0 ;; esac
+         [[ "${_s:0:1}" == '~' ]] && return 0
+         return 1 ;;
+  esac
+}
 
 # SINGLE emit path: EXPLICIT permissionDecision:"ask" for BOTH ls and grep.
 # Rationale (DP-1/DP-2): the rewrite changes semantics (gitignore-aware tree !=
@@ -100,8 +120,8 @@ if [[ "${TOK[0]}" == "ls" ]]; then
   done
   if (( bad == 0 && has_R == 1 )); then
     dequote_to patharg "${patharg:-.}"
-    # Unquoted glob -> user wanted shell expansion -> passthrough.
-    if (( DEQUOTED == 0 )) && has_glob_meta "$patharg"; then exit 0; fi
+    # User wanted shell expansion - we cannot expand at PreToolUse -> passthrough.
+    if unsafe_meta "$QTYPE" "$patharg"; then exit 0; fi
     emit_ask "semble_rs tree $(shq "$patharg")" \
       "semble-rewrite: ls -R -> semble_rs tree (gitignore-aware; drops ls modifier flags - confirm)"
   fi
@@ -127,11 +147,13 @@ if [[ "${TOK[0]}" == "grep" ]]; then
     # means a non-R/r flag slipped past the leading-flag loop -> disqualify.
     # Also no trailing tokens beyond a single path arg.
     if (( i == ${#TOK[@]} )) && [[ "$patharg" != -* ]]; then
-      dequote_to pat "$pat"
-      dequote_to patharg "$patharg"; patharg_dq=$DEQUOTED
-      # pat must match bare-identifier regex below (no glob chars allowed),
-      # so only patharg needs the unquoted-glob guard.
-      if (( patharg_dq == 0 )) && has_glob_meta "$patharg"; then exit 0; fi
+      dequote_to pat "$pat";       pat_q=$QTYPE
+      dequote_to patharg "$patharg"; patharg_q=$QTYPE
+      # bare-ident regex below rejects most meta in pat, but $X / $(..) /
+      # backticks would slip through after a single-quote strip - guard
+      # both fields uniformly for clarity.
+      if unsafe_meta "$pat_q" "$pat"; then exit 0; fi
+      if unsafe_meta "$patharg_q" "$patharg"; then exit 0; fi
       if [[ "$pat" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
         emit_ask "semble_rs search --compact $(shq "$pat") $(shq "$patharg")" \
           "semble-rewrite: grep -R -> semble_rs search (semantic!=literal - confirm the substitution)"
