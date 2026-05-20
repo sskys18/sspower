@@ -287,8 +287,9 @@ missing tests. Also flag docs drift: code changes that contradict CLAUDE.md,
 README, or docs/ in the repo root (${REPO_ROOT:-cwd}) without updating those
 files. Read the repo to verify; do not rely on the diff alone.
 
-Do NOT focus on security here — a separate security pass runs in parallel.
-Avoid duplicating security findings.
+Do NOT focus on security here. This MAIN reviewer covers correctness,
+regressions, missing tests, and docs drift. Run agents/security-reviewer.md
+separately when security is in scope.
 
 For each issue set severity:
   - "blocking" only if correctness or data-loss.

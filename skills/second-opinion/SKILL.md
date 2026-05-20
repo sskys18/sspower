@@ -56,11 +56,16 @@ SSPOWER_PLUGIN_ROOT=$(dirname "$(dirname "$(find ~/.claude/plugins -name codex-b
 ```
 
 1. **Check diff size:** `git diff --shortstat`
-2. **Pick the right command** based on flow above:
-   - **Stuck:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement --write --cd . --prompt @/tmp/rescue-prompt.md`
+2. **Pick the right path** based on flow above:
+   - **Before-merge / stuck-after-2-attempts:** route to the
+     `sanity-reviewer` subagent — independent second opinion,
+     real-blocker-only (per CLAUDE.md, since security + sanity
+     reviewers were removed from auto-review.sh).
+   - **Stuck (rescue):** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement --write --cd . --prompt @/tmp/rescue-prompt.md`
    - **Standard review:** `node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" review --cd . --prompt @/tmp/review-prompt.md`
-   - **Adversarial review:** Same as above but with adversarial prompt (challenge security, edge cases, failure modes)
-3. **Present Codex output verbatim** — do NOT paraphrase or filter
+   - **Adversarial review (security in scope):** route to
+     `security-reviewer` subagent (vuln / auth / crypto pass).
+3. **Present Codex / subagent output verbatim** — do NOT paraphrase or filter
 4. **If issues found:** ask user which to address, fix, re-run (max 2 iterations)
 5. **If approved:** proceed
 
