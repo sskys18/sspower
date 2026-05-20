@@ -49,7 +49,6 @@ const VALID_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhig
 // it inherits root config.toml (root service_tier=flex is load-bearing).
 const COMMAND_PROFILE = {
   complete: "quick",
-  enrich: "quick",
   implement: "normal",
   review: "normal",
   "spec-review": "normal",
@@ -92,7 +91,7 @@ function rotateLogOnce() {
   } catch { /* best effort */ }
 }
 
-function logEvent(kind /* "error" | "warn" | "info" */, source /* e.g. "bridge.enrich" */, fields = {}) {
+function logEvent(kind /* "error" | "warn" | "info" */, source /* e.g. "bridge.review" */, fields = {}) {
   rotateLogOnce();
   const ts = new Date().toISOString();
   const parts = Object.entries(fields)
@@ -1990,7 +1989,6 @@ async function main() {
       "  codex-bridge.mjs review     --prompt <text|@file> [--profile <p>] [--model <m>] [--cd <dir>]",
       "  codex-bridge.mjs rescue     [DISABLED — spec D-A3; use plan-review/review/implement]",
       "  codex-bridge.mjs resume     --prompt <text|@file> [--session-id <id>] [--model <m>] [--no-schema]",
-      "  codex-bridge.mjs enrich     --prompt <text|@file> [--model <m>] [--effort <e>] [--cd <dir>]",
       "  codex-bridge.mjs complete   --json --prompt <text|@file> [--system <text>] [--model <m>] [--effort <e>] [--timeout <ms>]",
       "  codex-bridge.mjs ps",
       "  codex-bridge.mjs status     <session_id>",
