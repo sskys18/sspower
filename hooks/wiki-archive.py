@@ -186,6 +186,10 @@ def sspower_mem_call(*args):
         return 30, "[sspower-mem] uvx not found in PATH"
     env = os.environ.copy()
     env["UV_OFFLINE"] = "1"
+    # extract.py's default bridge-path walk is relative to the package install
+    # dir — wrong under a uvx-isolated cache install. Pin it to
+    # <plugin>/scripts/codex-bridge.mjs (src is .../scripts/sspower_mem).
+    env.setdefault("SSPOWER_BRIDGE_PATH", str(Path(src).parent / "codex-bridge.mjs"))
     try:
         cp = subprocess.run(
             ["uvx", "--offline", "--from", src, "sspower-mem", *args],
