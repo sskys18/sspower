@@ -1,6 +1,6 @@
 # sspower
 
-A complete software development workflow for Claude Code. Fork of [Superpowers](https://github.com/obra/superpowers) v5.0.5, customized with native Codex integration and macOS-first design.
+A complete software development workflow for Claude Code — native Codex integration and macOS-first design. A standalone project, inspired by [Superpowers](https://github.com/obra/superpowers) v5.0.5 and several other open-source tools (see [Inspired by](#inspired-by)).
 
 **22 composable skills** that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.
 
@@ -340,10 +340,21 @@ sspower/
 
 ---
 
-## Credits
+## Inspired by
 
-Original [Superpowers](https://github.com/obra/superpowers) by [Jesse Vincent](https://blog.fsck.com) and [Prime Radiant](https://primeradiant.com).
+sspower is a standalone project, but it stands on ideas and tools from the
+open-source community. Thanks to:
+
+| Project | What sspower drew from it |
+|---------|---------------------------|
+| [Superpowers](https://github.com/obra/superpowers) — [Jesse Vincent](https://blog.fsck.com) & [Prime Radiant](https://primeradiant.com) | The skill-routing architecture and the core development-workflow skills. sspower began as a fork of v5.0.5 and has since diverged. Licensed MIT (see LICENSE). |
+| [OpenAI Codex CLI](https://github.com/openai/codex) | The independent review / implementation engine behind `second-opinion`, auto-review, and the SDD Codex path. |
+| [rtk](https://github.com/rtk-ai/rtk) | The default command-rewriter for token-saving shell substitutions (`hooks/cmd-rewrite.sh`). |
+| [mem0](https://github.com/mem0ai/mem0) | The memory store powering `sspower-mem` — raw + extracted records, embeddings, vector search. |
+| `semble_rs` | gitignore-aware `tree` / `search` rewriting used by `hooks/semble-rewrite.sh`. |
+| `caveman` | The token-diet output mode (`/diet`, SessionStart diet-activate hook). |
 
 ## License
 
-MIT — see LICENSE file
+MIT — see LICENSE file. Copyright is shared: original Superpowers code
+© Jesse Vincent; sspower modifications © sskys18.

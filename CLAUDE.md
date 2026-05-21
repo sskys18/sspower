@@ -1,6 +1,6 @@
 # sspower
 
-Fork of [Superpowers](https://github.com/obra/superpowers) v5.0.5 — customized for Claude Code.
+Standalone skill framework for Claude Code. Inspired by [Superpowers](https://github.com/obra/superpowers) v5.0.5, with native Codex integration and macOS-first design.
 
 ## Structure
 
