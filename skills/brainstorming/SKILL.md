@@ -7,14 +7,30 @@ description: Use when planning creative work - features, components, functionali
 
 Help turn ideas into fully formed designs through collaborative dialogue.
 
-## Pre-flight: read project wiki
+## Pre-flight: read prior decisions
 
-Before proposing any approach, read these if they exist:
+Before proposing any approach, query the project's memory backend for prior
+architectural decisions and recent session context:
 
-- `<cwd>/.claude/wiki/decisions.md` — prior architectural calls, ground new design in them
-- `<cwd>/.claude/wiki/sessions/` — last 3 session `.md` files (sort by name, newest = highest YYMMDD prefix) for recent context
+```bash
+sspower-mem search --scope project --layer decision --mode recent --top-k 5 --json
+sspower-mem search --scope project --layer episodic --mode recent --top-k 3 --json
+```
 
-Skip silently if the directory doesn't exist (project hasn't archived yet). Surface any contradiction between the user's request and prior decisions before proposing.
+When you have a concrete task description, swap `--mode recent` for
+`--query "<task description>"` on the `decision` search to align by relevance.
+
+If the command is unavailable or returns no results, skip silently (the
+project may not have a memory backend yet). Surface any contradiction between
+the user's request and a prior decision before proposing.
+
+## Recording decisions
+
+When the design is approved, record each load-bearing architectural call:
+
+```bash
+sspower-mem add --scope project --layer decision --content "<one-line call + reasoning>"
+```
 
 <HARD-GATE>
 Do NOT invoke any implementation skill, write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
