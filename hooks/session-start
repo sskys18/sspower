@@ -6,6 +6,10 @@ set -euo pipefail
 # Determine plugin root directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SSPOWER_MEM_SRC="${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/sspower_mem"
+
+# Capture the SessionStart payload (JSON on stdin) BEFORE any other read.
+hook_payload="$(cat 2>/dev/null || true)"
 
 # Read using-sspower content
 using_sspower_content=$(cat "${PLUGIN_ROOT}/skills/using-sspower/SKILL.md" 2>&1 || echo "Error reading using-sspower skill")
@@ -23,8 +27,67 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
+# --- sspower-mem exit-code normalization wrapper (spec §9 Phase E) ---
+# ALWAYS returns 0 so the caller (running under set -e) is not killed.
+# Communicates the original rc via SSP_RC and output via SSP_OUT.
+sspower_mem_call() {
+    # Usage: sspower_mem_call <subcommand> [args...]
+    # Sets globals: SSP_OUT (stdout+stderr), SSP_RC (normalized exit code).
+
+    # Pre-flight: if uvx is missing OR the uv cache hasn't been bootstrapped, normalize to rc=30.
+    if ! command -v uvx >/dev/null 2>&1; then
+      SSP_OUT="[sspower-mem] uvx not found in PATH; run 'brew install uv' and 'sspower-mem doctor --bootstrap'"
+      SSP_RC=30
+      echo "$SSP_OUT" >&2
+      return 0
+    fi
+
+    set +e
+    SSP_OUT=$(UV_OFFLINE=1 uvx --offline --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>&1)
+    raw_rc=$?
+    set -e
+    # Normalize: any non-{0,10,20} exit becomes 30 (dep/launch failure).
+    case "$raw_rc" in
+      0|10|20) SSP_RC=$raw_rc ;;
+      *)       SSP_RC=30 ;;
+    esac
+    case "$SSP_RC" in
+      0)  : ;;  # success; $SSP_OUT is the result
+      10) echo "[sspower-mem] degraded (rc=10, the index-backend step failed): $SSP_OUT" >&2 ;;
+      20) echo "[sspower-mem] HARD fail (rc=20, digest unwritable): $SSP_OUT" >&2 ;;
+      30) echo "[sspower-mem] dep missing (rc=30, uv cache not warmed?): $SSP_OUT" >&2; SSP_OUT="" ;;
+      *)  echo "[sspower-mem] unexpected rc=$SSP_RC: $SSP_OUT" >&2; SSP_OUT="" ;;
+    esac
+    return 0  # CRITICAL: never propagate via return value under set -e.
+}
+
 using_sspower_escaped=$(escape_for_json "$using_sspower_content")
-session_context="<EXTREMELY_IMPORTANT>\nYou have sspower.\n\n**Below is the full content of your 'sspower:using-sspower' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_sspower_escaped}\n</EXTREMELY_IMPORTANT>"
+
+# --- Recent project memory from sspower-mem (best-effort, never blocks) ---
+mem_block=""
+payload_cwd="$(printf '%s' "$hook_payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
+if [ -n "$payload_cwd" ]; then
+    sspower_mem_call search --cwd "$payload_cwd" --scope project,user --mode recent --top-k 8 --json
+    # NOTE: `search` never returns rc 20 (no data-loss surface at SessionStart),
+    # so there is intentionally no `20) exit 20` branch here — that branch in the
+    # spec's §9 example applies only to the `add` caller in wiki-archive.py.
+    case "$SSP_RC" in
+      0)
+        # Format the JSON result array to a compact text block.
+        mem_text="$(printf '%s' "$SSP_OUT" | jq -r '
+            if (type=="array" and length>0) then
+              (.[] | "- [\(.layer)] \(.content | gsub("\n";" "))")
+            else empty end' 2>/dev/null || true)"
+        if [ -n "$mem_text" ]; then
+            mem_escaped="$(escape_for_json "$mem_text")"
+            mem_block="\\n\\n---\\n**Recent project memory (sspower-mem):**\\n${mem_escaped}"
+        fi
+        ;;
+      10|30) : ;;   # degraded / dep-missing -> fall back to no extra context
+    esac
+fi
+
+session_context="<EXTREMELY_IMPORTANT>\nYou have sspower.\n\n**Below is the full content of your 'sspower:using-sspower' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_sspower_escaped}\n</EXTREMELY_IMPORTANT>${mem_block}"
 
 # Output context injection as JSON (Claude Code format).
 # Uses printf instead of heredoc to work around bash 5.3+ heredoc hang.
