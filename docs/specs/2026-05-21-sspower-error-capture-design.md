@@ -115,7 +115,7 @@ _sspower_err_jsonl() {  # category origin source level message
 }
 
 # EXIT trap: log a crash only when the exit code is NOT an expected one.
-# Usage: trap '_sspower_exit_guard $? "0 2" hook.NAME' EXIT
+# Usage: trap '_sspower_exit_guard $? "0" hook.NAME' EXIT
 _sspower_exit_guard() {
   local rc="$1" ok="$2" src="$3"
   case " $ok " in *" $rc "*) return 0 ;; esac
@@ -124,36 +124,50 @@ _sspower_exit_guard() {
 }
 ```
 
-The expected-codes argument is the crux: PreToolUse hooks legitimately
-`exit 2` to block a tool call (auto-review denies). A blanket "non-zero =
-error" trap would flood `errors.jsonl` with normal denies. Each hook
-declares its own expected set.
+The expected-codes argument is the crux. sspower hooks do **not** deny via
+`exit 2` — PreToolUse hooks (`auto-review.sh`, `semble-rewrite.sh`,
+`cmd-rewrite.sh`) emit a JSON `permissionDecision:"deny"`/`"ask"` on stdout
+and `exit 0` (verified: `auto-review.sh:84-88`). So the only legitimate
+non-zero exit in the whole set is `session-start`'s `exit 20` (sspower-mem
+HARD data-loss propagation). Expected set is therefore `"0"` for every hook
+except `session-start` (`"0 20"`). A blanket "non-zero = error" trap would
+still be wrong — `set -e` mid-script aborts must be caught, intentional
+`exit 20` must not.
 
-### 5.2 Per-hook trap line
+### 5.2 Per-hook source + trap lines
 
-Each sspower **shell** hook, immediately after `source .../_log.sh`, adds one
-line:
+Only 3 files currently source `_log.sh` (`auto-review.sh`,
+`auto-spec-gate.sh`, and `_log.sh` itself). Hooks that do **not** already
+source it need two lines added near the top; hooks that already source it
+need only the `trap` line:
 
 ```sh
-trap '_sspower_exit_guard $? "0" hook.NAME' EXIT      # most hooks
-trap '_sspower_exit_guard $? "0 2" hook.NAME' EXIT    # PreToolUse blockers
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh"          # only if not already sourced
+trap '_sspower_exit_guard $? "0" hook.NAME' EXIT         # NAME = hook basename
 ```
 
-Shell hooks in scope (~10): `session-start`, `prompt-submit`,
-`semble-session.sh`, `semble-context.sh`, `semble-rewrite.sh` (`0 2`),
-`cmd-rewrite.sh` (`0 2`), `auto-review.sh` (`0 2`), `auto-spec-gate.sh`
-(`0 2`), `codex-lsp-posttool.sh`, `wiki-archive.sh`.
+`session-start` uses `"0 20"` instead of `"0"`.
 
-Expected-code set per hook is verified against each hook's own intentional
-`exit` statements during implementation (grep each hook for `exit N`).
+Shell hooks in scope (**9**): `session-start` (`0 20`), `prompt-submit`,
+`semble-session.sh`, `semble-context.sh`, `semble-rewrite.sh`,
+`cmd-rewrite.sh`, `auto-review.sh` (already sources `_log.sh`),
+`auto-spec-gate.sh` (already sources `_log.sh`), `codex-lsp-posttool.sh`.
+
+`wiki-archive.sh` is **excluded** — it ends with `exec python3 …`, which
+replaces the bash process; an `EXIT` trap set beforehand never fires. The
+Python child's failures are covered by Tier 2 scrape.
+
+Expected-code set per hook is re-verified against each hook's own `exit`
+statements during implementation (`grep -oE 'exit [0-9]+'`).
 
 ### 5.3 Out of capture scope
 
-`diet-activate.js`, `diet-track.js`, `codex-track-prompt.sh` is shell but
-also covered, `wiki-archive.py` (Python) — JS/Python hooks do **not** get a
-bash trap. Their failures are covered by Tier 2 scrape (their stderr lands
-in `~/.claude/debug/`). Adding language-specific traps is deferred — YAGNI
-until scrape proves insufficient.
+JS hooks (`diet-activate.js`, `diet-track.js`) and the Python child of
+`wiki-archive.sh` (`wiki-archive.py`) do **not** get a bash trap.
+`codex-track-prompt.sh` is shell but is a low-risk read-only injector and is
+left to scrape too (it is not in the 9). Their failures are covered by
+Tier 2 scrape (stderr lands in `~/.claude/debug/`). Adding language-specific
+traps is deferred — YAGNI until scrape proves insufficient.
 
 ## 6. Tier 2 — Scraper (`~/.claude` repo)
 
@@ -240,7 +254,7 @@ Plugin repo (`.../plugins/sspower`):
 | File | Change |
 | --- | --- |
 | `hooks/_log.sh` | +`_sspower_exit_guard`, +`_sspower_err_jsonl` |
-| ~10 shell hooks | +1 `trap` line each |
+| 9 shell hooks | +`trap` line (7 also +`source _log.sh`) |
 | `CLAUDE.md` | update `codex-health` references → `error-health`; note `errors.jsonl` |
 
 `~/.claude` repo:
