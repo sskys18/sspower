@@ -88,6 +88,27 @@ def test_safe_read_strict_rejects_oversized_digest(trust_root, monkeypatch):
         safe_read_strict(path, trust_root)
 
 
+def test_safe_read_strict_rejects_oversized_via_fstat_before_read(trust_root, monkeypatch):
+    """Oversized regular file is rejected by fstat up front, before any payload is read."""
+    path = trust_root / "digest.md"
+    path.write_bytes(b"x" * 100)
+    monkeypatch.setattr(io_mod, "MAX_DIGEST_BYTES", 10)
+
+    real_read = os.read
+    read_calls = []
+
+    def _spy_read(fd, n):
+        read_calls.append(n)
+        return real_read(fd, n)
+
+    monkeypatch.setattr(os, "read", _spy_read)
+
+    with pytest.raises(OSError, match="content exceeds max bytes"):
+        safe_read_strict(path, trust_root)
+
+    assert read_calls == [], "fstat guard must reject before any os.read on the file"
+
+
 def test_safe_append_strict_refuses_fifo(trust_root):
     if not hasattr(os, "mkfifo"):
         pytest.skip("mkfifo is not available on this platform")

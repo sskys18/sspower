@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import pytest
 import subprocess
 import sys
 from argparse import Namespace
@@ -239,6 +240,31 @@ def test_cli_add_content_file_over_max_exits_20(monkeypatch, tmp_path):
     assert out == ""
     assert "content exceeds max bytes" in err
     assert not (tmp_path / "home" / ".claude" / "sspower" / "digest.md").exists()
+
+
+def test_read_content_file_rejects_oversized_via_fstat_before_read(tmp_path, monkeypatch):
+    """_read_content_file rejects an oversized regular file via fstat, before any os.read."""
+    import os
+    from sspower_mem import cli as cli_mod
+    from sspower_mem.cli import _read_content_file
+
+    big = tmp_path / "payload.txt"
+    big.write_bytes(b"x" * 100)
+    monkeypatch.setattr(cli_mod, "MAX_CONTENT_FILE_BYTES", 10)
+
+    real_read = os.read
+    read_calls = []
+
+    def _spy_read(fd, n):
+        read_calls.append(n)
+        return real_read(fd, n)
+
+    monkeypatch.setattr(os, "read", _spy_read)
+
+    with pytest.raises(OSError, match="content exceeds max bytes"):
+        _read_content_file(str(big))
+
+    assert read_calls == [], "fstat guard must reject before any os.read on the file"
 
 
 def test_cli_search_oversized_digest_exits_20(monkeypatch, tmp_path, capsys):
@@ -486,6 +512,139 @@ def test_cli_search_requires_query_or_mode(monkeypatch, tmp_path):
     rc, _, err = _run(monkeypatch, tmp_path, "search", "--scope", "user")
     assert rc in (2, 30)
     assert "required" in err or "requires --query or --mode recent" in err
+
+
+def test_cli_search_rejects_negative_top_k(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, out, err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--mode", "recent", "--top-k", "-1",
+    )
+    assert rc == 30, err
+    assert out == ""
+    assert "top-k" in err
+
+
+def test_cli_search_rejects_zero_top_k(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, out, err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--mode", "recent", "--top-k", "0",
+    )
+    assert rc == 30, err
+    assert out == ""
+    assert "top-k" in err
+
+
+def test_cli_search_rejects_oversized_top_k(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, out, err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--mode", "recent", "--top-k", "1000000",
+    )
+    assert rc == 30, err
+    assert out == ""
+    assert "top-k" in err
+
+
+def test_cli_search_rejects_oversized_top_k_via_query(monkeypatch, tmp_path):
+    """A subprocess --query --top-k 1000000 is rejected with rc 30 (index path)."""
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, out, err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--query", "x", "--top-k", "1000000",
+    )
+    assert rc == 30, err
+    assert out == ""
+    assert "top-k" in err
+
+
+def test_cli_search_accepts_in_range_top_k(monkeypatch, tmp_path):
+    rc, _, _ = _run(monkeypatch, tmp_path, "doctor", "--bootstrap")
+    assert rc == 0
+    rc, _, _ = _run(
+        monkeypatch, tmp_path,
+        "add", "--scope", "user", "--layer", "user-global", "--content", "hello world",
+    )
+    assert rc == 0
+    rc, out, err = _run(
+        monkeypatch, tmp_path,
+        "search", "--scope", "user", "--mode", "recent", "--top-k", "1000", "--json",
+    )
+    assert rc == 0, err
+    assert json.loads(out)[0]["source"] == "digest-recent"
+
+
+def test_cmd_search_query_rejects_oversized_top_k_before_index_call(monkeypatch, tmp_path):
+    """An oversized --top-k on the --query path is rejected BEFORE _try_index_search.
+
+    Monkeypatches _try_index_search to fail if it is ever called, proving the
+    --top-k bound rejects up front rather than after the index request.
+    """
+    import sspower_mem.cli as cli_mod
+    from sspower_mem.cli import cmd_search
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    def _must_not_call(*a, **kw):
+        raise AssertionError("_try_index_search called despite oversized --top-k")
+
+    monkeypatch.setattr(cli_mod, "_try_index_search", _must_not_call)
+
+    rc = cmd_search(
+        Namespace(
+            scope="user",
+            cwd=None,
+            layer=None,
+            top_k=1_000_000,
+            mode=None,
+            query="x",
+            json=True,
+            idx_only=False,
+        )
+    )
+    assert rc == 30
+
+
+def test_cmd_search_query_forwards_in_range_top_k_to_index(monkeypatch, tmp_path):
+    """An in-range --top-k (1000, == MAX_TOP_K) is accepted and forwarded to
+    _try_index_search. Uses the literal 1000 rather than importing MAX_TOP_K:
+    this test must already PASS at Step 8, before Step 9 defines the constant."""
+    import sspower_mem.cli as cli_mod
+    from sspower_mem.cli import cmd_search
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    seen: list[int] = []
+
+    def _spy(scope_ids, query, top_k, layer_filter):
+        seen.append(top_k)
+        return [], False
+
+    monkeypatch.setattr(cli_mod, "_try_index_search", _spy)
+
+    rc = cmd_search(
+        Namespace(
+            scope="user",
+            cwd=None,
+            layer=None,
+            top_k=1000,
+            mode=None,
+            query="x",
+            json=True,
+            idx_only=True,
+        )
+    )
+    assert rc == 0
+    assert seen == [1000], "in-range top_k must be forwarded unchanged to the index call"
 
 
 def test_cli_search_idx_only_index_empty_returns_rc0(monkeypatch, tmp_path):

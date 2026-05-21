@@ -204,6 +204,8 @@ def safe_read_strict(path: pathlib.Path, trust_root: pathlib.Path) -> str:
         file_fd = os.open(rel.parts[-1], file_flags, dir_fd=cur_fd)
         try:
             _assert_regular_private_file(file_fd, path)
+            if os.fstat(file_fd).st_size > MAX_DIGEST_BYTES:
+                raise OSError(f"content exceeds max bytes: {MAX_DIGEST_BYTES}")
             chunks: list[bytes] = []
             total = 0
             while True:
