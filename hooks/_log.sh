@@ -58,3 +58,34 @@ log_event() {
     chmod 600 "$SSPOWER_LOG_FILE" 2>/dev/null || true
   fi
 }
+
+# --- error capture (errors.jsonl) ----------------------------------------
+SSPOWER_ERRORS_FILE="${SSPOWER_ERRORS_FILE:-$HOME/.claude/sspower/errors.jsonl}"
+
+# Append one structured row to errors.jsonl. Best-effort, never errors out.
+# Usage: _sspower_err_jsonl <category> <origin> <source> <level> <message>
+_sspower_err_jsonl() {
+  local cat="$1" org="$2" src="$3" lvl="$4" msg="$5"
+  local ts esc existed=0
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || return 0
+  esc="${msg//\\/\\\\}"; esc="${esc//\"/\\\"}"; esc="${esc//$'\n'/\\n}"
+  [ -f "$SSPOWER_ERRORS_FILE" ] && existed=1
+  (
+    umask 077
+    mkdir -p "$(dirname "$SSPOWER_ERRORS_FILE")" 2>/dev/null || exit 0
+    printf '{"ts":"%s","category":"%s","origin":"%s","source":"%s","level":"%s","message":"%s","raw":"","session":null}\n' \
+      "$ts" "$cat" "$org" "$src" "$lvl" "$esc" >> "$SSPOWER_ERRORS_FILE"
+  ) 2>/dev/null || true
+  if [ "$existed" = "0" ] && [ -f "$SSPOWER_ERRORS_FILE" ]; then
+    chmod 600 "$SSPOWER_ERRORS_FILE" 2>/dev/null || true
+  fi
+}
+
+# EXIT trap helper: log a crash only when the exit code is NOT expected.
+# Usage: trap '_sspower_exit_guard $? "0" hook.NAME' EXIT
+_sspower_exit_guard() {
+  local rc="$1" ok="$2" src="$3"
+  case " $ok " in *" $rc "*) return 0 ;; esac
+  log_event error "$src" kind=crash exit="$rc"
+  _sspower_err_jsonl hook plugin "$src" error "exit $rc"
+}
