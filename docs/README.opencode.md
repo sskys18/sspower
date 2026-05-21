@@ -8,7 +8,7 @@ Add sspower to the `plugin` array in your `opencode.json` (global or project-lev
 
 ```json
 {
-  "plugin": ["superpowers@git+https://github.com/obra/superpowers.git"]
+  "plugin": ["sspower@git+https://github.com/sskys18/sspower.git"]
 }
 ```
 
@@ -84,7 +84,7 @@ To pin a specific version, use a branch or tag:
 
 ```json
 {
-  "plugin": ["superpowers@git+https://github.com/obra/superpowers.git#v5.0.3"]
+  "plugin": ["sspower@git+https://github.com/sskys18/sspower.git#v1.1.1"]
 }
 ```
 
@@ -125,6 +125,6 @@ Skills written for Claude Code are automatically adapted for OpenCode:
 
 ## Getting Help
 
-- Report issues: https://github.com/obra/superpowers/issues
-- Main documentation: https://github.com/obra/superpowers
+- Report issues: https://github.com/sskys18/sspower/issues
+- Main documentation: https://github.com/sskys18/sspower
 - OpenCode docs: https://opencode.ai/docs/

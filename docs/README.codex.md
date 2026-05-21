@@ -2,15 +2,7 @@
 
 Guide for using sspower with OpenAI Codex via native skill discovery.
 
-## Quick Install
-
-Tell Codex:
-
-```
-Fetch and follow instructions from https://raw.githubusercontent.com/obra/superpowers/refs/heads/main/.codex/INSTALL.md
-```
-
-## Manual Installation
+## Installation
 
 ### Prerequisites
 
@@ -21,7 +13,7 @@ Fetch and follow instructions from https://raw.githubusercontent.com/obra/superp
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/obra/superpowers.git ~/.codex/sspower
+   git clone https://github.com/sskys18/sspower.git ~/.codex/sspower
    ```
 
 2. Create the skills symlink:
@@ -122,5 +114,5 @@ Junctions normally work without special permissions. If creation fails, try runn
 
 ## Getting Help
 
-- Report issues: https://github.com/obra/superpowers/issues
-- Main documentation: https://github.com/obra/superpowers
+- Report issues: https://github.com/sskys18/sspower/issues
+- Main documentation: https://github.com/sskys18/sspower

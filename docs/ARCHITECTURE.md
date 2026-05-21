@@ -2,14 +2,13 @@
 
 End-to-end overview of the plugin: layout, components, integration points, and runtime behavior. Aimed at maintainers and power users who need to know what runs when, where state lives, and how the pieces compose.
 
-For upstream-fork delta only, see [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md). For Codex CLI install, see [README.codex.md](README.codex.md).
+For project history and customizations, see [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md). For Codex CLI install, see [README.codex.md](README.codex.md).
 
 ## Identity
 
 - **Plugin name:** `sspower` (`.claude-plugin/plugin.json`)
 - **Version:** `1.1.0`
 - **Origin:** `git@github.com:sskys18/sspower.git`
-- **Upstream:** `obra/superpowers` v5.0.5 (synced via `upstream` remote)
 
 ## Directory layout
 
@@ -618,21 +617,12 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
-## Sync with upstream
-
-```bash
-git fetch upstream
-git merge upstream/main   # or rebase; resolve keeping sspower customizations
-```
-
-Watch for upstream changes to `using-superpowers` (we override with `using-sspower`), removed-from-fork files (see CUSTOMIZATIONS.md), and `commands/` (deprecated upstream, replaced by skills).
-
 ## Reference docs
 
 - [README.md](../README.md) — user-facing overview
-- [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md) — fork delta vs upstream
+- [CUSTOMIZATIONS.md](CUSTOMIZATIONS.md) — project history and customizations
 - [README.codex.md](README.codex.md) — Codex CLI install + auth
-- [MAINTENANCE.md](MAINTENANCE.md) — fork maintenance guide
+- [MAINTENANCE.md](MAINTENANCE.md) — maintenance guide
 - [codex-tracking.md](codex-tracking.md) — registry parity table, schema, caveats
 - [auto-review-followups.md](auto-review-followups.md) — followup file conventions
 - [testing.md](testing.md) — skill + brainstorm-server tests

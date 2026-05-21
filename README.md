@@ -331,7 +331,7 @@ sspower/
 
 ### Token-Efficient Progressive Disclosure
 
-| Skill | Upstream | sspower SKILL.md | sspower references/ |
+| Skill | Original | sspower SKILL.md | sspower references/ |
 |-------|----------|------------------|---------------------|
 | writing-skills | 647 lines | ~50 lines | 3 files (344 lines) |
 | test-driven-development | 313 lines | ~50 lines | 1 file (74 lines) |

@@ -780,7 +780,7 @@ git commit -m "feat: implement session.started hook for opencode"
 ```bash
 # Clone sspower skills to OpenCode config directory
 mkdir -p ~/.config/opencode/sspower
-git clone https://github.com/obra/superpowers.git ~/.config/opencode/sspower
+git clone https://github.com/sskys18/sspower.git ~/.config/opencode/sspower
 ```
 
 ### 2. Install the Plugin
@@ -878,8 +878,8 @@ When a skill references a Claude Code tool you don't have:
 
 ## Getting Help
 
-- Report issues: https://github.com/obra/superpowers/issues
-- Documentation: https://github.com/obra/superpowers
+- Report issues: https://github.com/sskys18/sspower/issues
+- Documentation: https://github.com/sskys18/sspower
 ```
 
 **Step 2: Verify file created**

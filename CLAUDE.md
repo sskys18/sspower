@@ -18,7 +18,7 @@ tests/           — skill and brainstorm-server tests
 ## Key Rules
 
 - Skills use progressive disclosure: lean SKILL.md + `references/` loaded on demand
-- `using-sspower` replaces upstream `using-superpowers` for skill routing
+- `using-sspower` is the skill-routing entrypoint (named `using-superpowers` in the original Superpowers base)
 - `second-opinion` and Codex integration require Codex CLI installed locally (`npm install -g @openai/codex`) and authenticated (`codex login`). Uses native `scripts/codex-bridge.mjs`, not the external openai-codex plugin. Bridge defaults to `gpt-5.5` + `high` reasoning effort (`xhigh` caused stalls). Security + sanity reviewers were removed from `auto-review.sh` — invoke on demand via subagents: `agents/security-reviewer.md` (vuln/auth/crypto pass) and `agents/sanity-reviewer.md` (independent second opinion, real-blocker-only). The `second-opinion` skill routes to sanity-reviewer for before-merge / stuck-after-2-attempts cases
 - Diet hooks: `hooks/package.json` is `{"type":"commonjs"}` even though the repo root is ESM — needed because hook files use CJS. Don't delete it
 - Project wiki legacy belt lives at `<cwd>/.claude/wiki/`: per-session JSON remains in `sessions/`; decisions, gotchas, and session summaries now route through `sspower-mem`. Sidecars are still symlinked into `~/.claude/sessions/` for cross-project tooling

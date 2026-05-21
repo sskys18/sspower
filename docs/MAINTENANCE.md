@@ -1,99 +1,48 @@
-# claude-skills Maintenance Guide
+# sspower Maintenance Guide
 
 ## Overview
 
-This repo is a private fork of [obra/superpowers](https://github.com/obra/superpowers) with native Codex integration. It replaces the official sspower plugin via the `codex-integration` marketplace.
+sspower is a standalone skill framework for Claude Code with native Codex
+integration. It is distributed as a plugin through the `sskys18` marketplace.
 
-## Remotes
+## Repo
 
 ```
-origin    https://github.com/sskys18/claude-skills.git   (your private repo)
-upstream  https://github.com/obra/superpowers.git         (upstream source)
+origin  https://github.com/sskys18/sspower.git
 ```
 
 ## Plugin Identity
 
 | Field | Value |
 |-------|-------|
-| plugin.json name | `sspower` (namespace prefix) |
-| marketplace.json name | `codex-integration` |
-| settings.json key | `sspower@codex-integration` |
-| Cache path | `~/.claude/plugins/cache/codex-integration/sspower/5.0.7/` |
+| `.claude-plugin/plugin.json` name | `sspower` |
+| marketplace.json name | `sskys18` |
+| settings.json key | `sspower@sskys18` |
+| Plugin path | `~/.claude/plugins/marketplaces/sskys18/plugins/sspower/` |
 
 ## After Making Changes
 
 ```bash
-cd ~/Mine/claude-skills
-
 # 1. Edit files, commit, push
-git add -A && git commit -m "description" && git push origin main
-
-# 2. Sync to plugin cache
-rsync -a --delete \
-  --exclude '.git' \
-  ~/Mine/claude-skills/ \
-  ~/.claude/plugins/cache/codex-integration/sspower/5.0.7/
-
-# 3. Restart Claude Code to pick up changes
-```
-
-## Syncing Upstream Updates
-
-```bash
-cd ~/Mine/claude-skills
-
-# 1. Fetch upstream
-git fetch upstream
-
-# 2. Merge upstream changes
-git merge upstream/main
-
-# 3. Resolve conflicts (expected in these files)
-#    - skills/brainstorming/SKILL.md
-#    - skills/executing-plans/SKILL.md
-#    - skills/subagent-driven-development/SKILL.md
-#    - skills/requesting-code-review/SKILL.md
-#    - skills/finishing-a-development-branch/SKILL.md
-#    - .claude-plugin/marketplace.json
-#    For each: keep upstream changes + re-add codex-gate references
-
-# 4. Push and sync to cache
+git add -A
+git commit -F <message-file>
 git push origin main
-rsync -a --delete \
-  --exclude '.git' \
-  ~/Mine/claude-skills/ \
-  ~/.claude/plugins/cache/codex-integration/sspower/5.0.7/
 
-# 5. Restart Claude Code
+# 2. Restart Claude Code to pick up changes
 ```
 
-## Files Modified from Upstream
+The repo is checked out directly inside the marketplace tree — no separate
+cache sync step is needed.
 
-| File | What was changed |
-|------|-----------------|
-| `skills/codex-gate/SKILL.md` | NEW — Codex integration skill (3 parts) |
-| `skills/brainstorming/SKILL.md` | Added Codex spec review step (checklist item 8, flow diagram, prose section) |
-| `skills/executing-plans/SKILL.md` | Added `sspower:codex-gate` to Integration section |
-| `skills/subagent-driven-development/SKILL.md` | Added `sspower:codex-gate` to Integration section |
-| `skills/requesting-code-review/SKILL.md` | Added "After Code Review" section with codex-gate handoff |
-| `skills/finishing-a-development-branch/SKILL.md` | Added codex-gate as prerequisite in Integration section |
-| `.claude-plugin/marketplace.json` | Name set to `codex-integration`, owner to `sskys18` |
+## Versioning
 
-## Rollback
-
-If something breaks:
-
-```bash
-# Re-enable official sspower
-# In ~/.claude/settings.json:
-#   "sspower@claude-plugins-official": true
-#   "sspower@codex-integration": false
-# Restart Claude Code
-```
+Bump on release:
+- `.claude-plugin/plugin.json` (`version`)
+- `package.json` (`version`)
+- `.claude-plugin/marketplace.json` (plugin entry `version`)
 
 ## Key Config Files
 
 - `~/.claude/settings.json` — `enabledPlugins` and `extraKnownMarketplaces`
-- `~/.claude/plugins/installed_plugins.json` — install entry for `sspower@codex-integration`
+- `~/.claude/plugins/installed_plugins.json` — install entry for `sspower@sskys18`
 - `~/.claude/plugins/known_marketplaces.json` — marketplace registration
-- `~/.claude/plugins/cache/codex-integration/sspower/5.0.7/` — cached plugin files
