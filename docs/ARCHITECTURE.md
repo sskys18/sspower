@@ -34,7 +34,7 @@ sspower/
 Per-cwd artifacts written by hooks live outside the plugin:
 
 ```
-<cwd>/.claude/wiki/sessions/<id>.{json,md}    # Project wiki, archived per session
+<cwd>/.claude/wiki/sessions/<id>.json         # Per-session JSON sidecar (legacy belt; .md no longer written — Phase E)
 <cwd>/.git/sspower-review-rounds-<branch>     # Auto-review iteration counter
 <cwd>/.claude/sspower/followups.md            # Advisory issues from approve-with-followups
 <cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
@@ -305,14 +305,15 @@ Each session is archived (PreCompact + SessionEnd) into `<cwd>/.claude/wiki/`:
 
 ```
 <cwd>/.claude/wiki/
-├── sessions/<session-id>.json   # Structured sidecar (decisions, files, gotchas)
-├── sessions/<session-id>.md     # Human-readable summary
-├── decisions.md                 # Auto-aggregated, append-only
-├── gotchas.md                   # Auto-aggregated, append-only
-└── index.md                     # One row per session
+└── sessions/<session-id>.json   # Structured JSON sidecar — legacy belt (removed in Phase F)
 ```
 
-`brainstorming`, `writing-plans`, and `systematic-debugging` read `decisions.md` + `gotchas.md` before proposing work, so prior context informs every new design and bug investigation.
+Phase E: the per-session `.md` summary is no longer written — its content is
+ingested into `sspower-mem` as an `episodic` block. `append_index_entry` is
+removed (no `index.md`); `decisions.md`/`gotchas.md` seeding is dropped.
+`brainstorming`, `writing-plans`, `systematic-debugging`, and `using-sspower`
+read/write decisions + gotchas via the `sspower-mem` CLI, so prior context
+informs every new design and bug investigation.
 
 JSON sidecars are also symlinked into `~/.claude/sessions/` for cross-project tooling (e.g. daily-rollup skills).
 
