@@ -872,3 +872,28 @@ def test_cli_search_project_user_does_not_leak_spoofed_user_global(monkeypatch, 
     assert [hit["content"] for hit in hits] == ["legitimate project memory"]
     assert "forged user-global memory" not in out
     assert "dropped digest block" in err
+
+
+def test_emit_search_sanitizes_all_metadata_fields(capsys):
+    from sspower_mem.cli import _emit_search
+
+    hit = {
+        "source": "digest-grep",
+        "score": 0.5,
+        "ts": "2026-05-21T00:00:00Z\x1b[31m",
+        "scope": "user:\x07global",
+        "layer": "user-\x00global",
+        "id": "abc\x1bdef",
+        "content": "body\x1btext",
+    }
+    _emit_search([hit], as_json=False)
+    out = capsys.readouterr().out
+
+    assert "\x1b" not in out
+    assert "\x07" not in out
+    assert "\x00" not in out
+    # Each stripped control byte is replaced by the "?" substitute char.
+    assert "2026-05-21T00:00:00Z?[31m" in out
+    assert "user:?global" in out
+    assert "user-?global" in out
+    assert "abc?def" in out

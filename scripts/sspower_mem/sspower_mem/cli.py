@@ -448,8 +448,12 @@ def _emit_search(hits, as_json):
         print(json.dumps(cleaned, indent=2))
         return
     for hit in cleaned:
-        print(f"[{hit['source']} {hit['score']:.3f}] "
-              f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}")
+        source = _sanitize_for_terminal(str(hit["source"]))
+        ts = _sanitize_for_terminal(str(hit["ts"]))
+        scope = _sanitize_for_terminal(str(hit["scope"]))
+        layer = _sanitize_for_terminal(str(hit["layer"]))
+        hit_id = _sanitize_for_terminal(str(hit["id"]))
+        print(f"[{source} {hit['score']:.3f}] {ts} · {scope} · {layer} · {hit_id}")
         print(_sanitize_for_terminal(hit["content"]))
         print("---")
 
