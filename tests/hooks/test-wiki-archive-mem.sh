@@ -98,10 +98,13 @@ grep -q 'sspower-mem add' "$UV_LOG" \
 payload | FAKE_UVX_RC=20 PATH="$WORK/bin:$PATH" python3 "$HOOK"; RC=$?
 [ "$RC" -eq 20 ] && ok "case C: rc=20 propagated as exit 20" || bad "case C exit" "rc=$RC (expected 20)"
 
-# Case D: backend dep-missing (fake uvx rc=30) -> hook exits 0.
+# Case D: backend dep-missing (fake uvx rc=30) -> hook exits 0 AND the wrapper
+# positively logs the rc=30 degradation on stderr. The stderr assertion is what
+# distinguishes a real rc=30 (dep missing) from a silent no-op.
 : > "$UV_LOG"
-payload | FAKE_UVX_RC=30 PATH="$WORK/bin:$PATH" python3 "$HOOK"; RC=$?
+ERR="$(payload | FAKE_UVX_RC=30 PATH="$WORK/bin:$PATH" python3 "$HOOK" 2>&1 1>/dev/null)"; RC=$?
 [ "$RC" -eq 0 ] && ok "case D: rc=30 hook exits 0" || bad "case D exit" "rc=$RC"
+case "$ERR" in *rc=30*) ok "case D: wrapper logged rc=30 degradation" ;; *) bad "case D: rc=30 not logged" "$ERR" ;; esac
 
 # Case E: uvx-internal exit 7 -> Python wrapper normalizes to 30 -> hook exits 0.
 : > "$UV_LOG"

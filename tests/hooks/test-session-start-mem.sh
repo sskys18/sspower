@@ -66,11 +66,16 @@ echo "$O" | jq -e '.hookSpecificOutput.additionalContext|test("MEM_MARKER")|not'
 echo "$O" | jq -e '.hookSpecificOutput.additionalContext|test("using-sspower")' >/dev/null \
   && ok "case B: rc=10 skill block survives" || bad "case B skill block" "$O"
 
-# Case C: search dep-missing (rc=30) -> hook exits 0, no marker.
-O="$(payload | FAKE_MODE=r30 PATH="$WORK/bin:$PATH" "$HOOK")"; RC=$?
+# Case C: search dep-missing (rc=30) -> hook exits 0, no marker, AND the
+# wrapper positively logs the rc=30 dep-missing message on stderr (proves the
+# rc=30 path was taken, not just an empty result).
+ERRC="$WORK/errC"
+O="$(payload | FAKE_MODE=r30 PATH="$WORK/bin:$PATH" "$HOOK" 2>"$ERRC")"; RC=$?
 [ "$RC" -eq 0 ] && ok "case C: rc=30 hook exits 0" || bad "case C exit" "rc=$RC"
 echo "$O" | jq -e '.hookSpecificOutput.additionalContext|test("MEM_MARKER")|not' >/dev/null \
   && ok "case C: rc=30 injects no memory" || bad "case C inject" "$O"
+grep -q 'rc=30' "$ERRC" \
+  && ok "case C: wrapper logged rc=30 dep-missing" || bad "case C: rc=30 not logged" "$(cat "$ERRC")"
 
 # Case D: uvx-internal exit 7 -> wrapper normalizes to rc=30 -> hook exits 0, no marker.
 O="$(payload | FAKE_MODE=weird PATH="$WORK/bin:$PATH" "$HOOK")"; RC=$?
