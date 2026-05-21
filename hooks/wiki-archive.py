@@ -3,15 +3,15 @@
 Project wiki archiver for sspower.
 Triggered by PreCompact/SessionEnd via wiki-archive.sh.
 
-Per-project: writes to <cwd>/.claude/wiki/sessions/
-Fallback: if cwd missing/unwritable, writes to ~/.claude/wiki/<basename>-<hash>/sessions/
+Per-project: writes the legacy JSON belt to <cwd>/.claude/wiki/sessions/
+Fallback: if cwd missing/unwritable, writes JSON to ~/.claude/wiki/<basename>-<hash>/sessions/
 
 Produces:
   - YYMMDD_HH-MM_Event.json  (structured, full extraction)
-  - YYMMDD_HH-MM_Event.md    (human-readable session summary)
+  - episodic sspower-mem block (rendered markdown summary; no sessions/*.md)
 
 Adapted from session_archive.py. Core extraction logic preserved; output
-location made project-relative and a markdown summary added for wiki browsing.
+location made project-relative and a markdown summary ingested into sspower-mem.
 """
 
 import json
@@ -19,6 +19,9 @@ import sys
 import os
 import re
 import hashlib
+import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
@@ -169,6 +172,31 @@ def _safe_append_text(path: Path, content: str, trust_root: Path):
         return True
     except OSError:
         return False
+
+
+def sspower_mem_call(*args):
+    """Mirror of the shell wrapper (spec §9 Phase E). Returns (rc, out).
+    Never raises. rc is always one of {0, 10, 20, 30}; uvx-internal exits
+    collapse to 30. Invokes `UV_OFFLINE=1 uvx --offline --from <src>`."""
+    src = os.environ.get(
+        "SSPOWER_MEM_SRC",
+        str(Path(__file__).resolve().parent.parent / "scripts" / "sspower_mem"),
+    )
+    if not shutil.which("uvx"):
+        return 30, "[sspower-mem] uvx not found in PATH"
+    env = os.environ.copy()
+    env["UV_OFFLINE"] = "1"
+    try:
+        cp = subprocess.run(
+            ["uvx", "--offline", "--from", src, "sspower-mem", *args],
+            capture_output=True, text=True, env=env,
+        )  # no check=True
+    except FileNotFoundError:
+        return 30, "[sspower-mem] uvx launch failed"
+    raw = cp.returncode
+    rc = raw if raw in (0, 10, 20) else 30
+    out = (cp.stdout or "") + (cp.stderr or "")
+    return rc, out
 
 
 def parse_events(path: str) -> list:
@@ -597,10 +625,11 @@ def write_json(data: dict, path: Path, trust_root: Path):
         pass
 
 
-def write_markdown(data: dict, path: Path, trust_root: Path):
-    if _has_symlink_component(path, trust_root):
-        return
-    """Human-readable session summary for wiki browsing."""
+def render_session_summary(data: dict) -> str:
+    """Render the human-readable session summary as a markdown string.
+
+    Phase E: the summary is no longer written to `sessions/*.md`; it is
+    handed to `sspower-mem add --layer episodic`. Returns the string."""
     meta = data["meta"]
     tokens = data["tokens"]
     stats = data["stats"]
@@ -667,44 +696,7 @@ def write_markdown(data: dict, path: Path, trust_root: Path):
             lines.append(f"- **{err['type']}:** {err['message']}")
         lines.append("")
 
-    try:
-        path.write_text("\n".join(lines), encoding="utf-8")
-    except OSError:
-        pass
-
-
-WIKI_DECISIONS_SEED = """# Decisions
-
-Architectural calls, tradeoffs, and "we picked X because Y" notes for this project.
-Append entries with date + one-line summary + reasoning. Read by `brainstorming` and
-`writing-plans` skills before proposing new work.
-"""
-
-WIKI_GOTCHAS_SEED = """# Gotchas
-
-Bugs, footguns, and "watch out for X" notes for this project. Read by
-`systematic-debugging` skill before investigating new failures — match symptoms
-against known gotchas first.
-"""
-
-WIKI_INDEX_HEADER = """# Session Index
-
-Auto-appended by `wiki-archive.py` on PreCompact / SessionEnd. Newest at the bottom.
-
-| Date | Event | Duration | Tools | Cost | Top files |
-|------|-------|----------|-------|------|-----------|
-"""
-
-
-def seed_wiki_files(wiki_root: Path, trust_root: Path):
-    """Create decisions.md / gotchas.md heading templates if missing.
-    Refuses to write through symlink components."""
-    decisions = wiki_root / "decisions.md"
-    gotchas = wiki_root / "gotchas.md"
-    if not decisions.exists():
-        _safe_write_text(decisions, WIKI_DECISIONS_SEED, trust_root)
-    if not gotchas.exists():
-        _safe_write_text(gotchas, WIKI_GOTCHAS_SEED, trust_root)
+    return "\n".join(lines)
 
 
 def fan_out_to_central_sidecars(json_path: Path, cwd: str, session_id: str):
@@ -739,38 +731,6 @@ def fan_out_to_central_sidecars(json_path: Path, cwd: str, session_id: str):
     except (OSError, NotImplementedError):
         # Symlinks unsupported (Windows w/o privilege, exotic FS) — just skip.
         pass
-
-
-def append_index_entry(wiki_root: Path, data: dict, md_path: Path, trust_root: Path):
-    """Append one-line summary row to <wiki_root>/index.md.
-    Refuses to write through symlink components."""
-    index = wiki_root / "index.md"
-    if not index.exists():
-        if not _safe_write_text(index, WIKI_INDEX_HEADER, trust_root):
-            return
-
-    meta = data["meta"]
-    stats = data["stats"]
-    tokens = data["tokens"]
-    files = data.get("files", {})
-
-    ranked = sorted(
-        files.items(),
-        key=lambda x: -(x[1]["read"] + x[1]["edit"] + x[1]["write"]),
-    )
-    top = [os.path.basename(fp) for fp, _ in ranked[:3]]
-    top_str = ", ".join(f"`{t}`" for t in top) if top else "—"
-
-    rel_md = f"sessions/{md_path.name}"
-    row = (
-        f"| {meta['date']} {meta['time']} "
-        f"| [{meta['event']}]({rel_md}) "
-        f"| {meta['duration_active']} "
-        f"| {stats['total_tools']} "
-        f"| ${tokens['cost_estimate']} "
-        f"| {top_str} |\n"
-    )
-    _safe_append_text(index, row, trust_root)
 
 
 def main():
@@ -815,12 +775,47 @@ def main():
         md_path = out_dir / f"{base}_{short_id}.md"
 
     write_json(data, json_path, trust_root)
-    write_markdown(data, md_path, trust_root)
-
-    wiki_root = out_dir.parent
-    seed_wiki_files(wiki_root, trust_root)
-    append_index_entry(wiki_root, data, md_path, trust_root)
     fan_out_to_central_sidecars(json_path, cwd, session_id)
+
+    # Phase E: ingest the session summary into sspower-mem as an episodic
+    # memory block. The summary is no longer written to sessions/*.md.
+    #
+    # Spec §9 (lines 877-880): hooks MUST pass --cwd explicitly and must
+    # NOT rely on os.getcwd(). The hook process cwd is the plugin dir or
+    # $HOME — never the user project. So a project-scope `add` without
+    # --cwd would ingest the session under the wrong project. If the
+    # SessionEnd payload carried no cwd, skip ingest entirely (the legacy
+    # .json belt is still written, so nothing is lost).
+    if not cwd:
+        sys.stderr.write(
+            "[wiki-archive] no cwd in hook payload; skipping sspower-mem "
+            "ingest (legacy .json belt still written)\n"
+        )
+    else:
+        summary = render_session_summary(data)
+        tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".md", encoding="utf-8", delete=False
+            ) as f:
+                f.write(summary)
+                tmp = f.name
+            rc, out = sspower_mem_call(
+                "add", "--scope", "project", "--layer", "episodic",
+                "--content-file", tmp, "--cwd", cwd,
+            )
+            if rc == 20:
+                # HARD data-loss event (digest unwritable) — propagate loudly.
+                sys.stderr.write(f"[wiki-archive] sspower-mem HARD fail (rc=20): {out}\n")
+                sys.exit(20)
+            elif rc in (10, 30):
+                sys.stderr.write(f"[wiki-archive] sspower-mem degraded (rc={rc}): {out}\n")
+        finally:
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

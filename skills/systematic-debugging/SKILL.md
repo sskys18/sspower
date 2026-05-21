@@ -9,9 +9,22 @@ description: Use when encountering any bug, test failure, or unexpected behavior
 
 ## Pre-flight: check known gotchas
 
-Before Phase 1, read `<cwd>/.claude/wiki/gotchas.md` if it exists. Match the current symptom against known gotchas FIRST — if the bug is already documented, apply the recorded fix and skip a fresh investigation. Skip silently if the file doesn't exist.
+Before Phase 1, query the project's memory backend for known gotchas:
 
-After fixing a new (un-documented) gotcha, append it to that file so the next session benefits.
+```bash
+sspower-mem search --scope project --layer gotcha --query "<current symptom>" --top-k 5 --json
+```
+
+Match the current symptom against known gotchas FIRST — if the bug is already
+documented, apply the recorded fix and skip a fresh investigation. If the
+command is unavailable or returns no results, skip silently.
+
+After fixing a new (un-documented) gotcha, record it so the next session
+benefits:
+
+```bash
+sspower-mem add --scope project --layer gotcha --content "<symptom + root cause + fix>"
+```
 
 ## The Iron Law
 

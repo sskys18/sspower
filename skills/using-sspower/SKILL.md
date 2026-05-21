@@ -47,4 +47,12 @@ digraph skill_flow {
 
 **Rigid** (TDD, debugging): Follow exactly. **Flexible** (patterns): Adapt to context.
 
+## Project memory
+
+`brainstorming`, `writing-plans`, and `systematic-debugging` read and write
+project memory (decisions, gotchas, session history) through the `sspower-mem`
+CLI rather than `<cwd>/.claude/wiki/*.md` files. When a skill's Pre-flight
+calls `sspower-mem search`, that is the project's memory backend — not a stray
+shell command. If `sspower-mem` is unavailable the skills degrade silently.
+
 See `references/red-flags-table.md` for the full rationalization table, instruction priority, and platform adaptation details.

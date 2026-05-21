@@ -39,10 +39,25 @@ PROJECT_LAYERS = frozenset({"episodic", "decision", "gotcha"})
 USER_LAYERS = frozenset({"user-global"})
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 MAX_CONTENT_FILE_BYTES = 8 * 1024 * 1024
+MAX_TOP_K = 1000
 
 
 def _sanitize_for_terminal(s: str) -> str:
     return _CONTROL_RE.sub("?", s)
+
+
+def _validate_top_k(top_k: int) -> str | None:
+    """Return an error string if --top-k is below 1 or above MAX_TOP_K.
+
+    Rejecting `< 1` (not just `== 0`) is deliberate: a negative top_k feeds
+    a negative Python slice (`blocks[:top_k]`) in digest.recent/grep_search,
+    which silently returns all-but-the-last-N blocks rather than an empty set.
+    """
+    if top_k < 1:
+        return f"--top-k must be a positive integer (>= 1), got {top_k}"
+    if top_k > MAX_TOP_K:
+        return f"--top-k exceeds the maximum of {MAX_TOP_K}, got {top_k}"
+    return None
 
 
 def _resolve_cwd(args: argparse.Namespace) -> pathlib.Path | None:
@@ -75,6 +90,8 @@ def _read_content_file(path: str) -> str:
     file_fd = os.open(abs_path, file_flags)
     try:
         _assert_regular_private_file(file_fd, abs_path)
+        if os.fstat(file_fd).st_size > MAX_CONTENT_FILE_BYTES:
+            raise OSError(f"content exceeds max bytes: {MAX_CONTENT_FILE_BYTES}")
         chunks: list[bytes] = []
         total = 0
         while True:
@@ -271,6 +288,10 @@ def _log_errors_jsonl(record: dict):
 
 
 def cmd_search(args: argparse.Namespace) -> int:
+    top_k_error = _validate_top_k(args.top_k)
+    if top_k_error:
+        print(f"sspower-mem: {top_k_error}", file=sys.stderr)
+        return 30
     scopes = args.scope.split(",")
     needs_project = "project" in scopes
     sources: list[DigestSource] = []
@@ -427,8 +448,12 @@ def _emit_search(hits, as_json):
         print(json.dumps(cleaned, indent=2))
         return
     for hit in cleaned:
-        print(f"[{hit['source']} {hit['score']:.3f}] "
-              f"{hit['ts']} · {hit['scope']} · {hit['layer']} · {hit['id']}")
+        source = _sanitize_for_terminal(str(hit["source"]))
+        ts = _sanitize_for_terminal(str(hit["ts"]))
+        scope = _sanitize_for_terminal(str(hit["scope"]))
+        layer = _sanitize_for_terminal(str(hit["layer"]))
+        hit_id = _sanitize_for_terminal(str(hit["id"]))
+        print(f"[{source} {hit['score']:.3f}] {ts} · {scope} · {layer} · {hit_id}")
         print(_sanitize_for_terminal(hit["content"]))
         print("---")
 
@@ -785,7 +810,7 @@ def build_parser() -> argparse.ArgumentParser:
     search_group.add_argument("--mode", choices=["recent"])
     search.add_argument("--top-k", type=int, default=8)
     search.add_argument("--json", action="store_true")
-    search.add_argument("--idx-only", action="store_true")  # Phase A: rejected with rc=30 (Phase C requires backend)
+    search.add_argument("--idx-only", action="store_true")  # --query only: suppresses digest grep fallback; index raise exits rc=10
     search.set_defaults(func=cmd_search)
 
     digest = sub.add_parser("digest", help="Print digest summary or rebuild index")

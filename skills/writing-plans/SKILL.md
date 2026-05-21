@@ -11,14 +11,22 @@ Write comprehensive implementation plans assuming the engineer has zero context 
 
 **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md` (user preferences override)
 
-## Pre-flight: read project wiki
+## Pre-flight: read prior decisions
 
-Before drafting the plan, read these if they exist:
+Before drafting the plan, query the project's memory backend:
 
-- `<cwd>/.claude/wiki/decisions.md` — prior architectural calls; align plan with them or flag conflicts
-- `<cwd>/.claude/wiki/sessions/` — last 3 session `.md` files for recent project state
+```bash
+sspower-mem search --scope project --layer decision --mode recent --top-k 5 --json
+sspower-mem search --scope project --layer episodic --mode recent --top-k 3 --json
+```
 
-Skip silently if the directory doesn't exist.
+The first call surfaces prior architectural decisions to align the plan with
+(or flag conflicts against); the second surfaces recent session state. When
+the plan has a concrete task description, swap `--mode recent` for
+`--query "<task description>"` to align results by relevance instead of
+recency.
+
+If the command is unavailable or returns no results, skip silently.
 
 ## Scope Check
 
