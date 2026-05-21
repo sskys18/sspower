@@ -916,3 +916,10 @@ git -C /Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower commit 
   failures.jsonl use real line/record timestamps.
 - The codex `spawn_error` → `failures.jsonl` source-level fix is NOT in this
   plan (spec §3.4, deferred). The scraper covers it from `codex.log`.
+
+**Implementation note (post-execution):** the shipped `scan_errors.py` adds a
+dedup sidecar `errors.jsonl.keys` not shown in the Task 3 code listing above —
+it preserves dedup keys past `errors.jsonl` ring-buffer rotation, ring-buffered
+itself (cap 20000 / keep 10000). See design doc §6/§7 for the rationale. The
+Task 3 listing is left as-authored (historical artifact); the design doc is the
+aligned source of truth.

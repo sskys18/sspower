@@ -190,6 +190,12 @@ Behaviour:
 - Classifies `category`/`origin` per §4.
 - Dedup key: `sha1(category + source + message + day-bucket)`. A row already
   present in `errors.jsonl` is not appended again.
+- **Dedup sidecar** (implementation refinement, not in original draft): keys
+  are also persisted to `errors.jsonl.keys` (`SSPOWER_ERROR_KEYS_FILE`). The
+  scraper unions keys from both `errors.jsonl` and the sidecar before
+  deciding. Reason: `errors.jsonl` is ring-buffered (§7) — once a row rotates
+  out, its key is lost, so a re-scrape of a still-in-`--since`-window source
+  line would re-add it. The sidecar preserves dedup memory past rotation.
 - Appends new rows to `errors.jsonl`.
 - Emits summary JSON: `{counts: {category: {plugin: N, external: M}},
   recurring: [...], window: "24h", total: N}`.
@@ -203,6 +209,10 @@ Behaviour:
 - The scraper performs rotation after its append pass (single writer for
   rotation — avoids two processes truncating concurrently). The hook-trap
   writer only appends, never rotates.
+- The `errors.jsonl.keys` dedup sidecar (§6) is ring-buffered the same way:
+  cap 20000 keys (`SSPOWER_ERROR_KEYS_MAX`), keep last 10000
+  (`SSPOWER_ERROR_KEYS_KEEP`) — larger than the `errors.jsonl` window so
+  dedup memory genuinely outlives a rotation.
 
 ## 8. Secret redaction
 
