@@ -8,7 +8,7 @@
 
 **Tech Stack:** Git, Markdown (skill files are instruction documents, not executable code)
 
-**Spec:** `docs/sspower/specs/2026-03-23-codex-app-compatibility-design.md`
+**Spec:** `docs/specs/2026-03-23-codex-app-compatibility-design.md`
 
 ---
 

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js (Express, ws, chokidar), vanilla HTML/CSS/JS
 
-**Spec:** `docs/sspower/specs/2026-02-19-visual-brainstorming-refactor-design.md`
+**Spec:** `docs/specs/2026-02-19-visual-brainstorming-refactor-design.md`
 
 ---
 

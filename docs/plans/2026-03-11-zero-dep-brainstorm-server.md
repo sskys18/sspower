@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js built-ins only: `http`, `crypto`, `fs`, `path`
 
-**Spec:** `docs/sspower/specs/2026-03-11-zero-dep-brainstorm-server-design.md`
+**Spec:** `docs/specs/2026-03-11-zero-dep-brainstorm-server-design.md`
 
 **Existing tests:** `tests/brainstorm-server/ws-protocol.test.js` (unit), `tests/brainstorm-server/server.test.js` (integration)
 

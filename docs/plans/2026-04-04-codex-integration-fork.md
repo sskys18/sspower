@@ -8,7 +8,7 @@
 
 **Tech Stack:** Git, GitHub CLI (`gh`), Claude Code plugin system, Markdown skill files
 
-**Spec:** `docs/sspower/specs/2026-04-03-codex-integration-fork-design.md`
+**Spec:** `docs/specs/2026-04-03-codex-integration-fork-design.md`
 
 ---
 
