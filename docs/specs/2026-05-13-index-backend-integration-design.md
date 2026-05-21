@@ -260,18 +260,40 @@ sspower-mem add    --scope <project|user> --layer <episodic|decision|gotcha|user
                    # --no-llm: skip step 3a/3b (client-side extraction + extracted-record writes).
 sspower-mem search --scope <project|user|project,user> [--cwd <path>] [--layer <l1,l2,...>]
                    (--query <text> | --mode recent) [--top-k 8] [--json] [--idx-only]
-                   # --query <text>:  semantic/grep search (default behavior).
+                   # --top-k: must be an integer in [1, 1000]; out-of-range values are
+                   #          REJECTED with rc=30 (Phase E hardening). MAX_TOP_K bounds the
+                   #          emitted result set and the index-search top_k request — it does
+                   #          NOT bound digest-side block materialization (digest.recent /
+                   #          grep_search load all in-scope blocks, then slice; that is
+                   #          bounded separately by MAX_DIGEST_BYTES).
+                   # --query <text>:  the index is tried first; on raise OR empty result the
+                   #                  CLI falls through to the deterministic digest grep
+                   #                  (source="digest-grep") unless --idx-only is set. When the
+                   #                  index backend is absent or broken at runtime, _try_index_search
+                   #                  reports index_raised=True and --query resolves to the grep path.
                    # --mode recent:   no query; return top-k most-recent blocks. Bypasses the index;
                    #                  source="digest-recent". Used by hooks/session-start.
                    # Exactly one of --query and --mode is required.
-                   # --idx-only: disables ALL digest fallback (both exception fallback AND zero-result
-                   #              fallback). Renamed from v5's `--no-grep-fallback` (which only gated
-                   #              the 0-result fallback — Codex v6 flagged the ambiguity).
-                   #              Behavior with --idx-only set:
-                   #                - the index raises  → CLI exits NONZERO (caller debugs the dep/Chroma).
-                   #                - the index returns [] → CLI prints [] and exits 0 (legitimate no-match).
-                   #              Default (flag NOT set): both fallbacks active, digest grep covers
-                   #              both exceptions and zero-result.
+                   # --idx-only: meaningful ONLY with --query — it suppresses the digest grep
+                   #              fallback (both the exception fallback AND the zero-result
+                   #              fallback) so the CLI emits only index hits. With --mode recent
+                   #              it is IGNORED: cmd_search returns from the recent branch before
+                   #              the index path and never reads args.idx_only.
+                   #              Renamed from v5's `--no-grep-fallback` (which only gated the
+                   #              0-result fallback — Codex v6 flagged the ambiguity).
+                   #              Behavior with --query and --idx-only set (current code, cli.py cmd_search):
+                   #                - _try_index_search raised → CLI prints a stderr note, exits rc=10.
+                   #                - the index returned []    → CLI prints [] and exits rc=0 (legit no-match).
+                   #                - the index returned hits  → CLI emits them and exits rc=0.
+                   #              The rc=10 path is CONDITIONAL: _try_index_search reports
+                   #              index_raised=True only when the mem backend import fails, OR
+                   #              build_memory raises, OR a per-scope mem.search raises. With the
+                   #              sspower_mem.mem subpackage and the mem0ai/chromadb/model2vec deps
+                   #              installed and a working index, --idx-only exits rc=0. --idx-only
+                   #              is thus a "fail loud if the index is missing/broken" debugging
+                   #              knob — NOT a no-op, and NOT a guaranteed rc=10.
+                   #              Default (flag NOT set): grep fallback active, covering both the
+                   #              index-raise and zero-result cases.
 sspower-mem migrate [--from-wiki <dir>] [--from-memory <dir>] [--dry-run]
                     [--reextract [<id>|all]] [--cwd <path>]
                     # Either ingest-from-source mode (--from-wiki and/or --from-memory) OR
@@ -464,6 +486,17 @@ Targeted partial recovery is deterministic and operates only on extracted record
 
 #### Read path
 
+> **INDEX-BACKEND NOTE:** The index-backed steps below (steps 1, 4 of the
+> deterministic order, the `source: "index"` entries, and the index-multi-scope
+> `min_max_norm` rule) describe the semantic-index contract. They are live only
+> when the `sspower_mem.mem` backend is importable and a working index exists.
+> When the backend is absent or broken at runtime, `_try_index_search` reports
+> `index_raised=True`: `--query` then resolves to the deterministic grep path,
+> and `--idx-only` exits rc=10. When the backend IS present and functional,
+> `--query` returns `source: "index"` hits and `--idx-only` exits rc=0. The grep
+> fallback scoring and `digest-recent` paths below are always live regardless of
+> index-backend state.
+
 ```
 search (deterministic order):
   1. Try the index's search — **one call per scope** (the index's user_id filter is scalar; see §5 mapping).
@@ -525,7 +558,11 @@ Grep fallback scoring (deterministic, no external lib):
     - Implementation: a tiny helper `min_max_norm(values)` that returns `[1.0]*len(values)` when `min==max`.
 
 CLI flags:
-  --idx-only   disable step 3 (index-only mode for debugging)
+  --idx-only   meaningful only with --query: suppress the grep fallback and
+               return only index hits. When _try_index_search raises (backend
+               missing/broken) it exits rc=10; on a working index it exits rc=0.
+               Ignored with --mode recent. See the search synopsis above for
+               the full contract and the conditional rc=10 behavior.
   --json               machine-readable output (the above object array)
 ```
 
