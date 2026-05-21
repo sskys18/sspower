@@ -41,6 +41,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=_log.sh
 . "$SCRIPT_DIR/_log.sh"
+trap '_sspower_exit_guard $? "0" hook.auto-review' EXIT
 
 # ---------- Bypasses + re-entry guards ----------
 [ "${SSPOWER_AUTO_REVIEW:-on}" = "off" ] && exit 0

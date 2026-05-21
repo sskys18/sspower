@@ -2,6 +2,8 @@
 # SessionStart hook for sspower plugin
 
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0 20" hook.session-start' EXIT
 
 # Determine plugin root directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

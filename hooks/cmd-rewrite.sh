@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.cmd-rewrite' EXIT
 # sspower cmd-rewrite hook — version 1
 # Rewrites Bash commands through an external rewriter for token savings.
 #

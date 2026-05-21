@@ -5,6 +5,8 @@
 # / no jq -> exit 0 silent. Disable: export SSPOWER_CODEX_LSP_POSTTOOL=0
 
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.codex-lsp-posttool' EXIT
 
 [[ "${SSPOWER_CODEX_LSP_POSTTOOL:-1}" == "0" ]] && exit 0
 

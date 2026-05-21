@@ -10,6 +10,8 @@
 # Fail-open: a JSON write failure must NOT block prompt submission.
 
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.prompt-submit' EXIT
 
 REMINDER="sspower: BEFORE responding, check which skills apply (even 1% chance = invoke via Skill tool). Priority: process skills first (brainstorming, systematic-debugging), then implementation skills (test-driven-development, writing-plans, executing-plans, subagent-driven-development). Rigid skills (TDD, debugging): follow exactly. Flexible skills: adapt to context. If about to claim done: verification-before-completion. If completing a feature: requesting-code-review. Skip only for pure Q&A with zero coding/planning intent."
 

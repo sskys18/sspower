@@ -13,6 +13,8 @@
 # empirically confirmed (output prints `Path: <CWD>`).
 
 set -uo pipefail   # NOT -e: we must fail open, not abort
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.semble-context' EXIT
 
 DIAG_LOG="${HOME}/.claude/sspower/codex.log"
 

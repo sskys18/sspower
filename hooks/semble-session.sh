@@ -4,6 +4,8 @@
 # Fail-OPEN: missing tools -> status line says so, exit 0.
 
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.semble-session' EXIT
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 

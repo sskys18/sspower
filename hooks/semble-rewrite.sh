@@ -9,6 +9,8 @@
 # Disable: export SSPOWER_SEMBLE_REWRITE=0
 
 set -uo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
+trap '_sspower_exit_guard $? "0" hook.semble-rewrite' EXIT
 
 [[ "${SSPOWER_SEMBLE_REWRITE:-1}" == "0" ]] && exit 0
 command -v jq        >/dev/null 2>&1 || exit 0
