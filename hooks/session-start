@@ -45,7 +45,10 @@ sspower_mem_call() {
     fi
 
     set +e
-    SSP_OUT=$(UV_OFFLINE=1 uvx --offline --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>&1)
+    # SSPOWER_BRIDGE_PATH: extract.py's default bridge-path walk is relative to
+    # the package install dir — wrong under a uvx-isolated cache install. Pin it
+    # to <plugin>/scripts/codex-bridge.mjs (SSPOWER_MEM_SRC is .../scripts/sspower_mem).
+    SSP_OUT=$(SSPOWER_BRIDGE_PATH="${SSPOWER_BRIDGE_PATH:-${SSPOWER_MEM_SRC%/*}/codex-bridge.mjs}" UV_OFFLINE=1 uvx --offline --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>&1)
     raw_rc=$?
     set -e
     # Normalize: any non-{0,10,20} exit becomes 30 (dep/launch failure).
