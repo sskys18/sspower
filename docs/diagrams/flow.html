@@ -5,273 +5,426 @@
 <title>The sspower Workflow</title>
 <style>
   :root{
-    --bg:#090b10; --tx:#f0f3f8; --dim:#9aa3af; --mut:#646c78;
-    --line:rgba(255,255,255,.08);
-    /* main pipeline */
-    --c-route:#b693ff; --c-design:#6cb6ff; --c-plan:#4fd0d9;
-    --c-iso:#56d364; --c-build:#e3b341; --c-ship:#f0883e; --c-gate:#ff6b66;
-    /* sdd loop */
-    --c-impl:#6cb6ff; --c-json:#4fd0d9; --c-spec:#e3b341; --c-qual:#56d364;
-    --gate:#ff6b66;
-    /* fix loop */
-    --c-a:#b693ff; --c-b:#7d8694; --c-bad:#ff6b66; --c-good:#56d364;
+    /* ---- elevation / surface ---- */
+    --bg:#0a0c11;
+    --tx:#f2f4f8; --dim:#a9b1bd; --mut:#6b7280;
+    --line:rgba(255,255,255,.07);
+    --line-soft:rgba(255,255,255,.045);
+    --surf-1:linear-gradient(180deg,#171b23 0%,#0e1116 100%);
+    --surf-2:linear-gradient(180deg,#10131a 0%,#0a0c11 100%);
+    --el-1:0 1px 0 rgba(255,255,255,.045) inset, 0 20px 44px -22px rgba(0,0,0,.85);
+    --el-0:0 1px 0 rgba(255,255,255,.03) inset;
+    /* ---- phase accents ---- */
+    --c-route:#a78bfa; --c-design:#60a5fa; --c-plan:#2dd4bf;
+    --c-iso:#4ade80; --c-build:#fbbf24; --c-ship:#fb923c; --c-gate:#fb7185;
+    /* ---- sdd loop ---- */
+    --c-impl:#60a5fa; --c-json:#2dd4bf; --c-spec:#fbbf24; --c-qual:#4ade80;
+    /* ---- fix loop ---- */
+    --c-a:#a78bfa; --c-b:#7b8494; --c-bad:#fb7185; --c-good:#4ade80;
     --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    /* ---- spacing scale (4/8 grid) ---- */
+    --s2:8px; --s3:16px; --s4:24px; --s5:32px; --s6:48px; --s7:64px;
   }
   *{margin:0;padding:0;box-sizing:border-box}
   body{
     background:
-      radial-gradient(1200px 460px at 8% -8%, rgba(150,115,255,.13), transparent 62%),
-      radial-gradient(1200px 520px at 96% 108%, rgba(240,136,62,.10), transparent 60%),
+      radial-gradient(1300px 520px at 10% -10%, rgba(167,139,250,.14), transparent 60%),
+      radial-gradient(1300px 560px at 95% 112%, rgba(251,146,60,.10), transparent 58%),
       var(--bg);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
-    color:var(--tx); padding:48px 52px 52px; display:inline-block; min-width:100%;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--tx);
+    display:inline-block; min-width:100%;
     -webkit-font-smoothing:antialiased;
   }
-  .grid{position:fixed; inset:0; z-index:0; pointer-events:none;
-    background-image:radial-gradient(circle, rgba(255,255,255,.022) 1px, transparent 1.4px);
-    background-size:24px 24px;}
-  .wrap{position:relative; z-index:1}
+  .grid{
+    position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:radial-gradient(circle, rgba(255,255,255,.02) 1px, transparent 1.5px);
+    background-size:30px 30px;
+    -webkit-mask-image:radial-gradient(1400px 900px at 50% 30%, #000 30%, transparent 95%);
+            mask-image:radial-gradient(1400px 900px at 50% 30%, #000 30%, transparent 95%);
+  }
 
-  .head{margin-bottom:34px}
-  .kick{font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.22em;
-    text-transform:uppercase; color:var(--c-route); margin-bottom:8px}
+  /* ============ FIXED CANVAS — connectors anchor to this ============ */
+  .canvas{
+    position:relative; z-index:1;
+    width:2120px; margin:0 auto;
+    padding:56px 60px 64px;
+  }
+  /* SVG connector layer — sits above surfaces, below text-bearing nodes */
+  .links{
+    position:absolute; inset:0; z-index:5; pointer-events:none;
+    width:100%; height:100%;
+  }
+
+  /* ===================== HEADER ===================== */
+  .head{margin-bottom:var(--s6); max-width:880px}
+  .kick{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.24em;
+    text-transform:uppercase; color:var(--c-route); margin-bottom:12px;
+    display:flex; align-items:center; gap:9px;
+  }
+  .kick::before{
+    content:""; width:22px; height:1px;
+    background:linear-gradient(90deg,var(--c-route),transparent);
+  }
   .head h1{
-    font-size:29px; font-weight:800; letter-spacing:-.025em;
-    background:linear-gradient(96deg,#fff 4%,#b693ff 30%,#6cb6ff 55%,#56d364 78%,#f0883e 96%);
+    font-size:35px; font-weight:700; letter-spacing:-.03em; line-height:1.05;
+    background:linear-gradient(100deg,#fff 2%,#c4b5fd 26%,#7dd3fc 50%,#86efac 74%,#fdba74 98%);
     -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
   }
-  .head p{color:var(--dim); font-size:13px; margin-top:8px; letter-spacing:.01em}
+  .head p{
+    color:var(--dim); font-size:14px; margin-top:14px; line-height:1.6;
+    letter-spacing:.005em; max-width:760px;
+  }
 
-  /* ===== shared horizontal track ===== */
+  /* ===================== SECTION SCAFFOLD ===================== */
+  .stage{position:relative}
+  .stage + .stage{margin-top:var(--s7)}
+
+  /* eyebrow above each tier */
+  .tier-label{
+    display:flex; align-items:baseline; gap:14px; margin-bottom:var(--s4);
+  }
+  .tier-label .tag{
+    font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.22em;
+    text-transform:uppercase;
+  }
+  .tier-label .idx{
+    font-family:var(--mono); font-size:11px; font-weight:700;
+    color:var(--mut); letter-spacing:.1em;
+  }
+  .tier-label .desc{
+    font-size:12.5px; color:var(--dim); letter-spacing:.005em;
+  }
+  .tier-label.primary .tag{
+    color:#fff;
+    background:linear-gradient(95deg,#c4b5fd,#7dd3fc,#86efac);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+  }
+  .tier-label.detail .tag{color:var(--c-spec)}
+  .tier-label.detail.fix .tag{color:var(--c-bad)}
+  .tier-label .pill{
+    width:6px; height:6px; border-radius:50%; align-self:center;
+  }
+  .tier-label.detail .pill{background:var(--c-spec); box-shadow:0 0 10px var(--c-spec)}
+  .tier-label.detail.fix .pill{background:var(--c-bad); box-shadow:0 0 10px var(--c-bad)}
+
+  /* ===================== HORIZONTAL TRACK ===================== */
   .track{display:flex; align-items:stretch; gap:0}
 
+  /* --- start / end caps --- */
   .cap{
+    position:relative; z-index:6;
     align-self:center; font-family:var(--mono); font-weight:700; font-size:10.5px;
-    letter-spacing:.06em; padding:11px 18px; border-radius:14px; white-space:nowrap;
-    text-align:center; line-height:1.45;
+    letter-spacing:.07em; padding:13px 16px; border-radius:13px; white-space:nowrap;
+    text-align:center; line-height:1.5;
   }
   .cap.start{
-    background:linear-gradient(180deg,rgba(40,46,56,.7),rgba(20,24,30,.8));
+    background:var(--surf-2);
     border:1px solid var(--line); color:var(--dim);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+    box-shadow:var(--el-0);
   }
   .cap.end{
-    background:linear-gradient(180deg,rgba(86,211,100,.2),rgba(86,211,100,.05));
-    border:1px solid rgba(86,211,100,.55); color:#7ee787;
-    box-shadow:0 0 30px rgba(86,211,100,.28), inset 0 1px 0 rgba(255,255,255,.08);
+    background:linear-gradient(180deg,rgba(74,222,128,.18),rgba(74,222,128,.04));
+    border:1px solid rgba(74,222,128,.5); color:#86efac;
+    box-shadow:0 0 36px -6px rgba(74,222,128,.4), var(--el-0);
   }
   .cap.end.blue{
-    background:linear-gradient(180deg,rgba(108,182,255,.2),rgba(108,182,255,.05));
-    border:1px solid rgba(108,182,255,.55); color:#9cd1ff;
-    box-shadow:0 0 30px rgba(108,182,255,.26), inset 0 1px 0 rgba(255,255,255,.08);
+    background:linear-gradient(180deg,rgba(96,165,250,.18),rgba(96,165,250,.04));
+    border:1px solid rgba(96,165,250,.5); color:#93c5fd;
+    box-shadow:0 0 36px -6px rgba(96,165,250,.36), var(--el-0);
   }
 
+  /* --- inline horizontal connector --- */
   .conn{
-    align-self:center; display:flex; align-items:center; flex-shrink:0; width:46px;
+    position:relative; z-index:6;
+    align-self:center; display:flex; align-items:center; flex-shrink:0; width:54px;
   }
   .conn i{
     height:2px; flex:1; border-radius:2px;
     background:linear-gradient(90deg, var(--from,#3a4150), var(--to,#3a4150));
   }
+  .conn i::after{
+    content:""; position:absolute; left:0; right:7px; top:50%; height:2px;
+    transform:translateY(-50%);
+    background:linear-gradient(90deg,transparent, var(--to,#4a5260));
+    opacity:.0;
+  }
   .conn b{
-    width:0;height:0; border-style:solid; border-width:5px 0 5px 7px;
+    width:0;height:0; border-style:solid; border-width:5px 0 5px 8px;
     border-color:transparent transparent transparent var(--to,#4a5260);
-    margin-left:-1px; filter:drop-shadow(0 0 4px var(--to,transparent));
+    margin-left:-1px; filter:drop-shadow(0 0 5px var(--to,transparent));
   }
 
+  /* ===================== PHASE CARD ===================== */
   .ph{
-    position:relative; width:212px; flex-shrink:0; display:flex; flex-direction:column;
-    background:linear-gradient(180deg,rgba(28,33,42,.92),rgba(15,18,24,.96));
-    border:1px solid var(--line); border-radius:17px; padding:17px 15px 15px;
-    box-shadow:0 14px 34px -12px rgba(0,0,0,.8),
-               inset 0 1px 0 rgba(255,255,255,.055);
+    position:relative; z-index:6;
+    width:236px; flex-shrink:0; display:flex; flex-direction:column;
+    background:var(--surf-1);
+    border:1px solid var(--line); border-radius:18px;
+    padding:20px 17px 17px;
+    box-shadow:var(--el-1);
   }
+  /* accent rail */
   .ph::before{
-    content:""; position:absolute; top:0; left:24px; right:24px; height:2px;
-    background:linear-gradient(90deg,transparent,var(--cc),transparent);
-    box-shadow:0 0 14px var(--cc); border-radius:2px;
+    content:""; position:absolute; top:0; left:20px; right:20px; height:2px;
+    background:linear-gradient(90deg,transparent,var(--cc) 22%,var(--cc) 78%,transparent);
+    border-radius:2px;
   }
-  .bar{display:flex; align-items:center; gap:10px; margin-bottom:11px}
+  /* faint accent wash at top */
+  .ph::after{
+    content:""; position:absolute; top:1px; left:1px; right:1px; height:64px;
+    border-radius:17px 17px 0 0; pointer-events:none;
+    background:linear-gradient(180deg,
+      color-mix(in srgb, var(--cc) 9%, transparent), transparent);
+  }
+
+  .bar{display:flex; align-items:center; gap:11px; margin-bottom:14px}
   .badge{
-    width:42px; height:42px; border-radius:12px; flex-shrink:0;
-    display:flex; align-items:center; justify-content:center; font-size:19px;
-    background:linear-gradient(180deg,rgba(40,46,56,.9),rgba(18,22,28,.95));
-    border:1px solid var(--cc);
-    box-shadow:0 0 16px -4px var(--cc), inset 0 1px 0 rgba(255,255,255,.07);
+    width:44px; height:44px; border-radius:13px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:20px;
+    background:var(--surf-2);
+    border:1px solid color-mix(in srgb, var(--cc) 55%, var(--line));
+    box-shadow:0 0 22px -8px var(--cc), var(--el-0);
   }
   .num{
-    font-family:var(--mono); font-size:11px; font-weight:800; color:#090b10;
-    background:var(--cc); width:21px; height:21px; border-radius:50%;
+    font-family:var(--mono); font-size:11px; font-weight:800; color:#0a0c11;
+    background:var(--cc); width:22px; height:22px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
-    box-shadow:0 0 12px -2px var(--cc);
+    box-shadow:0 0 14px -3px var(--cc);
   }
-  .kic{font-size:9px; font-family:var(--mono); font-weight:700; letter-spacing:.11em;
-    text-transform:uppercase; color:var(--cc)}
-  .nm{font-family:var(--mono); font-size:12px; font-weight:700; margin-top:3px;
-    word-break:break-word; letter-spacing:-.01em}
-  .ds{color:var(--dim); font-size:10.5px; margin-top:5px; line-height:1.55}
-  .ds b{color:#cdd4dd}
+  .kic{
+    font-size:9.5px; font-family:var(--mono); font-weight:700; letter-spacing:.13em;
+    text-transform:uppercase; color:var(--cc);
+  }
+  .nm{
+    font-family:var(--mono); font-size:13px; font-weight:700; margin-top:4px;
+    word-break:break-word; letter-spacing:-.005em; color:var(--tx);
+  }
+  .ds{color:var(--dim); font-size:11.5px; margin-top:7px; line-height:1.6}
+  .ds b{color:#dde2ea; font-weight:600}
 
-  .stack{display:flex; flex-direction:column; gap:6px; margin-top:10px}
+  /* --- nested chips / steps inside a card --- */
+  .stack{display:flex; flex-direction:column; gap:7px; margin-top:13px}
   .chip{
-    background:linear-gradient(180deg,rgba(13,16,21,.9),rgba(9,11,15,.95));
-    border:1px solid var(--line); border-radius:9px; padding:7px 10px;
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    background:var(--surf-2);
+    border:1px solid var(--line-soft); border-radius:10px; padding:8px 11px;
+    box-shadow:var(--el-0);
   }
-  .chip .cn{font-family:var(--mono); font-size:10px; font-weight:600}
-  .chip .cd{color:var(--mut); font-size:9px; margin-top:1.5px}
-  .vs{font-family:var(--mono); font-size:8.5px; color:var(--mut); text-align:center;
-    letter-spacing:.1em; margin:-1px 0}
+  .chip .cn{font-family:var(--mono); font-size:10.5px; font-weight:600; color:var(--tx)}
+  .chip .cd{color:var(--mut); font-size:9.5px; margin-top:2px}
+  .vs{
+    font-family:var(--mono); font-size:8.5px; color:var(--mut); text-align:center;
+    letter-spacing:.16em; margin:-2px 0;
+  }
 
   .step{
-    display:flex; align-items:center; gap:7px; border-radius:9px; padding:7px 9px;
-    background:linear-gradient(180deg,rgba(13,16,21,.9),rgba(9,11,15,.95));
-    border:1px solid var(--line); box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    display:flex; align-items:center; gap:8px; border-radius:10px; padding:8px 10px;
+    background:var(--surf-2);
+    border:1px solid var(--line-soft); box-shadow:var(--el-0);
   }
-  .step .dot{width:5px;height:5px;border-radius:50%;background:var(--cc);flex-shrink:0;
-    box-shadow:0 0 6px var(--cc)}
-  .step .sn{font-family:var(--mono); font-size:9.5px; font-weight:600; line-height:1.3}
-  .step.hot{border-color:rgba(255,107,102,.45); background:rgba(255,107,102,.09)}
-  .step.hot .dot{background:var(--c-gate); box-shadow:0 0 6px var(--c-gate)}
-  .step.hot .sn{color:#ff9d99}
-  .step.rec{border-color:rgba(86,211,100,.4); background:rgba(86,211,100,.08)}
-  .step.rec .dot{background:var(--c-iso); box-shadow:0 0 6px var(--c-iso)}
-  .tg{margin-left:auto; font-family:var(--mono); font-size:7.5px; font-weight:700;
-    padding:2px 5px; border-radius:4px; border:1px solid; white-space:nowrap; letter-spacing:.04em}
-  .tg.gate{border-color:var(--c-gate); color:#ff9d99}
-  .tg.rec{border-color:var(--c-iso); color:#7ee787}
+  .step .dot{
+    width:5px;height:5px;border-radius:50%;background:var(--cc);flex-shrink:0;
+    box-shadow:0 0 7px var(--cc);
+  }
+  .step .sn{font-family:var(--mono); font-size:9.5px; font-weight:600; line-height:1.35; color:var(--tx)}
+  .step.hot{
+    border-color:rgba(251,113,133,.5);
+    background:linear-gradient(180deg,rgba(251,113,133,.13),rgba(251,113,133,.05));
+    box-shadow:0 0 22px -10px var(--c-gate), var(--el-0);
+  }
+  .step.hot .dot{background:var(--c-gate); box-shadow:0 0 7px var(--c-gate)}
+  .step.hot .sn{color:#fda4af}
+  .step.rec{
+    border-color:rgba(74,222,128,.42);
+    background:linear-gradient(180deg,rgba(74,222,128,.11),rgba(74,222,128,.04));
+  }
+  .step.rec .dot{background:var(--c-iso); box-shadow:0 0 7px var(--c-iso)}
+  .tg{
+    margin-left:auto; font-family:var(--mono); font-size:7.5px; font-weight:700;
+    padding:2.5px 6px; border-radius:5px; border:1px solid; white-space:nowrap; letter-spacing:.06em;
+  }
+  .tg.gate{border-color:var(--c-gate); color:#fda4af; background:rgba(251,113,133,.1)}
+  .tg.rec{border-color:var(--c-iso); color:#86efac; background:rgba(74,222,128,.1)}
 
-  /* ===== zoom drill-in connectors & panels ===== */
-  .zoomwrap{display:flex; flex-direction:column}
-  .zoom-conn{
-    display:flex; flex-direction:column; align-items:center;
-    padding:6px 0 2px;
-  }
-  .zoom-conn .vline{
-    width:0; height:30px;
-    border-left:2px dashed rgba(227,179,65,.55);
-  }
-  .zoom-conn .vline.fix{ border-left-color:rgba(255,107,102,.5); }
-  .zoom-conn .varrow{
-    width:0;height:0; border-style:solid; border-width:8px 6px 0 6px;
-    border-color:rgba(227,179,65,.7) transparent transparent transparent;
-    filter:drop-shadow(0 2px 4px rgba(227,179,65,.35));
-  }
-  .zoom-conn .varrow.fix{
-    border-color:rgba(255,107,102,.7) transparent transparent transparent;
-    filter:drop-shadow(0 2px 4px rgba(255,107,102,.35));
-  }
-  .zoom-conn .zlabel{
-    font-family:var(--mono); font-size:8.5px; font-weight:700; letter-spacing:.14em;
-    text-transform:uppercase; color:var(--c-spec); margin-bottom:5px;
-  }
-  .zoom-conn .zlabel.fix{ color:var(--c-bad); }
-
-  /* two converging dashed lines from the SDD review gates into the fix panel */
-  .fork{
-    position:relative; height:38px; align-self:stretch;
-  }
-  .fork .leg{
-    position:absolute; top:0; width:0; height:24px;
-    border-left:2px dashed rgba(255,107,102,.5);
-  }
-  .fork .merge{
-    position:absolute; top:22px; height:2px;
-    border-top:2px dashed rgba(255,107,102,.5);
-  }
-  .fork .drop{
-    position:absolute; top:22px; width:0; height:8px;
-    border-left:2px dashed rgba(255,107,102,.5);
-  }
-  .fork .varrow{
-    position:absolute; top:30px;
-    width:0;height:0; border-style:solid; border-width:8px 6px 0 6px;
-    border-color:rgba(255,107,102,.7) transparent transparent transparent;
-    filter:drop-shadow(0 2px 4px rgba(255,107,102,.35));
-  }
-
+  /* ===================== DRILL-DOWN PANELS (subordinate) ===================== */
   .panel{
-    border:1px dashed rgba(227,179,65,.35); border-radius:20px;
-    padding:16px 22px 22px; position:relative;
-    background:rgba(227,179,65,.035);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+    position:relative;
+    border:1px dashed rgba(251,191,36,.22); border-radius:22px;
+    padding:22px 26px 26px;
+    background:rgba(251,191,36,.026);
+    box-shadow:var(--el-0);
   }
   .panel.fix{
-    border-color:rgba(255,107,102,.35);
-    background:rgba(255,107,102,.035);
+    border-color:rgba(251,113,133,.22);
+    background:rgba(251,113,133,.026);
   }
-  .panel .ptag{
-    display:inline-flex; align-items:center; gap:8px;
-    font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.16em;
-    text-transform:uppercase; color:var(--c-spec); margin-bottom:14px;
+  /* corner accent tick to read as a "zoom frame" */
+  .panel::before, .panel::after{
+    content:""; position:absolute; width:16px; height:16px; pointer-events:none;
   }
-  .panel.fix .ptag{ color:var(--c-bad); }
-  .panel .ptag .pdot{
-    width:6px;height:6px;border-radius:50%;background:var(--c-spec);
-    box-shadow:0 0 8px var(--c-spec);
+  .panel::before{
+    top:-1px; left:-1px;
+    border-top:2px solid rgba(251,191,36,.5); border-left:2px solid rgba(251,191,36,.5);
+    border-radius:22px 0 0 0;
   }
-  .panel.fix .ptag .pdot{ background:var(--c-bad); box-shadow:0 0 8px var(--c-bad); }
-  .panel .psub{
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-    text-transform:none; letter-spacing:.01em; font-weight:400;
-    color:var(--dim); font-size:11px;
+  .panel::after{
+    top:-1px; right:-1px;
+    border-top:2px solid rgba(251,191,36,.5); border-right:2px solid rgba(251,191,36,.5);
+    border-radius:0 22px 0 0;
   }
+  .panel.fix::before{border-color:rgba(251,113,133,.5)}
+  .panel.fix::after{border-color:rgba(251,113,133,.5)}
 
-  /* ----- SDD panel: scoped widths/conn from flow-sdd.html ----- */
-  .panel.sdd .ph{ width:222px; }
-  .panel.sdd .ph.wide{ width:312px; }
-  .panel .nm{ font-size:12.5px; }
-  .q{font-family:var(--mono); font-size:11px; color:var(--tx); margin-top:7px; font-weight:600}
-  .json{margin-top:10px; background:linear-gradient(180deg,rgba(10,13,18,.95),rgba(7,9,13,.97));
-    border:1px solid var(--line); border-radius:10px; padding:12px 13px;
-    font-family:var(--mono); font-size:10px; line-height:1.7; color:var(--dim);
-    box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-  .json .k{color:var(--c-json)} .json .v{color:#7ee787} .json .m{color:#9cd1ff}
-  .fixbox{margin-top:9px; display:flex; flex-direction:column; gap:2px;
-    background:rgba(255,107,102,.09); border:1px solid rgba(255,107,102,.4);
-    border-radius:9px; padding:8px 10px}
-  .fixbox .x{color:#ff9d99; font-family:var(--mono); font-size:9.5px; font-weight:700}
-  .fixbox .ft{color:var(--dim); font-size:9.5px; line-height:1.45}
-
-  /* ----- fix-loop panel: scoped widths + column connectors from flow-fixloop.html ----- */
-  .panel.fix .ph{ width:236px; padding:17px 16px 16px; }
-  .panel.fix .ph.resume{background:linear-gradient(180deg,rgba(40,30,62,.92),rgba(20,16,30,.96))}
-  .panel.fix .conn{
-    flex-direction:column; align-items:center; width:96px; gap:5px;
+  /* detail-tier cards: visually quieter than the primary pipeline */
+  .panel .ph{
+    background:var(--surf-2);
+    box-shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 14px 30px -20px rgba(0,0,0,.7);
   }
+  .panel .ph::after{display:none}
+
+  /* ----- SDD panel scoped sizing ----- */
+  .panel.sdd .ph{ width:240px; }
+  .panel.sdd .ph.wide{ width:330px; }
+  .q{
+    font-family:var(--mono); font-size:11px; color:var(--tx); margin-top:9px; font-weight:600;
+  }
+  .json{
+    margin-top:12px; background:#080a0e;
+    border:1px solid var(--line); border-radius:11px; padding:13px 14px;
+    font-family:var(--mono); font-size:10px; line-height:1.75; color:var(--dim);
+    box-shadow:var(--el-0);
+  }
+  .json .k{color:var(--c-json)} .json .v{color:#86efac} .json .m{color:#93c5fd}
+  .fixbox{
+    margin-top:11px; display:flex; flex-direction:column; gap:3px;
+    background:linear-gradient(180deg,rgba(251,113,133,.12),rgba(251,113,133,.05));
+    border:1px solid rgba(251,113,133,.4);
+    border-radius:10px; padding:9px 11px;
+  }
+  .fixbox .x{color:#fda4af; font-family:var(--mono); font-size:9.5px; font-weight:700}
+  .fixbox .ft{color:var(--dim); font-size:9.5px; line-height:1.5}
+
+  /* ----- fix-loop panel scoped sizing ----- */
+  .panel.fix .ph{ width:252px; padding:20px 18px 18px; }
+  .panel.fix .ph.resume{
+    background:linear-gradient(180deg,rgba(42,32,66,.9),rgba(18,15,28,.95));
+  }
+  .panel.fix .conn{ flex-direction:column; align-items:center; width:108px; gap:7px; }
   .panel.fix .conn .line{display:flex; align-items:center; width:100%}
-  .panel.fix .conn.plain{width:54px}
-  .vlabel{font-family:var(--mono); font-size:9.5px; font-weight:700;
-    padding:3px 9px; border-radius:999px; border:1px solid; white-space:nowrap}
-  .vlabel.bad{color:#ff9d99; border-color:rgba(255,107,102,.5); background:rgba(255,107,102,.1)}
-  .vlabel.good{color:#7ee787; border-color:rgba(86,211,100,.5); background:rgba(86,211,100,.1)}
-  .sess{margin-left:auto; font-family:var(--mono); font-size:8.5px; font-weight:700;
-    padding:3px 8px; border-radius:6px; border:1px solid; white-space:nowrap}
-  .sess.a{color:#cdb6ff; border-color:var(--c-a); background:rgba(150,115,255,.14)}
+  .panel.fix .conn.plain{width:62px}
+  .vlabel{
+    font-family:var(--mono); font-size:9.5px; font-weight:700;
+    padding:4px 11px; border-radius:999px; border:1px solid; white-space:nowrap;
+  }
+  .vlabel.bad{color:#fda4af; border-color:rgba(251,113,133,.5); background:rgba(251,113,133,.12)}
+  .vlabel.good{color:#86efac; border-color:rgba(74,222,128,.5); background:rgba(74,222,128,.12)}
+  .sess{
+    margin-left:auto; font-family:var(--mono); font-size:8.5px; font-weight:700;
+    padding:3.5px 9px; border-radius:7px; border:1px solid; white-space:nowrap;
+  }
+  .sess.a{color:#c4b5fd; border-color:var(--c-a); background:rgba(167,139,250,.15)}
   .sess.b{color:var(--mut); border-color:var(--line)}
-  .keep{margin-top:9px; font-size:9.5px; color:var(--dim); line-height:1.5;
-    border:1px dashed rgba(150,115,255,.45); border-radius:9px; padding:7px 9px;
-    background:rgba(150,115,255,.06)}
-  .keep b{color:#cdb6ff; font-family:var(--mono)}
-  /* single-page PDF export */
+  .keep{
+    margin-top:11px; font-size:9.5px; color:var(--dim); line-height:1.55;
+    border:1px dashed rgba(167,139,250,.42); border-radius:10px; padding:8px 10px;
+    background:rgba(167,139,250,.07);
+  }
+  .keep b{color:#c4b5fd; font-family:var(--mono)}
+
+  /* ===================== SVG connector styling ===================== */
+  .links .flow{fill:none; stroke-width:2.4; stroke-linecap:round}
+  .zlabel{
+    font-family:var(--mono); font-size:9.5px; font-weight:700; letter-spacing:.16em;
+  }
+
+  /* ===================== single-page PDF export ===================== */
   @media print{
-    @page{ size:1760px 1010px; margin:0 }
+    @page{ size:2120px 1515px; margin:0 }
     html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
+    body{ min-width:0 }
   }
 </style>
 </head>
 <body>
   <div class="grid"></div>
-  <div class="wrap">
+  <div class="canvas">
+
+    <!-- ===== SVG connector layer: drill-down "zoom" curves ===== -->
+    <svg class="links" viewBox="0 0 2120 1505" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <!-- userSpaceOnUse: gradient maps to absolute canvas y so every path
+             segment shares one consistent fade, regardless of its bbox -->
+        <linearGradient id="gZoom" gradientUnits="userSpaceOnUse" x1="0" y1="644" x2="0" y2="752">
+          <stop offset="0"  stop-color="#fde68a" stop-opacity=".7"/>
+          <stop offset=".5" stop-color="#fbbf24"/>
+          <stop offset="1"  stop-color="#fbbf24"/>
+        </linearGradient>
+        <linearGradient id="gFix" gradientUnits="userSpaceOnUse" x1="0" y1="1042" x2="0" y2="1175">
+          <stop offset="0"  stop-color="#fda4af" stop-opacity=".7"/>
+          <stop offset=".5" stop-color="#fb7185"/>
+          <stop offset="1"  stop-color="#fb7185"/>
+        </linearGradient>
+        <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#fbbf24" flood-opacity=".5"/>
+        </filter>
+        <filter id="softFix" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#fb7185" flood-opacity=".5"/>
+        </filter>
+        <marker id="headZoom" markerWidth="11" markerHeight="11" refX="5" refY="5"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M1,1 L9,5 L1,9 Z" fill="#fbbf24"/>
+        </marker>
+        <marker id="headFix" markerWidth="11" markerHeight="11" refX="5" refY="5"
+                orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M1,1 L9,5 L1,9 Z" fill="#fb7185"/>
+        </marker>
+      </defs>
+
+      <!-- ZOOM 1 : Phase 5 (bottom-center) -> SDD panel (top-center) -->
+      <!-- measured: PH5 center x=1475 bottom y=641 ; SDD panel top y=744 -->
+      <!-- glow underlay, then crisp stroke on top so the line stays sharp -->
+      <path class="flow" stroke="url(#gZoom)" stroke-width="6" stroke-opacity=".22"
+            filter="url(#soft)" d="M 1475 644 C 1475 694, 1475 706, 1475 748"/>
+      <path class="flow" stroke="url(#gZoom)" stroke-width="2.6" marker-end="url(#headZoom)"
+            d="M 1475 644 C 1475 694, 1475 706, 1475 748"/>
+      <circle cx="1475" cy="644" r="4" fill="#0a0c11" stroke="#fbbf24" stroke-width="2"/>
+      <text class="zlabel" x="1499" y="703" fill="#fbbf24" letter-spacing="2.4">ZOOM IN · EXECUTION</text>
+
+      <!-- ZOOM 2 : two SDD review gates -> converge -> Fix panel -->
+      <!-- measured: Gate1 x=1015 Gate2 x=1309 bottom y=1039 ; FIX panel top y=1169 ; merge x=1162 -->
+      <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
+            d="M 1015 1042 C 1015 1098, 1162 1092, 1162 1138"/>
+      <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
+            d="M 1309 1042 C 1309 1098, 1162 1092, 1162 1138"/>
+      <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
+            d="M 1162 1136 L 1162 1173"/>
+      <path class="flow" stroke="url(#gFix)" stroke-width="2.4"
+            d="M 1015 1042 C 1015 1098, 1162 1092, 1162 1138"/>
+      <path class="flow" stroke="url(#gFix)" stroke-width="2.4"
+            d="M 1309 1042 C 1309 1098, 1162 1092, 1162 1138"/>
+      <path class="flow" stroke="url(#gFix)" stroke-width="2.6" marker-end="url(#headFix)"
+            d="M 1162 1136 L 1162 1173"/>
+      <circle cx="1015" cy="1042" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
+      <circle cx="1309" cy="1042" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
+      <text class="zlabel" x="1196" y="1098" fill="#fb7185" letter-spacing="2.2">ON FAILURE · RESUME &amp; FIX</text>
+    </svg>
+
+    <!-- ===================== HEADER ===================== -->
     <div class="head">
       <div class="kick">sspower · workflow</div>
       <h1>The sspower Workflow</h1>
       <p>From a user request to a merged branch — the full pipeline up top, drilling down into how each task is executed and how a failed review recovers.</p>
     </div>
 
-    <div class="zoomwrap">
+    <!-- ===================== TIER 1 — 6-PHASE MAIN PIPELINE ===================== -->
+    <div class="stage">
+      <div class="tier-label primary">
+        <span class="idx">01</span>
+        <span class="tag">The Pipeline</span>
+        <span class="desc">six phases · user request → merged branch</span>
+      </div>
 
-      <!-- ===================== TOP: 6-PHASE MAIN PIPELINE ===================== -->
       <div class="track">
 
         <div class="cap start">◖&nbsp;USER<br>REQUEST</div>
@@ -339,25 +492,23 @@
             <div class="step"><span class="dot"></span><span class="sn">finishing-a-development-branch</span></div>
           </div>
         </div>
-        <div class="conn" style="--from:var(--c-ship);--to:#56d364"><i></i><b></b></div>
+        <div class="conn" style="--from:var(--c-ship);--to:#4ade80"><i></i><b></b></div>
 
         <div class="cap end">✓&nbsp;MERGED</div>
 
       </div>
+    </div>
 
-      <!-- ===== zoom connector: Phase 5 → SDD panel =====
-           offset = USER REQUEST cap + 4 conns + 4 phases, centered under Phase 5 -->
-      <div class="zoom-conn" style="margin-left:1090px">
-        <div class="zlabel">▼ inside phase 5 — execution</div>
-        <div class="vline"></div>
-        <div class="varrow"></div>
+    <!-- ===================== TIER 2 — SDD PER-TASK LOOP ===================== -->
+    <div class="stage">
+      <div class="tier-label detail">
+        <span class="pill"></span>
+        <span class="idx">02</span>
+        <span class="tag">Inside Each Task</span>
+        <span class="desc">the controller dispatches a fresh agent per task and runs this loop</span>
       </div>
 
-      <!-- ===================== MIDDLE: SDD PER-TASK LOOP ===================== -->
       <div class="panel sdd">
-        <div class="ptag"><span class="pdot"></span>Inside Each Task
-          <span class="psub">— the controller dispatches a fresh agent per task and runs this loop</span></div>
-
         <div class="track">
 
           <div class="cap start">◖&nbsp;TASK<br>PLAN</div>
@@ -412,30 +563,25 @@
           <div class="cap end blue">↻&nbsp;NEXT<br>TASK</div>
 
         </div>
+      </div>
+    </div>
 
-        <!-- ===== fork connector: two review gates → fix-loop panel =====
-             two dashed legs descend from under Spec Review + Quality Review,
-             converge, and drop into the fix panel below -->
-        <div class="fork">
-          <div class="leg"  style="left:592px"></div>
-          <div class="leg"  style="left:872px"></div>
-          <div class="merge" style="left:592px; width:280px"></div>
-          <div class="drop"  style="left:732px"></div>
-          <div class="varrow" style="left:726px"></div>
-        </div>
+    <!-- ===================== TIER 3 — CODEX FIX LOOP ===================== -->
+    <div class="stage">
+      <div class="tier-label detail fix">
+        <span class="pill"></span>
+        <span class="idx">03</span>
+        <span class="tag">When a Review Fails</span>
+        <span class="desc">the controller resumes the implementer's Codex session; it remembers everything it built</span>
       </div>
 
-      <!-- ===================== BOTTOM: CODEX FIX LOOP ===================== -->
       <div class="panel fix">
-        <div class="ptag"><span class="pdot"></span>When a Review Fails
-          <span class="psub">— the controller resumes the implementer's Codex session; it remembers everything it built</span></div>
-
         <div class="track">
 
           <div class="ph" style="--cc:var(--c-a)">
             <div class="bar"><div class="badge">🔨</div><span class="sess a">SESSION A</span></div>
             <div class="nm">implement</div>
-            <div class="ds">Codex builds the task. The session is kept alive — <b style="color:#cdb6ff">persisted</b>, full context retained.</div>
+            <div class="ds">Codex builds the task. The session is kept alive — <b style="color:#c4b5fd">persisted</b>, full context retained.</div>
           </div>
           <div class="conn plain" style="--from:var(--c-a);--to:var(--c-b)">
             <div class="line"><i></i><b></b></div>
@@ -475,8 +621,8 @@
 
         </div>
       </div>
-
     </div>
+
   </div>
 </body>
 </html>
