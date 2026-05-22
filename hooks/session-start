@@ -8,7 +8,6 @@ trap '_sspower_exit_guard $? "0 20" hook.session-start' EXIT
 # Determine plugin root directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SSPOWER_MEM_SRC="${CLAUDE_PLUGIN_ROOT:-$PLUGIN_ROOT}/scripts/sspower_mem"
 
 # Capture the SessionStart payload (JSON on stdin) BEFORE any other read.
 hook_payload="$(cat 2>/dev/null || true)"
@@ -29,39 +28,36 @@ escape_for_json() {
     printf '%s' "$s"
 }
 
-# --- sspower-mem exit-code normalization wrapper (spec §9 Phase E) ---
+# --- sspower-mem call wrapper (spec §9 Phase E) ---
+# Delegates to bin/sspower-mem — the single entrypoint shared with skills,
+# which owns the uvx offline->online retry (a cold or pruned uv cache
+# self-heals instead of silently killing memory for the session).
 # ALWAYS returns 0 so the caller (running under set -e) is not killed.
-# Communicates the original rc via SSP_RC and output via SSP_OUT.
+# Communicates the normalized rc via SSP_RC and output via SSP_OUT.
 sspower_mem_call() {
     # Usage: sspower_mem_call <subcommand> [args...]
-    # Sets globals: SSP_OUT (stdout+stderr), SSP_RC (normalized exit code).
-
-    # Pre-flight: if uvx is missing OR the uv cache hasn't been bootstrapped, normalize to rc=30.
-    if ! command -v uvx >/dev/null 2>&1; then
-      SSP_OUT="[sspower-mem] uvx not found in PATH; run 'brew install uv' and 'sspower-mem doctor --bootstrap'"
+    # Sets globals: SSP_OUT (CLI stdout), SSP_RC (normalized exit code).
+    local wrapper="${PLUGIN_ROOT}/bin/sspower-mem"
+    if [ ! -x "$wrapper" ]; then
+      SSP_OUT=""
       SSP_RC=30
-      echo "$SSP_OUT" >&2
+      echo "[sspower-mem] wrapper missing or not executable: $wrapper" >&2
       return 0
     fi
 
     set +e
-    # SSPOWER_BRIDGE_PATH: extract.py's default bridge-path walk is relative to
-    # the package install dir — wrong under a uvx-isolated cache install. Pin it
-    # to <plugin>/scripts/codex-bridge.mjs (SSPOWER_MEM_SRC is .../scripts/sspower_mem).
-    SSP_OUT=$(SSPOWER_BRIDGE_PATH="${SSPOWER_BRIDGE_PATH:-${SSPOWER_MEM_SRC%/*}/codex-bridge.mjs}" UV_OFFLINE=1 uvx --offline --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>&1)
-    raw_rc=$?
+    # Wrapper keeps stdout clean (CLI JSON only); its diagnostics + any uvx
+    # build noise go to stderr, which we let flow to the hook's stderr.
+    SSP_OUT=$("$wrapper" "$@")
+    SSP_RC=$?
     set -e
-    # Normalize: any non-{0,10,20} exit becomes 30 (dep/launch failure).
-    case "$raw_rc" in
-      0|10|20) SSP_RC=$raw_rc ;;
-      *)       SSP_RC=30 ;;
-    esac
+    # Wrapper already normalizes to {0,10,20,30}; re-clamp defensively.
     case "$SSP_RC" in
       0)  : ;;  # success; $SSP_OUT is the result
-      10) echo "[sspower-mem] degraded (rc=10, the index-backend step failed): $SSP_OUT" >&2 ;;
-      20) echo "[sspower-mem] HARD fail (rc=20, digest unwritable): $SSP_OUT" >&2 ;;
-      30) echo "[sspower-mem] dep missing (rc=30, uv cache not warmed?): $SSP_OUT" >&2; SSP_OUT="" ;;
-      *)  echo "[sspower-mem] unexpected rc=$SSP_RC: $SSP_OUT" >&2; SSP_OUT="" ;;
+      10) echo "[sspower-mem] degraded (rc=10, the index-backend step failed)" >&2 ;;
+      20) echo "[sspower-mem] HARD fail (rc=20, digest unwritable)" >&2 ;;
+      30) echo "[sspower-mem] dep missing (rc=30, uvx/cache unavailable)" >&2; SSP_OUT="" ;;
+      *)  echo "[sspower-mem] unexpected rc=$SSP_RC" >&2; SSP_RC=30; SSP_OUT="" ;;
     esac
     return 0  # CRITICAL: never propagate via return value under set -e.
 }

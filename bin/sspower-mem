@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# sspower-mem — single entrypoint for the memory CLI (skills + hooks).
+#
+# Resolves the Python package via uvx. Two-stage launch:
+#   1. Fast path  — `uvx --offline`: zero network when the uv cache is warm.
+#   2. Heal path  — on a launch/dep failure (cold or pruned uv cache, or a
+#      plugin version bump that re-keyed the source build), retries ONCE
+#      without --offline so uvx refetches the missing wheels and rewarms the
+#      cache. Without this, an evicted cache silently kills project memory
+#      for the rest of the session.
+#
+# Exit codes are the CLI's own contract, normalized: 0 ok, 10 degraded,
+# 20 HARD data-loss, 30 launch/dep failure (anything else collapses to 30).
+# stdout carries ONLY the CLI result (JSON); diagnostics + uvx build noise
+# go to stderr so callers can `jq` stdout directly.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SSPOWER_MEM_SRC="${SSPOWER_MEM_SRC:-${SCRIPT_DIR%/bin}/scripts/sspower_mem}"
+
+if ! command -v uvx >/dev/null 2>&1; then
+  echo "[sspower-mem] uvx not found in PATH; run 'brew install uv'" >&2
+  exit 30
+fi
+
+# extract.py's default bridge-path walk is relative to the package install
+# dir — wrong under a uvx-isolated cache install. Pin it to
+# <plugin>/scripts/codex-bridge.mjs (SSPOWER_MEM_SRC is .../scripts/sspower_mem).
+export SSPOWER_BRIDGE_PATH="${SSPOWER_BRIDGE_PATH:-${SSPOWER_MEM_SRC%/*}/codex-bridge.mjs}"
+
+_err="$(mktemp -t sspower-mem.XXXXXX)"
+trap 'rm -f "$_err"' EXIT
+
+# Stage 1: fast path — warm uv cache, no network.
+out="$(UV_OFFLINE=1 uvx --offline --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>"$_err")"
+rc=$?
+
+# Stage 2: heal path — a non-CLI exit means uvx itself failed to launch
+# (the CLI only ever exits 0/10/20). --offline cannot refetch; retry online.
+if [ "$rc" != 0 ] && [ "$rc" != 10 ] && [ "$rc" != 20 ]; then
+  echo "[sspower-mem] offline cache miss (uvx rc=$rc); retrying online to rewarm" >&2
+  cat "$_err" >&2
+  out="$(uvx --from "$SSPOWER_MEM_SRC" sspower-mem "$@" 2>"$_err")"
+  rc=$?
+fi
+
+cat "$_err" >&2
+printf '%s' "$out"
+case "$rc" in
+  0|10|20) exit "$rc" ;;
+  *)       exit 30 ;;
+esac

@@ -19,7 +19,6 @@ import sys
 import os
 import re
 import hashlib
-import shutil
 import subprocess
 import tempfile
 from datetime import datetime
@@ -175,28 +174,18 @@ def _safe_append_text(path: Path, content: str, trust_root: Path):
 
 
 def sspower_mem_call(*args):
-    """Mirror of the shell wrapper (spec §9 Phase E). Returns (rc, out).
-    Never raises. rc is always one of {0, 10, 20, 30}; uvx-internal exits
-    collapse to 30. Invokes `UV_OFFLINE=1 uvx --offline --from <src>`."""
-    src = os.environ.get(
-        "SSPOWER_MEM_SRC",
-        str(Path(__file__).resolve().parent.parent / "scripts" / "sspower_mem"),
-    )
-    if not shutil.which("uvx"):
-        return 30, "[sspower-mem] uvx not found in PATH"
-    env = os.environ.copy()
-    env["UV_OFFLINE"] = "1"
-    # extract.py's default bridge-path walk is relative to the package install
-    # dir — wrong under a uvx-isolated cache install. Pin it to
-    # <plugin>/scripts/codex-bridge.mjs (src is .../scripts/sspower_mem).
-    env.setdefault("SSPOWER_BRIDGE_PATH", str(Path(src).parent / "codex-bridge.mjs"))
+    """Delegates to bin/sspower-mem — the single entrypoint shared with
+    skills + session-start, which owns the uvx offline->online retry.
+    Returns (rc, out); never raises. rc is one of {0, 10, 20, 30}."""
+    wrapper = Path(__file__).resolve().parent.parent / "bin" / "sspower-mem"
+    if not (wrapper.is_file() and os.access(wrapper, os.X_OK)):
+        return 30, f"[sspower-mem] wrapper missing at {wrapper}"
     try:
         cp = subprocess.run(
-            ["uvx", "--offline", "--from", src, "sspower-mem", *args],
-            capture_output=True, text=True, env=env,
+            [str(wrapper), *args], capture_output=True, text=True,
         )  # no check=True
-    except FileNotFoundError:
-        return 30, "[sspower-mem] uvx launch failed"
+    except (FileNotFoundError, PermissionError):
+        return 30, "[sspower-mem] wrapper launch failed"
     raw = cp.returncode
     rc = raw if raw in (0, 10, 20) else 30
     out = (cp.stdout or "") + (cp.stderr or "")
