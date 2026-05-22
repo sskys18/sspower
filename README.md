@@ -9,6 +9,7 @@
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2.svg)](https://claude.com/claude-code)
 [![Skills](https://img.shields.io/badge/skills-22-orange.svg)](#-all-22-skills)
+[![Docs](https://img.shields.io/badge/docs-architecture%20site-a371f7.svg)](https://sskys18.github.io/sspower/)
 
 *22 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
 
@@ -58,7 +59,7 @@
 
 </details>
 
-> 📐 Full system internals — hooks, bridge, sandbox, memory — are in **[docs/architecture.html](docs/architecture.html)** and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
