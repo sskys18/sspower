@@ -34,10 +34,9 @@ process.stdin.on('end', () => {
     }
 
     // Slash commands. Only /diet (level switch) mutates the persistent flag.
-    // One-shot commands like /diet-commit, /diet-review, /diet-compress are
-    // handled by their own skills and must not clobber the user's active
-    // intensity level (doing so would silently suppress per-turn diet
-    // reinforcement on later prompts).
+    // One-shot commands like /compress-memory are handled by their own skill
+    // and must not clobber the user's active intensity level (doing so would
+    // silently suppress per-turn diet reinforcement on later prompts).
     if (prompt.startsWith('/diet')) {
       const parts = prompt.split(/\s+/);
       const cmd = parts[0];

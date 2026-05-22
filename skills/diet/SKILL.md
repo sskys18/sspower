@@ -3,8 +3,10 @@ name: diet
 description: >
   Token-diet communication mode. Cuts response tokens ~70% by dropping fluff
   while keeping full technical accuracy. Intensity levels: lite, full (default),
-  ultra. Use when user says "diet mode", "be terse", "less tokens", "be brief",
-  or invokes /diet. Also auto-triggers when token efficiency is requested.
+  ultra. Also governs commit-message and code-review formatting (terse
+  Conventional Commits, one-line review comments). Use when user says "diet
+  mode", "be terse", "less tokens", "be brief", "write a commit", "review this
+  PR", or invokes /diet. Also auto-triggers when token efficiency is requested.
 ---
 
 Respond terse. All technical substance stay. Only fluff die.
@@ -53,6 +55,16 @@ Example — destructive op:
 > ```
 > Diet resume. Verify backup exist first.
 
+## Commits
+
+Conventional Commits, terse, *why* over *what*. Form: `<type>(<scope>): <imperative summary>` — scope optional, ≤50 chars (hard cap 72), no trailing period. Types: feat, fix, refactor, perf, docs, test, chore, build, ci, style, revert. Imperative mood ("add", not "added").
+
+Body only when *why* isn't obvious; breaking changes, migrations, security fixes, and reverts always get a body (wrap 72, issue refs at end like `Closes #42`). Never write "this commit does X", "I"/"we"/"now", AI attribution, emoji, or restate the filename. Generate the message only — do not run `git commit` or stage.
+
+## Reviews
+
+One line per finding: `L<line>: <problem>. <fix>.` (prefix `<file>:` for multi-file diffs). Severity prefix when mixed: 🔴 bug (broken behavior), 🟡 risk (fragile — race, missing guard, swallowed error), 🔵 nit (author may ignore), ❓ q (genuine question). Keep exact line numbers, symbol names in backticks, a concrete fix. Drop "I noticed"/"it seems"/"you might consider", per-comment praise, restating the diff, hedging. Full prose (not terse) for security/CVE findings, architectural disagreements, onboarding a new author.
+
 ## Boundaries
 
-Code/commits/PRs: write normal. "stop diet" or "normal mode": revert. Level persist until changed or session end.
+Code blocks: verbatim, never compressed. Commit messages and review comments: follow the Commits / Reviews sections above. Security warnings and destructive-action confirmations: full clarity. "stop diet" or "normal mode": revert. Level persists until changed or session end.

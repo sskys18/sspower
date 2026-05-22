@@ -53,7 +53,7 @@
 <details>
 <summary><b>Full detail</b></summary>
 
-- **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. Three sub-skills: `/diet-commit`, `/diet-review`, `/compress-memory`.
+- **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. The diet ruleset also governs commit-message and code-review formatting (terse Conventional Commits, one-line review comments) — no separate skill needed. Companion skill: `/compress-memory`.
 - **Project memory (sspower-mem)** — PreCompact + SessionEnd hooks archive each session: a structured JSON sidecar into `<cwd>/.claude/wiki/sessions/` (legacy belt) and an `episodic` block ingested into the `sspower-mem` backend. The per-session markdown file and `index.md` are no longer written (Phase E). The JSON sidecar is symlinked into `~/.claude/sessions/` for cross-project tooling.
 - **Wired skills** — `brainstorming`, `writing-plans`, `systematic-debugging`, and `using-sspower` read/write decisions + gotchas via the `sspower-mem` CLI before proposing work, so prior context informs every new design and bug investigation.
 - **Codex defaults** — tier/model/effort are governed by `~/.codex/config.toml` profiles (`quick`/`normal`/`deep`, single source of truth). `codex-bridge.mjs` selects a per-command profile (`COMMAND_PROFILE`) and passes `-p`; override per-call with `--profile` / `--model` / `--effort` (explicit flags patch individual profile fields).
@@ -142,9 +142,7 @@ When a review fails, the controller resumes the implementer's Codex session — 
 | `codex-enrich` | Codex | Validate prompts via Codex repo scan |
 | `codex-diagnostics` | Codex | Examine bridge log, propose patches for recurring errors |
 | `writing-skills` | Meta | TDD for skill development |
-| `diet` | Output | Terse-mode toggle (`/diet lite\|full\|ultra\|off`) |
-| `diet-commit` | Output | One-shot terse commit-message generator |
-| `diet-review` | Output | One-shot terse PR-review comments |
+| `diet` | Output | Terse-mode toggle (`/diet lite\|full\|ultra\|off`); also governs commit-message + code-review formatting |
 | `compress-memory` | Output | Compress CLAUDE.md / preferences into terse format |
 
 ---

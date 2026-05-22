@@ -18,9 +18,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Persistent modes only. One-shot skills (diet-commit, diet-review,
-// compress-memory) do their work via slash commands and must never be
-// written to the persistent flag.
+// Persistent modes only. One-shot skills (compress-memory) do their work
+// via slash commands and must never be written to the persistent flag.
 const VALID_MODES = ['off', 'lite', 'full', 'ultra'];
 
 function getConfigDir() {

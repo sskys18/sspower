@@ -78,9 +78,7 @@ Skills are loaded on demand by Claude Code's skill router. Each is one directory
 
 | Skill | Purpose |
 |-------|---------|
-| `diet` | Token-efficient response mode (lite / full / ultra / off). |
-| `diet-commit` | Compact Conventional Commit messages. |
-| `diet-review` | One-line PR comments (location, problem, fix). |
+| `diet` | Token-efficient response mode (lite / full / ultra / off); also governs commit-message + code-review formatting. |
 | `compress-memory` | Compress natural-language memory files. |
 
 ## Hooks
@@ -282,8 +280,6 @@ Resume mode (`bridge resume`) doesn't support `--output-schema`, so the bridge w
 | Command | Skill / target |
 |---------|----------------|
 | `/diet [lite\|full\|ultra\|off]` | `diet` skill |
-| `/diet-commit` | `diet-commit` skill |
-| `/diet-review` | `diet-review` skill |
 | `/codex-track` | `codex-tracking` skill |
 
 Each command is a `.toml` (or `.md`) entrypoint that invokes the matching skill.

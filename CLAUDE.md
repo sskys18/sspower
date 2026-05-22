@@ -10,7 +10,7 @@ hooks/           — SessionStart (diet-activate + semble-session), UserPromptSu
 agents/          — subagent prompts (code-reviewer, codex-rescue, security-reviewer, sanity-reviewer)
 scripts/         — codex-bridge.mjs (native Codex CLI integration), codex-registry.mjs (session state for tracking), sspower_mem/ (Python package for sspower-mem memory CLI; uv/uvx-runnable)
 schemas/         — structured output contracts for Codex (implementation, spec-review, quality-review)
-commands/        — slash command entrypoints (diet, diet-commit, diet-review, codex-track)
+commands/        — slash command entrypoints (diet, codex-track)
 docs/            — customization docs, plans, specs
 tests/           — skill and brainstorm-server tests
 ```
