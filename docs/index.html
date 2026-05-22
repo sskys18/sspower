@@ -193,8 +193,9 @@
   <div class="grid">
     <div class="card">
       <h4><span class="em">🧩</span>Skills</h4>
-      <p>22 on-demand workflow modules. A meta-router (<code>using-sspower</code>) fires
-         every turn and pulls in any skill that matches — even at 1% probability.</p>
+      <p>19 on-demand workflow modules. The <code>prompt-submit</code> hook routes by
+         prompt intent and auto-starts a plan→review→exec→test→review flow on
+         multi-step work; <code>using-sspower</code> is the skill reference.</p>
     </div>
     <div class="card">
       <h4><span class="em">🪝</span>Hooks</h4>
@@ -333,7 +334,7 @@ sspower/
   <h3>Process &amp; methodology</h3>
   <table>
     <tr><th>Skill</th><th>Purpose</th></tr>
-    <tr><td><code>using-sspower</code></td><td>Meta-router — fires every turn, surfaces relevant skills</td></tr>
+    <tr><td><code>using-sspower</code></td><td>Skill reference/catalog — the <code>prompt-submit</code> hook does the routing</td></tr>
     <tr><td><code>brainstorming</code></td><td>Design before code; reads prior decisions from memory</td></tr>
     <tr><td><code>writing-plans</code></td><td>Spec → multi-step plan. <b>HARD-GATE</b>: <code>bridge plan-review</code></td></tr>
     <tr><td><code>executing-plans</code></td><td>Walk a written plan with checkpoints</td></tr>
@@ -382,7 +383,6 @@ sspower/
     <tr><td><code>review</code></td><td><span class="tag ro">read-only</span></td><td>no</td><td><code>quality-review-output</code></td></tr>
     <tr><td><code>rescue [--write]</code></td><td><span class="tag ro">read-only</span> / <span class="tag rw">workspace-write</span></td><td>persist on <code>--write</code></td><td>—</td></tr>
     <tr><td><code>resume --session-id</code></td><td>inherits</td><td>yes</td><td>via prompt-wrap</td></tr>
-    <tr><td><code>enrich</code></td><td><span class="tag ro">read-only</span></td><td>no</td><td>—</td></tr>
     <tr><td><code>ps / status / tail / kill / steer</code></td><td>—</td><td colspan="2">Session registry operations</td></tr>
   </table>
 
@@ -480,8 +480,8 @@ codex-bridge.mjs steer  --session-id &lt;id&gt; --prompt &lt;p&gt;   <span class
   <p class="lead">Every session is archived (PreCompact + SessionEnd) into
      <code>sspower-mem</code> as an <code>episodic</code> block, plus a JSON sidecar
      under <code>&lt;cwd&gt;/.claude/wiki/sessions/</code> (legacy belt).</p>
-  <p class="lead"><code>brainstorming</code>, <code>writing-plans</code>,
-     <code>systematic-debugging</code> and <code>using-sspower</code> read and write
+  <p class="lead"><code>brainstorming</code>, <code>writing-plans</code> and
+     <code>systematic-debugging</code> read and write
      decisions + gotchas through the <code>sspower-mem</code> CLI — so prior context
      informs every new design and bug investigation. <code>session-start</code> injects
      recent project memory back into context via <code>sspower-mem search --mode recent</code>.</p>
@@ -498,9 +498,9 @@ codex-bridge.mjs steer  --session-id &lt;id&gt; --prompt &lt;p&gt;   <span class
   <h2><span class="ico">📊</span>Observability</h2>
   <p class="lead">The bridge and hooks write one event per line to a single rotating
      log — <code>~/.claude/sspower/codex.log</code> (rotates at 1000 lines, keeps 500).</p>
-<pre>2026-04-23T14:22:01Z <span class="k">[error]</span> bridge.enrich kind="schema_parse_fail" …
-2026-04-23T14:22:33Z <span class="k">[warn]</span>  hook.enrich  kind=timeout dur=31s …
-2026-04-23T14:22:50Z <span class="k">[info]</span>  hook.enrich  kind=enriched dur=18s …</pre>
+<pre>2026-05-22T07:08:14Z <span class="k">[error]</span> bridge.review kind="schema_parse_fail" …
+2026-05-22T07:09:33Z <span class="k">[warn]</span>  hook.prompt-submit kind=autostart_failed …
+2026-05-22T07:10:50Z <span class="k">[warn]</span>  hook.auto-review kind=deny_verdict verdict=needs-attention …</pre>
   <p class="lead">During runs, a live event stream renders on stderr —
      <code>[codex:session]</code>, <code>[codex:tool]</code>, <code>[codex:edit]</code>,
      <code>[codex:token]</code>, <code>[codex:alive]</code> (30s heartbeat),

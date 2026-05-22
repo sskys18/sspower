@@ -55,7 +55,7 @@
 
 - **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. The diet ruleset also governs commit-message and code-review formatting (terse Conventional Commits, one-line review comments) — no separate skill needed. Companion skill: `/compress-memory`.
 - **Project memory (sspower-mem)** — PreCompact + SessionEnd hooks archive each session: a structured JSON sidecar into `<cwd>/.claude/wiki/sessions/` (legacy belt) and an `episodic` block ingested into the `sspower-mem` backend. The per-session markdown file and `index.md` are no longer written (Phase E). The JSON sidecar is symlinked into `~/.claude/sessions/` for cross-project tooling.
-- **Wired skills** — `brainstorming`, `writing-plans`, `systematic-debugging`, and `using-sspower` read/write decisions + gotchas via the `sspower-mem` CLI before proposing work, so prior context informs every new design and bug investigation.
+- **Wired skills** — `brainstorming`, `writing-plans`, and `systematic-debugging` read/write decisions + gotchas via the `sspower-mem` CLI before proposing work, so prior context informs every new design and bug investigation.
 - **Codex defaults** — tier/model/effort are governed by `~/.codex/config.toml` profiles (`quick`/`normal`/`deep`, single source of truth). `codex-bridge.mjs` selects a per-command profile (`COMMAND_PROFILE`) and passes `-p`; override per-call with `--profile` / `--model` / `--effort` (explicit flags patch individual profile fields).
 - **Command rewrite hooks** — three `PreToolUse:Bash` hooks chain in order: (1) `hooks/semble-rewrite.sh` opportunistically rewrites `ls -R [path]` and `grep -R <BARE_IDENT> [path]` to `semble_rs tree` / `semble_rs search --compact` (gitignore-aware; explicit `ask` permission; fail-open noop on unquoted globs/vars or missing binary). (2) `hooks/cmd-rewrite.sh` routes remaining shell commands through an external rewriter for token-saving substitutions — default [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`; needs binary (>= 0.23.0) + `jq` on PATH or no-ops. (3) `hooks/auto-review.sh` (see next bullet). Bypass semble layer with `SSPOWER_SEMBLE_REWRITE=0`.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
@@ -125,7 +125,7 @@ When a review fails, the controller resumes the implementer's Codex session — 
 
 | Skill | Category | What it does |
 |-------|----------|-------------|
-| `using-sspower` | Meta | Routes to relevant skills (1% rule) |
+| `using-sspower` | Meta | Skill reference/catalog (the `prompt-submit` hook routes; this is the lookup) |
 | `brainstorming` | Design | Ideas through collaborative design |
 | `writing-plans` | Planning | Specs into implementation plans |
 | `subagent-driven-development` | Execution | Per-task subagents with dual-engine (Claude + Codex) |
@@ -162,16 +162,16 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 
 **Format**:
 ```
-2026-04-23T14:22:01Z [error] bridge.enrich kind="schema_parse_fail" session="..." raw_preview="..."
-2026-04-23T14:22:33Z [warn]  hook.enrich kind=timeout dur=31s cwd=/Users/...
-2026-04-23T14:22:50Z [info]  hook.enrich kind=enriched dur=18s cwd=/...
+2026-05-22T07:08:14Z [error] bridge.review kind="schema_parse_fail" session="..." raw_preview="..."
+2026-05-22T07:09:33Z [warn]  hook.prompt-submit kind=autostart_failed
+2026-05-22T07:10:50Z [warn]  hook.auto-review kind=deny_verdict verdict=needs-attention
 ```
 
 **Sources**:
 - `bridge.die` — fatal bridge errors (missing flag, codex CLI not found, trust issues)
-- `bridge.<subcommand>` — runtime errors from implement/review/enrich/rescue/resume
+- `bridge.<subcommand>` — runtime errors from implement/review/plan-review/rescue/resume
 - `bridge.auto_commit` — worktree commit failures
-- `hook.enrich` — prompt-submit enrichment outcomes (`enriched` / `timeout` / `bridge_failed` / `passthrough_empty`)
+- `hook.prompt-submit` — workflow-engine routing outcomes (e.g. `autostart_failed`)
 - `hook.auto-review` — push/PR/merge gate denials (`deny_predecessor` / `deny_successor` / `deny_rounds_cap` / `deny_verdict` / `codex_timeout_allow`)
 - `hook.auto-spec-gate` — plan-commit gate denials (`deny_predecessor` / `deny_successor` / `deny_plan_review` / `codex_failed_allow`)
 
@@ -202,12 +202,15 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 
 **Diagnose**: say "examine codex log" or invoke the `codex-diagnostics` skill — it groups errors, matches known patterns, and proposes patches.
 
-**Enrichment knobs** (read by `hooks/prompt-submit`):
-- `SSPOWER_ENRICH=0` — disable per-prompt enrichment entirely
-- `SSPOWER_ENRICH_TIMEOUT=<seconds>` — default `180`; large repos (≈200k input tokens) run ~120-150s under `--effort minimal`
-- `SSPOWER_ENRICH_MAX_CHARS=<n>` — default `2000`; prompts longer than this skip enrichment (assumed already context-rich)
-- Opt out one prompt: prefix with `raw:` or `noenrich:`
-- Non-numeric or octal-looking values (`abc`, `08`) fall back to defaults — hook never breaks prompt submission
+**Workflow-engine routing** (`hooks/prompt-submit` + `hooks/_intent.sh`):
+- One shared intent classifier (`_intent.sh`) labels each prompt
+  `qa` / `explicit-skill` / `simple-coding` / `multi-step`.
+- An active flow → the hook injects the current stage's marching orders.
+- Idle + `multi-step` → a flow is **auto-started** (`scripts/flow.sh`); the
+  injection carries an "abort if trivial" bail-out.
+- Idle + `simple-coding` → one targeted skill trigger; `qa` → nothing.
+- Opt out of auto-start for one prompt: prefix it with `quick:`.
+- Inspect/clear a flow: `/flow status`, `/flow abort`.
 
 ---
 
@@ -226,8 +229,11 @@ sspower/
     security-reviewer.md       -- Manual security pass (vuln/auth/crypto)
     sanity-reviewer.md         -- Independent second opinion (real-blocker-only)
   hooks/
-    session-start              -- Injects using-sspower context
-    prompt-submit              -- Skill reminder + Codex enrichment (gated)
+    _intent.sh                 -- Shared intent classifier (sourced)
+    session-start              -- Injects a short workflow-engine notice
+    prompt-submit              -- Workflow-engine router: auto-start flow / targeted trigger
+  scripts/
+    flow.sh                    -- plan->review->exec->test->review state machine
   skills/                      -- 19 skill directories
     */SKILL.md                 -- Lean entry point (<100 lines)
     */references/              -- Detailed docs (loaded on demand)

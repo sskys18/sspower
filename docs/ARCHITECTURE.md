@@ -44,13 +44,13 @@ Per-cwd artifacts written by hooks live outside the plugin:
 
 ## Skills (19)
 
-Skills are loaded on demand by Claude Code's skill router. Each is one directory with `SKILL.md` and optional `references/`. Trigger discipline: Claude must invoke any skill whose description matches the request — even at 1% probability — via the `Skill` tool. `using-sspower` runs every turn as a backup router.
+Skills are loaded on demand by Claude Code's skill router. Each is one directory with `SKILL.md` and optional `references/`. Trigger discipline: Claude must invoke any skill whose description matches the request — even at 1% probability — via the `Skill` tool. Routing is driven by the `prompt-submit` hook + `_intent.sh` classifier (see Hooks); `using-sspower` is the skill *reference/catalog*, consulted on demand — not a per-turn router.
 
 ### Process / methodology
 
 | Skill | Purpose |
 |-------|---------|
-| `using-sspower` | Meta-router. Fires every turn, surfaces relevant skills. |
+| `using-sspower` | Skill reference/catalog. Consulted on demand; the `prompt-submit` hook does the routing. |
 | `brainstorming` | Design before code. Reads project wiki for prior decisions. |
 | `writing-plans` | Multi-step plan from spec. HARD-GATE: runs `bridge plan-review` (findings-shaped review of the plan; distinct from `spec-review` which checks impl-vs-spec compliance). |
 | `executing-plans` | Walk a written plan with checkpoints. |
@@ -89,7 +89,7 @@ Configured in `hooks/hooks.json`. ESM root with hooks dir overridden to CJS via 
 | `SessionStart` | `session-start` | sync | Boot tasks (wiki link, state dirs). |
 | `SessionStart` | `diet-activate.js` | sync, 5s | Activate diet mode (default `full`). |
 | `SessionStart` | `semble-session.sh` | sync, 5s | semble/codex-lsp availability + detached warm. |
-| `UserPromptSubmit` | `prompt-submit` | sync | Inject project wiki + global rules. |
+| `UserPromptSubmit` | `prompt-submit` | sync | Workflow-engine router: classify intent (`_intent.sh`), auto-start a flow on multi-step work, else inject one targeted skill trigger. |
 | `UserPromptSubmit` | `diet-track.js` | sync, 5s | Reinforce diet on each turn. |
 | `UserPromptSubmit` | `codex-track-prompt.sh` | sync, 2s | Surface running/recent codex sessions. |
 | `UserPromptSubmit` | `semble-context.sh` | sync, 8s | Coding-intent `semble_rs plan` inject (advisory). |
@@ -192,7 +192,6 @@ Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subc
 | `review` | `read-only` | no (ephemeral) | `quality-review-output` |
 | `rescue [--write]` | `read-only` / `workspace-write` | persist on `--write` | none |
 | `resume --session-id <id>` | inherits | yes | optional via prompt-wrapping |
-| `enrich` | `read-only` | no | none |
 | `ps` / `status` / `tail` / `kill` / `steer` | n/a | session registry ops |
 
 `--write` switches sandbox to `workspace-write`. All write paths take optional `--cd`, `--worktree <branch>`, `--auto-commit [msg]`.
@@ -305,7 +304,7 @@ Each session is archived (PreCompact + SessionEnd) into `<cwd>/.claude/wiki/`:
 Phase E: the per-session `.md` summary is no longer written — its content is
 ingested into `sspower-mem` as an `episodic` block. `append_index_entry` is
 removed (no `index.md`); `decisions.md`/`gotchas.md` seeding is dropped.
-`brainstorming`, `writing-plans`, `systematic-debugging`, and `using-sspower`
+`brainstorming`, `writing-plans`, and `systematic-debugging`
 read/write decisions + gotchas via the `sspower-mem` CLI, so prior context
 informs every new design and bug investigation.
 
@@ -581,7 +580,8 @@ Four Claude-side hooks, all advisory + fail-open (D-B6; semble_rs/codex-lsp pre-
 
 - `hooks/semble-context.sh` (UserPromptSubmit) - coding-intent-gated
   `semble_rs plan` repo orientation injected as `additionalContext`, char-capped,
-  6 s hard timeout, fail-open. Gate mirrors the dead enrich gate in `prompt-submit`.
+  6 s hard timeout, fail-open. Coding-intent gate shares the `_intent.sh`
+  classifier with `prompt-submit`.
 - `hooks/semble-rewrite.sh` (PreToolUse:Bash, **runs FIRST** - before
   cmd-rewrite & auto-review) -
   `ls -R` -> `semble_rs tree` (gitignore-correct, DP-1; UPPERCASE-R only) and
