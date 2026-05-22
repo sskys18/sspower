@@ -40,15 +40,15 @@
     position:fixed; inset:0; z-index:0; pointer-events:none;
     background-image:radial-gradient(circle, rgba(255,255,255,.02) 1px, transparent 1.5px);
     background-size:30px 30px;
-    -webkit-mask-image:radial-gradient(1400px 900px at 50% 30%, #000 30%, transparent 95%);
-            mask-image:radial-gradient(1400px 900px at 50% 30%, #000 30%, transparent 95%);
+    -webkit-mask-image:radial-gradient(920px 1180px at 50% 36%, #000 30%, transparent 95%);
+            mask-image:radial-gradient(920px 1180px at 50% 36%, #000 30%, transparent 95%);
   }
 
   /* ============ FIXED CANVAS — connectors anchor to this ============ */
   .canvas{
     position:relative; z-index:1;
-    width:2120px; margin:0 auto;
-    padding:56px 60px 64px;
+    width:1280px; height:2200px; margin:0 auto;
+    padding:48px 44px 56px;
   }
   /* SVG connector layer — sits above surfaces, below text-bearing nodes */
   .links{
@@ -57,7 +57,7 @@
   }
 
   /* ===================== HEADER ===================== */
-  .head{margin-bottom:var(--s6); max-width:880px}
+  .head{margin-bottom:var(--s6); max-width:880px; height:124px}
   .kick{
     font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.24em;
     text-transform:uppercase; color:var(--c-route); margin-bottom:12px;
@@ -83,7 +83,7 @@
 
   /* eyebrow above each tier */
   .tier-label{
-    display:flex; align-items:baseline; gap:14px; margin-bottom:var(--s4);
+    display:flex; align-items:baseline; gap:14px; margin-bottom:var(--s4); height:15px;
   }
   .tier-label .tag{
     font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.22em;
@@ -111,6 +111,18 @@
 
   /* ===================== HORIZONTAL TRACK ===================== */
   .track{display:flex; align-items:stretch; gap:0}
+  .track + .track{margin-top:64px}
+  .track.main{justify-content:center}
+  .track.pipe-top{height:236px}
+  .track.pipe-bottom{height:354px}
+  .track.sdd-prod{justify-content:flex-start}
+  .track.sdd-prod{height:230px}
+  .track.sdd-review{justify-content:flex-start; margin-left:132px}
+  .track.sdd-review{height:210px}
+  .track.fix-top{justify-content:flex-start}
+  .track.fix-top{height:154px}
+  .track.fix-bottom{justify-content:flex-start; margin-left:132px}
+  .track.fix-bottom{height:218px}
 
   /* --- start / end caps --- */
   .cap{
@@ -201,7 +213,7 @@
     font-family:var(--mono); font-size:13px; font-weight:700; margin-top:4px;
     word-break:break-word; letter-spacing:-.005em; color:var(--tx);
   }
-  .ds{color:var(--dim); font-size:11.5px; margin-top:7px; line-height:1.6}
+  .ds{color:var(--dim); font-size:11.5px; margin-top:7px; line-height:1.48}
   .ds b{color:#dde2ea; font-weight:600}
 
   /* --- nested chips / steps inside a card --- */
@@ -284,15 +296,15 @@
   .panel .ph::after{display:none}
 
   /* ----- SDD panel scoped sizing ----- */
-  .panel.sdd .ph{ width:240px; }
-  .panel.sdd .ph.wide{ width:330px; }
+  .panel.sdd .ph{ width:252px; }
+  .panel.sdd .ph.wide{ width:280px; }
   .q{
     font-family:var(--mono); font-size:11px; color:var(--tx); margin-top:9px; font-weight:600;
   }
   .json{
     margin-top:12px; background:#080a0e;
     border:1px solid var(--line); border-radius:11px; padding:13px 14px;
-    font-family:var(--mono); font-size:10px; line-height:1.75; color:var(--dim);
+    font-family:var(--mono); font-size:9.5px; line-height:1.58; color:var(--dim);
     box-shadow:var(--el-0);
   }
   .json .k{color:var(--c-json)} .json .v{color:#86efac} .json .m{color:#93c5fd}
@@ -340,7 +352,7 @@
 
   /* ===================== single-page PDF export ===================== */
   @media print{
-    @page{ size:2120px 1515px; margin:0 }
+    @page{ size:1280px 2200px; margin:0 }
     html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
     body{ min-width:0 }
   }
@@ -351,16 +363,16 @@
   <div class="canvas">
 
     <!-- ===== SVG connector layer: drill-down "zoom" curves ===== -->
-    <svg class="links" viewBox="0 0 2120 1505" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="links" viewBox="0 0 1280 2200" preserveAspectRatio="none" aria-hidden="true">
       <defs>
         <!-- userSpaceOnUse: gradient maps to absolute canvas y so every path
              segment shares one consistent fade, regardless of its bbox -->
-        <linearGradient id="gZoom" gradientUnits="userSpaceOnUse" x1="0" y1="644" x2="0" y2="752">
+        <linearGradient id="gZoom" gradientUnits="userSpaceOnUse" x1="0" y1="495" x2="0" y2="1040">
           <stop offset="0"  stop-color="#fde68a" stop-opacity=".7"/>
           <stop offset=".5" stop-color="#fbbf24"/>
           <stop offset="1"  stop-color="#fbbf24"/>
         </linearGradient>
-        <linearGradient id="gFix" gradientUnits="userSpaceOnUse" x1="0" y1="1042" x2="0" y2="1175">
+        <linearGradient id="gFix" gradientUnits="userSpaceOnUse" x1="0" y1="1543" x2="0" y2="1914">
           <stop offset="0"  stop-color="#fda4af" stop-opacity=".7"/>
           <stop offset=".5" stop-color="#fb7185"/>
           <stop offset="1"  stop-color="#fb7185"/>
@@ -382,32 +394,41 @@
       </defs>
 
       <!-- ZOOM 1 : Phase 5 (bottom-center) -> SDD panel (top-center) -->
-      <!-- measured: PH5 center x=1475 bottom y=641 ; SDD panel top y=744 -->
-      <!-- glow underlay, then crisp stroke on top so the line stays sharp -->
       <path class="flow" stroke="url(#gZoom)" stroke-width="6" stroke-opacity=".22"
-            filter="url(#soft)" d="M 1475 644 C 1475 694, 1475 706, 1475 748"/>
+            filter="url(#soft)" d="M 570 913 C 570 953, 640 969, 640 1016"/>
       <path class="flow" stroke="url(#gZoom)" stroke-width="2.6" marker-end="url(#headZoom)"
-            d="M 1475 644 C 1475 694, 1475 706, 1475 748"/>
-      <circle cx="1475" cy="644" r="4" fill="#0a0c11" stroke="#fbbf24" stroke-width="2"/>
-      <text class="zlabel" x="1499" y="703" fill="#fbbf24" letter-spacing="2.4">ZOOM IN · EXECUTION</text>
+            d="M 570 913 C 570 953, 640 969, 640 1016"/>
+      <circle id="zoom-dot" cx="570" cy="913" r="4" fill="#0a0c11" stroke="#fbbf24" stroke-width="2"/>
+      <text id="zoom-label" class="zlabel" x="664" y="1006" fill="#fbbf24" letter-spacing="2.4">ZOOM IN · EXECUTION</text>
 
       <!-- ZOOM 2 : two SDD review gates -> converge -> Fix panel -->
-      <!-- measured: Gate1 x=1015 Gate2 x=1309 bottom y=1039 ; FIX panel top y=1169 ; merge x=1162 -->
       <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
-            d="M 1015 1042 C 1015 1098, 1162 1092, 1162 1138"/>
+            d="M 328 1543 C 328 1608, 481 1608, 481 1640"/>
       <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
-            d="M 1309 1042 C 1309 1098, 1162 1092, 1162 1138"/>
+            d="M 634 1543 C 634 1608, 481 1608, 481 1640"/>
       <path class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".2" filter="url(#softFix)"
-            d="M 1162 1136 L 1162 1173"/>
+            d="M 481 1638 L 481 1673"/>
       <path class="flow" stroke="url(#gFix)" stroke-width="2.4"
-            d="M 1015 1042 C 1015 1098, 1162 1092, 1162 1138"/>
+            d="M 328 1543 C 328 1608, 481 1608, 481 1640"/>
       <path class="flow" stroke="url(#gFix)" stroke-width="2.4"
-            d="M 1309 1042 C 1309 1098, 1162 1092, 1162 1138"/>
+            d="M 634 1543 C 634 1608, 481 1608, 481 1640"/>
       <path class="flow" stroke="url(#gFix)" stroke-width="2.6" marker-end="url(#headFix)"
-            d="M 1162 1136 L 1162 1173"/>
-      <circle cx="1015" cy="1042" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
-      <circle cx="1309" cy="1042" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
-      <text class="zlabel" x="1196" y="1098" fill="#fb7185" letter-spacing="2.2">ON FAILURE · RESUME &amp; FIX</text>
+            d="M 481 1638 L 481 1673"/>
+      <circle id="fix-dot-a" cx="328" cy="1543" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
+      <circle id="fix-dot-b" cx="634" cy="1543" r="3.8" fill="#0a0c11" stroke="#fb7185" stroke-width="2"/>
+      <text id="fix-label" class="zlabel" x="515" y="1664" fill="#fb7185" letter-spacing="2.2">ON FAILURE · RESUME &amp; FIX</text>
+
+      <!-- row-wrap connectors -->
+      <path id="phase-wrap-glow" class="flow" stroke="url(#gZoom)" stroke-width="6" stroke-opacity=".18" filter="url(#soft)" d="M 997 495 L 997 527 L 280 527 L 280 559"/>
+      <path id="phase-wrap" class="flow" stroke="url(#gZoom)" stroke-width="2.4" marker-end="url(#headZoom)" d="M 997 495 L 997 527 L 280 527 L 280 559"/>
+      <text id="phase-wrap-label" class="zlabel" x="400" y="521" fill="#fbbf24" letter-spacing="2.2">NEXT ROW</text>
+      <path id="sdd-wrap-glow" class="flow" stroke="url(#gZoom)" stroke-width="6" stroke-opacity=".18" filter="url(#soft)" d="M 648 1269 L 648 1301 L 328 1301 L 328 1333"/>
+      <path id="sdd-wrap" class="flow" stroke="url(#gZoom)" stroke-width="2.4" marker-end="url(#headZoom)" d="M 648 1269 L 648 1301 L 328 1301 L 328 1333"/>
+      <path id="fix-wrap-glow" class="flow" stroke="url(#gFix)" stroke-width="6" stroke-opacity=".18" filter="url(#softFix)" d="M 510 1850 L 510 1882 L 328 1882 L 328 1914"/>
+      <path id="fix-wrap" class="flow" stroke="url(#gFix)" stroke-width="2.4" marker-end="url(#headFix)" d="M 510 1850 L 510 1882 L 328 1882 L 328 1914"/>
+      <foreignObject x="388" y="1865" width="150" height="28">
+        <div xmlns="http://www.w3.org/1999/xhtml" class="vlabel bad">✗ non-compliant</div>
+      </foreignObject>
     </svg>
 
     <!-- ===================== HEADER ===================== -->
@@ -425,20 +446,20 @@
         <span class="desc">six phases · user request → merged branch</span>
       </div>
 
-      <div class="track">
+      <div class="track main pipe-top">
 
         <div class="cap start">◖&nbsp;USER<br>REQUEST</div>
         <div class="conn" style="--from:#3a4150;--to:var(--c-route)"><i></i><b></b></div>
 
-        <div class="ph" style="--cc:var(--c-route)">
+        <div id="phase-1" class="ph" style="--cc:var(--c-route)">
           <div class="bar"><div class="badge">🧭</div><div class="num">1</div></div>
           <div class="kic">Route</div>
           <div class="nm">using-sspower</div>
-          <div class="ds">Meta-router — fires on every message. <b>“1% chance a skill applies → invoke it.”</b></div>
+          <div class="ds">Meta-router. <b>1% skill chance → invoke.</b></div>
         </div>
         <div class="conn" style="--from:var(--c-route);--to:var(--c-design)"><i></i><b></b></div>
 
-        <div class="ph" style="--cc:var(--c-design)">
+        <div id="phase-2" class="ph" style="--cc:var(--c-design)">
           <div class="bar"><div class="badge">💡</div><div class="num">2</div></div>
           <div class="kic">Investigate &amp; Design</div>
           <div class="nm">pick the entry skill</div>
@@ -450,23 +471,25 @@
         </div>
         <div class="conn" style="--from:var(--c-design);--to:var(--c-plan)"><i></i><b></b></div>
 
-        <div class="ph" style="--cc:var(--c-plan)">
+        <div id="phase-3" class="ph" style="--cc:var(--c-plan)">
           <div class="bar"><div class="badge">📋</div><div class="num">3</div></div>
           <div class="kic">Plan</div>
           <div class="nm">writing-plans</div>
-          <div class="ds">Specs → step-by-step task plans. <b>HARD-GATE</b> Codex plan-review before hand-off.</div>
+          <div class="ds">Spec → task plan. <b>HARD-GATE</b> Codex plan-review.</div>
         </div>
-        <div class="conn" style="--from:var(--c-plan);--to:var(--c-iso)"><i></i><b></b></div>
+      </div>
 
-        <div class="ph" style="--cc:var(--c-iso)">
+      <div class="track main pipe-bottom">
+
+        <div id="phase-4" class="ph" style="--cc:var(--c-iso)">
           <div class="bar"><div class="badge">🌿</div><div class="num">4</div></div>
           <div class="kic">Isolate</div>
           <div class="nm">using-git-worktrees</div>
-          <div class="ds">Isolated branch + worktree — execution never touches the main workspace.</div>
+          <div class="ds">Isolated branch + worktree; main workspace stays clean.</div>
         </div>
         <div class="conn" style="--from:var(--c-iso);--to:var(--c-build)"><i></i><b></b></div>
 
-        <div class="ph" style="--cc:var(--c-build)">
+        <div id="phase-5" class="ph" style="--cc:var(--c-build)">
           <div class="bar"><div class="badge">⚙️</div><div class="num">5</div></div>
           <div class="kic">Execution — pick one</div>
           <div class="nm">subagent-driven-development</div>
@@ -481,7 +504,7 @@
         </div>
         <div class="conn" style="--from:var(--c-build);--to:var(--c-ship)"><i></i><b></b></div>
 
-        <div class="ph" style="--cc:var(--c-ship)">
+        <div id="phase-6" class="ph" style="--cc:var(--c-ship)">
           <div class="bar"><div class="badge">🛡️</div><div class="num">6</div></div>
           <div class="kic">Review Chain → Ship</div>
           <div class="nm">four gates before merge</div>
@@ -509,12 +532,12 @@
       </div>
 
       <div class="panel sdd">
-        <div class="track">
+        <div class="track sdd-prod">
 
           <div class="cap start">◖&nbsp;TASK<br>PLAN</div>
           <div class="conn" style="--from:#3a4150;--to:var(--c-impl)"><i></i><b></b></div>
 
-          <div class="ph" style="--cc:var(--c-impl)">
+          <div id="sdd-1" class="ph" style="--cc:var(--c-impl)">
             <div class="bar"><div class="badge">⚙️</div><div class="num">1</div></div>
             <div class="kic">Implement — pick engine</div>
             <div class="nm">dispatch a fresh agent</div>
@@ -526,39 +549,40 @@
           </div>
           <div class="conn" style="--from:var(--c-impl);--to:var(--c-json)"><i></i><b></b></div>
 
-          <div class="ph wide" style="--cc:var(--c-json)">
+          <div id="sdd-2" class="ph wide" style="--cc:var(--c-json)">
             <div class="bar"><div class="badge">📦</div><div class="num">2</div></div>
             <div class="kic">Structured Result</div>
             <div class="nm">one JSON envelope — either engine</div>
             <div class="json">
 { <span class="k">status</span>: <span class="v">"DONE"</span>, <span class="k">files_changed</span>: [ … ],<br>
-&nbsp;&nbsp;<span class="k">tests</span>: { passed: 5 },<br>
-&nbsp;&nbsp;<span class="k">_commit</span>: <span class="v">"abc123"</span>, <span class="k">_branch</span>: <span class="v">"codex/task-1"</span>,<br>
-&nbsp;&nbsp;<span class="k">_meta</span>: <span class="m">{ session_id, duration_ms,<br>
-&nbsp;&nbsp;&nbsp;&nbsp;tool_calls, edits, tokens }</span> }
+&nbsp;&nbsp;<span class="k">tests</span>: { passed: 5 }, <span class="k">_commit</span>: <span class="v">"abc123"</span>,<br>
+&nbsp;&nbsp;<span class="k">_branch</span>: <span class="v">"codex/task-1"</span>,<br>
+&nbsp;&nbsp;<span class="k">_meta</span>: <span class="m">{ session_id, duration_ms, tool_calls, edits, tokens }</span> }
             </div>
           </div>
-          <div class="conn" style="--from:var(--c-json);--to:var(--c-spec)"><i></i><b></b></div>
+        </div>
 
-          <div class="ph" style="--cc:var(--c-spec)">
+        <div class="track sdd-review">
+
+          <div id="sdd-3" class="ph" style="--cc:var(--c-spec)">
             <div class="bar"><div class="badge">🔍</div><div class="num">3</div></div>
             <div class="kic">Gate 1 · Spec Review</div>
             <div class="nm">spec-review</div>
             <div class="q">“Does it match the spec?”</div>
-            <div class="ds">Reads the actual code — not the implementer's report.</div>
+            <div class="ds">Reads code, not the implementer's report.</div>
             <div class="fixbox"><span class="x">✗ non-compliant</span><span class="ft">→ resume the implementer's session → fix → re-check</span></div>
           </div>
           <div class="conn" style="--from:var(--c-spec);--to:var(--c-qual)"><i></i><b></b></div>
 
-          <div class="ph" style="--cc:var(--c-qual)">
+          <div id="sdd-4" class="ph" style="--cc:var(--c-qual)">
             <div class="bar"><div class="badge">✅</div><div class="num">4</div></div>
             <div class="kic">Gate 2 · Quality Review</div>
             <div class="nm">review</div>
             <div class="q">“Is it well-built?”</div>
-            <div class="ds">Architecture · test coverage · security.</div>
+            <div class="ds">Architecture · tests · security.</div>
             <div class="fixbox"><span class="x">✗ needs-attention</span><span class="ft">→ resume the implementer's session → fix → re-check</span></div>
           </div>
-          <div class="conn" style="--from:var(--c-qual);--to:var(--c-impl)"><i></i><b></b></div>
+          <div class="conn" style="--from:var(--c-qual);--to:#60a5fa"><i></i><b></b></div>
 
           <div class="cap end blue">↻&nbsp;NEXT<br>TASK</div>
 
@@ -576,41 +600,40 @@
       </div>
 
       <div class="panel fix">
-        <div class="track">
+        <div class="track fix-top">
 
-          <div class="ph" style="--cc:var(--c-a)">
+          <div id="fix-1" class="ph" style="--cc:var(--c-a)">
             <div class="bar"><div class="badge">🔨</div><span class="sess a">SESSION A</span></div>
             <div class="nm">implement</div>
-            <div class="ds">Codex builds the task. The session is kept alive — <b style="color:#c4b5fd">persisted</b>, full context retained.</div>
+            <div class="ds">Codex builds. Session stays <b style="color:#c4b5fd">persisted</b> with context.</div>
           </div>
           <div class="conn plain" style="--from:var(--c-a);--to:var(--c-b)">
             <div class="line"><i></i><b></b></div>
           </div>
 
-          <div class="ph" style="--cc:var(--c-b)">
+          <div id="fix-2" class="ph" style="--cc:var(--c-b)">
             <div class="bar"><div class="badge">🔍</div><span class="sess b">SESSION B</span></div>
             <div class="nm">spec-review</div>
-            <div class="ds">A fresh reviewer checks the code against the spec — <b>ephemeral</b>, no build context.</div>
+            <div class="ds">Fresh reviewer checks code vs spec — <b>ephemeral</b>.</div>
           </div>
-          <div class="conn" style="--from:var(--c-b);--to:var(--c-a)">
-            <div class="vlabel bad">✗ non-compliant</div>
-            <div class="line"><i></i><b></b></div>
-          </div>
+        </div>
 
-          <div class="ph resume" style="--cc:var(--c-a)">
+        <div class="track fix-bottom">
+
+          <div id="fix-3" class="ph resume" style="--cc:var(--c-a)">
             <div class="bar"><div class="badge">↩️</div><span class="sess a">SESSION A</span></div>
             <div class="nm">resume --session-id A</div>
-            <div class="ds">Codex re-enters the original session and fixes the issue.</div>
+            <div class="ds">Codex re-enters session A and fixes.</div>
             <div class="keep">Why it works — session A still holds the <b>full build context</b>. No re-explaining.</div>
           </div>
           <div class="conn plain" style="--from:var(--c-a);--to:var(--c-b)">
             <div class="line"><i></i><b></b></div>
           </div>
 
-          <div class="ph" style="--cc:var(--c-b)">
+          <div id="fix-4" class="ph" style="--cc:var(--c-b)">
             <div class="bar"><div class="badge">🔍</div><span class="sess b">SESSION B</span></div>
             <div class="nm">spec-review</div>
-            <div class="ds">Re-checks the fix against the spec.</div>
+            <div class="ds">Re-checks fix vs spec.</div>
           </div>
           <div class="conn" style="--from:var(--c-b);--to:var(--c-good)">
             <div class="vlabel good">✓ compliant</div>
