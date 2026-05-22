@@ -38,6 +38,27 @@ mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 [ -f "$STATE_FILE" ] || printf '{"version":1,"flows":{}}\n' > "$STATE_FILE"
 chmod 600 "$STATE_FILE" 2>/dev/null || true
 
+# --- serialize state access -------------------------------------------
+# flow-state.json is shared across projects; concurrent flow.sh runs would
+# read-modify-write-clobber each other's flows entry. An atomic-mkdir mutex
+# serializes the whole (short-lived) invocation. A lock held >~10s is
+# presumed stale and broken. Released on EXIT (covers `die`'s exit 1 too).
+_FLOW_LOCK="${STATE_DIR}/.flow.lock"
+_flow_locked=0
+_flow_unlock() { [ "$_flow_locked" = 1 ] && rmdir "$_FLOW_LOCK" 2>/dev/null; _flow_locked=0; }
+trap '_flow_unlock' EXIT
+_flow_tries=0
+while :; do
+  if mkdir "$_FLOW_LOCK" 2>/dev/null; then _flow_locked=1; break; fi
+  _flow_tries=$((_flow_tries + 1))
+  if [ "$_flow_tries" -gt 200 ]; then          # ~10s → presume stale, break it
+    rmdir "$_FLOW_LOCK" 2>/dev/null || true
+    mkdir "$_FLOW_LOCK" 2>/dev/null && _flow_locked=1
+    break                                       # proceed even if unlocked (no deadlock)
+  fi
+  sleep 0.05
+done
+
 jq_get() { jq -r --arg c "$CWD" "$1" "$STATE_FILE" 2>/dev/null; }
 
 jq_set() {

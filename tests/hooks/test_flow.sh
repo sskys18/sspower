@@ -95,6 +95,20 @@ check "advance without plan_path refused" "plan path required" "$out"
 out="$(bash "$FLOW" status)"; check "stays in plan after refused advance" "plan (1/5)" "$out"
 teardown
 
+# concurrent starts from different cwds must not clobber each other
+# (the .flow.lock mutex serializes the read-modify-write).
+setup
+conc_root="$TMP/conc"; mkdir -p "$conc_root"
+for i in 1 2 3 4 5 6 7 8; do
+  d="$conc_root/p$i"; mkdir -p "$d"
+  ( cd "$d" && bash "$FLOW" start "task $i" >/dev/null 2>&1 ) &
+done
+wait
+n="$(jq '.flows | length' "$HOME/.claude/sspower/flow-state.json" 2>/dev/null || echo 0)"
+if [ "$n" = "8" ]; then PASS=$((PASS+1)); echo "ok   - 8 concurrent starts all persisted"
+else FAIL=$((FAIL+1)); echo "FAIL - concurrent starts: want 8 flows, got $n"; fi
+teardown
+
 echo "---"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
