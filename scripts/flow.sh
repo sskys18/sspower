@@ -48,16 +48,21 @@ _flow_locked=0
 _flow_unlock() { [ "$_flow_locked" = 1 ] && rmdir "$_FLOW_LOCK" 2>/dev/null; _flow_locked=0; }
 trap '_flow_unlock' EXIT
 _flow_tries=0
+_flow_breaks=0
 while :; do
   if mkdir "$_FLOW_LOCK" 2>/dev/null; then _flow_locked=1; break; fi
   _flow_tries=$((_flow_tries + 1))
-  if [ "$_flow_tries" -gt 200 ]; then          # ~10s → presume stale, break it
-    rmdir "$_FLOW_LOCK" 2>/dev/null || true
-    mkdir "$_FLOW_LOCK" 2>/dev/null && _flow_locked=1
-    break                                       # proceed even if unlocked (no deadlock)
+  if [ "$_flow_tries" -gt 200 ]; then           # ~10s → presume holder dead
+    rmdir "$_FLOW_LOCK" 2>/dev/null || true     # break the stale lock, then
+    _flow_tries=0                               # resume waiting — a fresh
+    _flow_breaks=$((_flow_breaks + 1))          # holder is live, not stale
+    [ "$_flow_breaks" -gt 3 ] && \
+      die "cannot acquire state lock ($_FLOW_LOCK) — remove it manually"
   fi
   sleep 0.05
 done
+# invariant past this point: _flow_locked=1 (every state write holds the
+# mutex; an unacquirable lock dies above rather than writing unlocked).
 
 jq_get() { jq -r --arg c "$CWD" "$1" "$STATE_FILE" 2>/dev/null; }
 
