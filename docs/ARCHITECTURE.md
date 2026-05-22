@@ -7,7 +7,7 @@ For project history and customizations, see [CUSTOMIZATIONS.md](CUSTOMIZATIONS.m
 ## Identity
 
 - **Plugin name:** `sspower` (`.claude-plugin/plugin.json`)
-- **Version:** `1.1.0`
+- **Version:** `1.1.1`
 - **Origin:** `git@github.com:sskys18/sspower.git`
 
 ## Directory layout
