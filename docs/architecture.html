@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sspower — Architecture</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-card: #1c2128;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #9aa4af;
+    --accent: #a371f7;
+    --accent-soft: #8a2be2;
+    --green: #3fb950;
+    --orange: #d29922;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+    font-size: 15px;
+  }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+  }
+  .layout { display: flex; max-width: 1280px; margin: 0 auto; }
+
+  /* sidebar */
+  nav {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 240px; height: 100vh; overflow-y: auto;
+    padding: 28px 18px; border-right: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  nav .brand { font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+  nav .brand span { color: var(--accent); }
+  nav .ver { color: var(--text-dim); font-size: 12px; margin-bottom: 22px; }
+  nav a {
+    display: block; color: var(--text-dim); font-size: 13.5px;
+    padding: 5px 10px; border-radius: 6px; border-left: 2px solid transparent;
+  }
+  nav a:hover { color: var(--text); background: var(--bg-soft); text-decoration: none; }
+  nav .grp { color: var(--accent); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; margin: 18px 0 6px 10px; font-weight: 600; }
+
+  main { flex: 1; min-width: 0; padding: 44px 52px 120px; }
+
+  header.hero { margin-bottom: 44px; }
+  header.hero h1 { font-size: 34px; font-weight: 800; letter-spacing: -0.02em; }
+  header.hero h1 span { color: var(--accent); }
+  header.hero p { color: var(--text-dim); font-size: 16px; margin-top: 8px; max-width: 720px; }
+  .pills { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    font-size: 12px; padding: 3px 11px; border-radius: 999px;
+    background: var(--bg-card); border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .pill b { color: var(--text); font-weight: 600; }
+
+  section { margin-bottom: 52px; scroll-margin-top: 24px; }
+  h2 {
+    font-size: 22px; font-weight: 700; margin-bottom: 6px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h2 .ico { color: var(--accent); margin-right: 8px; }
+  .lead { color: var(--text-dim); margin: 10px 0 20px; max-width: 760px; }
+  h3 { font-size: 16px; font-weight: 650; margin: 24px 0 10px; color: var(--text); }
+
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 9px; padding: 16px; overflow-x: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+    color: var(--text);
+  }
+  pre .c { color: var(--text-dim); }
+  pre .k { color: var(--accent); }
+
+  table {
+    width: 100%; border-collapse: collapse; margin: 14px 0;
+    font-size: 13.5px; background: var(--bg-card);
+    border: 1px solid var(--border); border-radius: 9px; overflow: hidden;
+  }
+  th {
+    background: var(--bg-soft); text-align: left; padding: 9px 13px;
+    font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border);
+  }
+  td { padding: 9px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code, th code { background: var(--bg); }
+
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin: 16px 0; }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 11px; padding: 16px 18px;
+  }
+  .card h4 { font-size: 14.5px; margin-bottom: 6px; display: flex; align-items: center; gap: 7px; }
+  .card .em { font-size: 17px; }
+  .card p { color: var(--text-dim); font-size: 13px; }
+
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 18px 0; }
+  .stage {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-left: 3px solid var(--accent); border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .stage .ev { font-family: var(--mono); font-size: 11.5px; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .04em; }
+  .stage .body { font-size: 13.5px; margin-top: 3px; }
+  .stage .body code { font-size: 0.82em; }
+  .arrow { text-align: center; color: var(--text-dim); font-size: 14px; line-height: 1.2; padding: 3px 0; }
+
+  .note {
+    border-radius: 9px; padding: 13px 16px; margin: 16px 0; font-size: 13.5px;
+    background: rgba(163,113,247,0.08); border: 1px solid rgba(163,113,247,0.35);
+  }
+  .note.warn { background: rgba(210,153,34,0.08); border-color: rgba(210,153,34,0.4); }
+  .note .t { font-weight: 650; display: block; margin-bottom: 3px; }
+
+  .tag { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 5px;
+    border: 1px solid var(--border); }
+  .tag.ro { color: var(--blue); }
+  .tag.rw { color: var(--orange); }
+  .tag.ok { color: var(--green); }
+  .tag.no { color: var(--red); }
+
+  footer {
+    border-top: 1px solid var(--border); padding-top: 22px; margin-top: 60px;
+    color: var(--text-dim); font-size: 13px;
+  }
+  @media (max-width: 860px) {
+    nav { display: none; }
+    main { padding: 28px 20px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav>
+  <div class="brand">⚡ <span>sspower</span></div>
+  <div class="ver">Architecture · v1.1.1</div>
+  <a href="#overview">Overview</a>
+  <a href="#layout">Directory Layout</a>
+  <div class="grp">Runtime</div>
+  <a href="#lifecycle">Hook Lifecycle</a>
+  <a href="#skills">Skills (22)</a>
+  <div class="grp">Codex</div>
+  <a href="#bridge">Codex Bridge</a>
+  <a href="#sandbox">Sandbox &amp; Security</a>
+  <a href="#gates">Review Gates</a>
+  <div class="grp">State</div>
+  <a href="#memory">Project Memory</a>
+  <a href="#observability">Observability</a>
+  <a href="#state">State Locations</a>
+</nav>
+
+<main>
+
+<header class="hero">
+  <h1>⚡ <span>sspower</span> Architecture</h1>
+  <p>End-to-end map of the plugin — layout, components, integration points, and runtime
+     behavior. What runs when, where state lives, how the pieces compose.</p>
+  <div class="pills">
+    <span class="pill"><b>22</b> skills</span>
+    <span class="pill"><b>13</b> hooks</span>
+    <span class="pill">native <b>Codex</b> bridge</span>
+    <span class="pill">macOS-first</span>
+    <span class="pill">MIT</span>
+  </div>
+</header>
+
+<!-- OVERVIEW -->
+<section id="overview">
+  <h2><span class="ico">◆</span>Overview</h2>
+  <p class="lead">sspower is a standalone skill framework for Claude Code. It layers a
+     skill router, a Codex CLI bridge, lifecycle hooks, and a memory backend on top of
+     the plain agent loop — turning ad-hoc prompting into gated, reviewable workflows.</p>
+  <div class="grid">
+    <div class="card">
+      <h4><span class="em">🧩</span>Skills</h4>
+      <p>22 on-demand workflow modules. A meta-router (<code>using-sspower</code>) fires
+         every turn and pulls in any skill that matches — even at 1% probability.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🪝</span>Hooks</h4>
+      <p>13 lifecycle hooks across SessionStart, UserPromptSubmit, PreToolUse,
+         PostToolUse, PreCompact and SessionEnd — they inject context, rewrite
+         commands, and gate risky actions.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🤖</span>Codex bridge</h4>
+      <p><code>scripts/codex-bridge.mjs</code> drives the OpenAI Codex CLI directly for
+         independent review and implementation — no extra plugin.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🛡️</span>Review gates</h4>
+      <p>Five review checkpoints between writing code and merging. Codex gates block
+         <code>git push</code> / PR on a non-<code>approve</code> verdict.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🧠</span>Memory</h4>
+      <p><code>sspower-mem</code> archives every session; skills recall prior decisions
+         and gotchas before proposing new work.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🥗</span>Diet mode</h4>
+      <p>Token-efficient output mode, reinforced per turn, with three sub-skills for
+         commits, reviews and memory compression.</p>
+    </div>
+  </div>
+</section>
+
+<!-- LAYOUT -->
+<section id="layout">
+  <h2><span class="ico">▤</span>Directory Layout</h2>
+  <p class="lead">The plugin tree, plus the per-cwd artifacts that hooks write
+     <em>outside</em> the plugin.</p>
+<pre><span class="c"># plugin tree</span>
+sspower/
+├── .claude-plugin/plugin.json   <span class="c"># Plugin manifest (name, version, keywords)</span>
+├── CLAUDE.md                    <span class="c"># Plugin-scoped instructions</span>
+├── README.md                    <span class="c"># User-facing overview</span>
+├── skills/&lt;skill&gt;/SKILL.md      <span class="c"># 22 skills + per-skill references/</span>
+├── hooks/                       <span class="c"># Lifecycle hooks + hooks.json</span>
+├── scripts/                     <span class="c"># codex-bridge.mjs, codex-registry.mjs, sspower_mem/</span>
+├── agents/                      <span class="c"># Subagent prompts</span>
+├── commands/                    <span class="c"># Slash-command entrypoints</span>
+├── schemas/                     <span class="c"># Structured-output JSON schemas for Codex</span>
+├── docs/                        <span class="c"># This doc, plans, specs</span>
+└── tests/                       <span class="c"># Skill &amp; brainstorm-server tests</span>
+
+<span class="c"># per-cwd artifacts written by hooks (outside the plugin)</span>
+&lt;cwd&gt;/.claude/wiki/sessions/&lt;id&gt;.json          <span class="c"># Per-session JSON sidecar (legacy belt)</span>
+&lt;cwd&gt;/.claude/sspower/followups.md             <span class="c"># Advisory issues</span>
+&lt;cwd&gt;/.claude/sspower/proposed-fixes/*.patch   <span class="c"># Codex-suggested patches</span>
+&lt;cwd&gt;/.git/sspower-review-rounds-&lt;branch&gt;      <span class="c"># Auto-review iteration counter</span>
+~/.claude/state/sspower/codex/&lt;id&gt;.json        <span class="c"># Codex session registry</span>
+~/.cache/sspower/verdicts/&lt;hash&gt;.json          <span class="c"># Verdict cache (10min TTL)</span></pre>
+  <div class="note">
+    <span class="t">ESM / CJS split</span>
+    The repo root is ESM (<code>package.json</code>). <code>hooks/package.json</code>
+    overrides the hooks directory to CommonJS — required because hook files use CJS.
+  </div>
+</section>
+
+<!-- LIFECYCLE -->
+<section id="lifecycle">
+  <h2><span class="ico">↻</span>Hook Lifecycle</h2>
+  <p class="lead">Hooks are registered in <code>hooks/hooks.json</code> and fire on
+     Claude Code lifecycle events. This is the order of events across one turn.</p>
+
+  <div class="flow">
+    <div class="stage">
+      <div class="ev">SessionStart</div>
+      <div class="body"><code>session-start</code> boots state dirs &amp; wiki link ·
+        <code>diet-activate.js</code> turns on diet mode (default <code>full</code>) ·
+        <code>semble-session.sh</code> checks tooling and warms models.</div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="stage">
+      <div class="ev">UserPromptSubmit</div>
+      <div class="body"><code>prompt-submit</code> injects project memory + global rules ·
+        <code>diet-track.js</code> reinforces diet · <code>codex-track-prompt.sh</code>
+        surfaces running Codex sessions · <code>semble-context.sh</code> injects repo
+        orientation on coding intent.</div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="stage">
+      <div class="ev">PreToolUse : Bash</div>
+      <div class="body"><b>Runs in order.</b>
+        <code>semble-rewrite.sh</code> rewrites <code>ls -R</code> / <code>grep -R</code>
+        to <code>semble_rs</code> → <code>cmd-rewrite.sh</code> applies the
+        <code>rtk</code> token-saver to every other command →
+        <code>auto-spec-gate.sh</code> gates SDD chokepoints →
+        <code>auto-review.sh</code> gates <code>git</code>/<code>gh</code> chokepoints.</div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="stage">
+      <div class="ev">PostToolUse : Write | Edit | MultiEdit</div>
+      <div class="body"><code>codex-lsp-posttool.sh</code> runs a de-fanged advisory
+        LSP pass on Claude's just-edited file — diagnostics surface as context, never
+        block.</div>
+    </div>
+    <div class="arrow">▼</div>
+    <div class="stage">
+      <div class="ev">PreCompact / SessionEnd</div>
+      <div class="body"><code>wiki-archive.sh</code> archives the session into
+        <code>sspower-mem</code> as an episodic memory block + a JSON sidecar.</div>
+    </div>
+  </div>
+
+  <h3>All hooks</h3>
+  <table>
+    <tr><th>Event</th><th>Hook</th><th>Purpose</th></tr>
+    <tr><td>SessionStart</td><td><code>session-start</code></td><td>Boot tasks — wiki link, state dirs</td></tr>
+    <tr><td>SessionStart</td><td><code>diet-activate.js</code></td><td>Activate diet mode (default <code>full</code>)</td></tr>
+    <tr><td>SessionStart</td><td><code>semble-session.sh</code></td><td>semble / codex-lsp availability + model warm</td></tr>
+    <tr><td>UserPromptSubmit</td><td><code>prompt-submit</code></td><td>Inject project memory + global rules</td></tr>
+    <tr><td>UserPromptSubmit</td><td><code>diet-track.js</code></td><td>Reinforce diet each turn</td></tr>
+    <tr><td>UserPromptSubmit</td><td><code>codex-track-prompt.sh</code></td><td>Surface running / recent Codex sessions</td></tr>
+    <tr><td>UserPromptSubmit</td><td><code>semble-context.sh</code></td><td>Coding-intent repo orientation (advisory)</td></tr>
+    <tr><td>PreToolUse:Bash</td><td><code>semble-rewrite.sh</code></td><td><b>First.</b> <code>ls -R</code> / <code>grep -R</code> → <code>semble_rs</code> (ask)</td></tr>
+    <tr><td>PreToolUse:Bash</td><td><code>cmd-rewrite.sh</code></td><td><code>rtk</code> token-saver for all other commands</td></tr>
+    <tr><td>PreToolUse:Bash</td><td><code>auto-spec-gate.sh</code></td><td>Spec-review gate at SDD chokepoints</td></tr>
+    <tr><td>PreToolUse:Bash</td><td><code>auto-review.sh</code></td><td>Codex review gate at git / gh chokepoints</td></tr>
+    <tr><td>PostToolUse:Write|Edit|MultiEdit</td><td><code>codex-lsp-posttool.sh</code></td><td>Advisory LSP on Claude's edits</td></tr>
+    <tr><td>PreCompact / SessionEnd</td><td><code>wiki-archive.sh</code></td><td>Archive session into <code>sspower-mem</code></td></tr>
+  </table>
+</section>
+
+<!-- SKILLS -->
+<section id="skills">
+  <h2><span class="ico">🧩</span>Skills (22)</h2>
+  <p class="lead">Each skill is one directory — a lean <code>SKILL.md</code> entry point
+     (&lt;100 lines) plus a <code>references/</code> folder loaded on demand. Claude must
+     invoke any skill whose description matches the request.</p>
+
+  <h3>Process &amp; methodology</h3>
+  <table>
+    <tr><th>Skill</th><th>Purpose</th></tr>
+    <tr><td><code>using-sspower</code></td><td>Meta-router — fires every turn, surfaces relevant skills</td></tr>
+    <tr><td><code>brainstorming</code></td><td>Design before code; reads prior decisions from memory</td></tr>
+    <tr><td><code>writing-plans</code></td><td>Spec → multi-step plan. <b>HARD-GATE</b>: <code>bridge plan-review</code></td></tr>
+    <tr><td><code>executing-plans</code></td><td>Walk a written plan with checkpoints</td></tr>
+    <tr><td><code>subagent-driven-development</code></td><td>Per-task subagents + <code>spec-review</code> + <code>review</code></td></tr>
+    <tr><td><code>dispatching-parallel-agents</code></td><td>Fan out 2+ independent tasks</td></tr>
+    <tr><td><code>systematic-debugging</code></td><td>4-phase root-cause investigation; reads gotchas</td></tr>
+    <tr><td><code>test-driven-development</code></td><td>RED-GREEN-REFACTOR cycle</td></tr>
+    <tr><td><code>verification-before-completion</code></td><td>Run real checks before claiming done</td></tr>
+    <tr><td><code>requesting-code-review</code> / <code>receiving-code-review</code></td><td>Trigger / process review feedback</td></tr>
+    <tr><td><code>second-opinion</code></td><td>Independent Codex-backed review when stuck or pre-merge</td></tr>
+    <tr><td><code>finishing-a-development-branch</code></td><td><b>HARD-GATE</b> <code>bridge review</code> on full branch diff</td></tr>
+    <tr><td><code>using-git-worktrees</code></td><td>Isolated branch creation; sandbox-aware</td></tr>
+    <tr><td><code>writing-skills</code></td><td>Author / edit / verify a skill</td></tr>
+  </table>
+
+  <h3>Codex integration</h3>
+  <table>
+    <tr><th>Skill</th><th>Purpose</th></tr>
+    <tr><td><code>codex-enrich</code></td><td>Validate &amp; enrich a prompt against the codebase via Codex</td></tr>
+    <tr><td><code>codex-tracking</code></td><td>List / inspect / kill / steer running bridge sessions</td></tr>
+    <tr><td><code>codex-diagnostics</code></td><td>Triage <code>codex.log</code> failures, propose patches</td></tr>
+  </table>
+
+  <h3>Diet mode &amp; tooling</h3>
+  <table>
+    <tr><th>Skill</th><th>Purpose</th></tr>
+    <tr><td><code>diet</code></td><td>Token-efficient response mode — lite / full / ultra / off</td></tr>
+    <tr><td><code>diet-commit</code></td><td>Compact Conventional Commit messages</td></tr>
+    <tr><td><code>diet-review</code></td><td>One-line PR comments — location, problem, fix</td></tr>
+    <tr><td><code>compress-memory</code></td><td>Compress natural-language memory files</td></tr>
+  </table>
+</section>
+
+<!-- BRIDGE -->
+<section id="bridge">
+  <h2><span class="ico">🤖</span>Codex Bridge</h2>
+  <p class="lead"><code>scripts/codex-bridge.mjs</code> integrates directly with the
+     OpenAI Codex CLI. Skills, agents, and the auto-review hook all dispatch through it.
+     Model / effort / tier come from <code>~/.codex/config.toml</code> profiles
+     (<code>quick</code> / <code>normal</code> / <code>deep</code>); per-call
+     <code>--profile</code> / <code>--model</code> / <code>--effort</code> patch them.</p>
+
+  <h3>Subcommands</h3>
+  <table>
+    <tr><th>Command</th><th>Sandbox</th><th>Persistent?</th><th>Schema</th></tr>
+    <tr><td><code>setup</code></td><td>—</td><td>—</td><td>Self-test</td></tr>
+    <tr><td><code>implement [--write]</code></td><td><span class="tag ro">read-only</span> / <span class="tag rw">workspace-write</span></td><td>yes (resume-able)</td><td><code>implementation-output</code></td></tr>
+    <tr><td><code>spec-review</code></td><td><span class="tag ro">read-only</span></td><td>no</td><td><code>spec-review-output</code></td></tr>
+    <tr><td><code>review</code></td><td><span class="tag ro">read-only</span></td><td>no</td><td><code>quality-review-output</code></td></tr>
+    <tr><td><code>rescue [--write]</code></td><td><span class="tag ro">read-only</span> / <span class="tag rw">workspace-write</span></td><td>persist on <code>--write</code></td><td>—</td></tr>
+    <tr><td><code>resume --session-id</code></td><td>inherits</td><td>yes</td><td>via prompt-wrap</td></tr>
+    <tr><td><code>enrich</code></td><td><span class="tag ro">read-only</span></td><td>no</td><td>—</td></tr>
+    <tr><td><code>ps / status / tail / kill / steer</code></td><td>—</td><td colspan="2">Session registry operations</td></tr>
+  </table>
+
+  <h3>Session registry</h3>
+  <p class="lead">Every persistent run writes a state record + an append-only event log
+     under <code>~/.claude/state/sspower/codex/</code>. States move
+     <code>running → done | failed | killed</code>; stale zombies are detected via
+     <code>kill -0</code>.</p>
+<pre>codex-bridge.mjs ps                        <span class="c"># all active + recent</span>
+codex-bridge.mjs status &lt;id&gt;               <span class="c"># JSON state record</span>
+codex-bridge.mjs tail   &lt;id&gt;               <span class="c"># stream events live</span>
+codex-bridge.mjs kill   &lt;id&gt;               <span class="c"># SIGTERM, mark killed</span>
+codex-bridge.mjs steer  --session-id &lt;id&gt; --prompt &lt;p&gt;   <span class="c"># kill + resume</span></pre>
+  <div class="note">
+    <span class="t">Canonical source</span>
+    Claude Code loads the <b>marketplace</b> tree
+    (<code>~/.claude/plugins/marketplaces/sskys18/plugins/sspower/</code>). The
+    <code>~/.codex/plugins/cache/…</code> copy is stale — never edit or rely on it.
+  </div>
+</section>
+
+<!-- SANDBOX -->
+<section id="sandbox">
+  <h2><span class="ico">🔒</span>Sandbox &amp; Security</h2>
+  <p class="lead">Every Codex <code>exec</code> runs under a Seatbelt sandbox. There is
+     no <code>danger-full-access</code> path in sspower — by design.</p>
+  <table>
+    <tr><th>Mode</th><th>Filesystem</th><th>Network</th></tr>
+    <tr><td><span class="tag ro">read-only</span></td><td>reads anywhere; no writes</td><td>none</td></tr>
+    <tr><td><span class="tag rw">workspace-write</span></td><td>writes confined to the cwd subtree</td><td>configurable</td></tr>
+  </table>
+
+  <h3>Defense-in-depth layers</h3>
+  <div class="grid">
+    <div class="card">
+      <h4><span class="em">🧱</span>Hardened write profile</h4>
+      <p>On <code>--write</code>, the bridge appends <code>approval_policy=never</code>
+         and <code>network_access=false</code> — also re-applied on every write-capable
+         <code>resume</code> (a resumed session does <em>not</em> inherit the network knob).</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">📸</span>autoCommit guards</h4>
+      <p><code>--auto-commit</code> refuses if HEAD changed during the run, or if a
+         planted <code>MERGE_HEAD</code> / <code>CHERRY_PICK_HEAD</code> / etc. exists —
+         preventing tainted commit parents.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🚧</span>PreToolUse guard</h4>
+      <p>The Codex worker's <code>PreToolUse</code> hook classifies commands —
+         <code>deny</code> for <code>git commit/push/merge</code> &amp; recursive
+         <code>rm</code>, <code>ask</code> for installs. Cooperative-worker scope; the
+         sandbox is the real perimeter.</p>
+    </div>
+    <div class="card">
+      <h4><span class="em">🔁</span>Loop guards</h4>
+      <p>Auto-review is bounded by a re-entry flag, depth counter, 10-min verdict cache,
+         and a 3-round hard cap per branch.</p>
+    </div>
+  </div>
+</section>
+
+<!-- GATES -->
+<section id="gates">
+  <h2><span class="ico">🛡️</span>Review Gates</h2>
+  <p class="lead">Five review checkpoints sit between writing code and merging. Three
+     skills enforce Codex review early (HARD-GATEs); the <code>auto-review.sh</code>
+     hook is the last line at the push surface.</p>
+  <table>
+    <tr><th>#</th><th>Gate</th><th>Who</th><th>When</th></tr>
+    <tr><td>1</td><td>Self-review</td><td>Implementer</td><td>Per task</td></tr>
+    <tr><td>2</td><td>Spec compliance</td><td>Claude or Codex</td><td>Per task</td></tr>
+    <tr><td>3</td><td>Code quality</td><td>Claude or Codex</td><td>Per task</td></tr>
+    <tr><td>4</td><td>Final review</td><td>Claude code-reviewer</td><td>All tasks</td></tr>
+    <tr><td>5</td><td>Second opinion</td><td>Codex (independent)</td><td>Before merge</td></tr>
+  </table>
+
+  <h3>The push gate — <code>auto-review.sh</code></h3>
+  <p class="lead">Intercepts <code>git push</code>, <code>git merge</code>,
+     <code>gh pr create</code>, <code>gh pr ready</code>. Runs Codex review on the
+     <code>BASE..HEAD</code> diff and blocks unless the verdict is <code>approve</code>
+     or <code>approve-with-followups</code>.</p>
+  <div class="note warn">
+    <span class="t">Chain policy — security-critical</span>
+    Chokepoints must run as standalone Bash invocations. Predecessors joined with
+    <code>&amp;&amp;</code> <code>||</code> <code>;</code> <code>&amp;</code> are denied
+    (they could mutate state before review). Only read-only output pipes
+    (<code>| tail</code>, <code>| grep</code>, <code>| jq</code> …) are allowed after.
+    Bypass for emergencies: <code>SSPOWER_AUTO_REVIEW=off</code>.
+  </div>
+</section>
+
+<!-- MEMORY -->
+<section id="memory">
+  <h2><span class="ico">🧠</span>Project Memory</h2>
+  <p class="lead">Every session is archived (PreCompact + SessionEnd) into
+     <code>sspower-mem</code> as an <code>episodic</code> block, plus a JSON sidecar
+     under <code>&lt;cwd&gt;/.claude/wiki/sessions/</code> (legacy belt).</p>
+  <p class="lead"><code>brainstorming</code>, <code>writing-plans</code>,
+     <code>systematic-debugging</code> and <code>using-sspower</code> read and write
+     decisions + gotchas through the <code>sspower-mem</code> CLI — so prior context
+     informs every new design and bug investigation. <code>session-start</code> injects
+     recent project memory back into context via <code>sspower-mem search --mode recent</code>.</p>
+  <div class="note">
+    <span class="t">Exit-code contract</span>
+    All <code>sspower-mem</code> calls normalize exit codes: <code>0</code> ok ·
+    <code>10</code> degraded (continue) · <code>20</code> hard data-loss (propagates) ·
+    <code>30</code> dependency missing (continue empty).
+  </div>
+</section>
+
+<!-- OBSERVABILITY -->
+<section id="observability">
+  <h2><span class="ico">📊</span>Observability</h2>
+  <p class="lead">The bridge and hooks write one event per line to a single rotating
+     log — <code>~/.claude/sspower/codex.log</code> (rotates at 1000 lines, keeps 500).</p>
+<pre>2026-04-23T14:22:01Z <span class="k">[error]</span> bridge.enrich kind="schema_parse_fail" …
+2026-04-23T14:22:33Z <span class="k">[warn]</span>  hook.enrich  kind=timeout dur=31s …
+2026-04-23T14:22:50Z <span class="k">[info]</span>  hook.enrich  kind=enriched dur=18s …</pre>
+  <p class="lead">During runs, a live event stream renders on stderr —
+     <code>[codex:session]</code>, <code>[codex:tool]</code>, <code>[codex:edit]</code>,
+     <code>[codex:token]</code>, <code>[codex:alive]</code> (30s heartbeat),
+     <code>[codex:done]</code>. Say <em>"examine codex log"</em> or invoke the
+     <code>codex-diagnostics</code> skill to group errors and propose patches.</p>
+</section>
+
+<!-- STATE -->
+<section id="state">
+  <h2><span class="ico">▦</span>State Locations</h2>
+  <table>
+    <tr><th>Concern</th><th>Where</th></tr>
+    <tr><td>Plugin metadata</td><td><code>.claude-plugin/plugin.json</code></td></tr>
+    <tr><td>Hook registration</td><td><code>hooks/hooks.json</code></td></tr>
+    <tr><td>Skill instructions</td><td><code>skills/&lt;name&gt;/SKILL.md</code></td></tr>
+    <tr><td>Codex CLI defaults</td><td><code>~/.codex/config.toml</code> (model, sandbox, profiles)</td></tr>
+    <tr><td>Auto-review tunables</td><td>env — <code>SSPOWER_AUTO_REVIEW</code>, <code>SSPOWER_REVIEW_*</code></td></tr>
+    <tr><td>Per-repo opt-out</td><td><code>&lt;repo&gt;/.sspower-skip-auto-review</code></td></tr>
+    <tr><td>Session state</td><td><code>~/.claude/state/sspower/codex/&lt;id&gt;.{json,events.jsonl}</code></td></tr>
+    <tr><td>Verdict cache</td><td><code>~/.cache/sspower/verdicts/&lt;hash&gt;.json</code> (10min TTL)</td></tr>
+    <tr><td>Bridge log</td><td><code>~/.claude/sspower/codex.log</code></td></tr>
+    <tr><td>Advisory followups</td><td><code>&lt;repo&gt;/.claude/sspower/followups.md</code></td></tr>
+  </table>
+</section>
+
+<footer>
+  Generated companion to <a href="ARCHITECTURE.md">docs/ARCHITECTURE.md</a> — the
+  Markdown source remains authoritative.<br>
+  ⚡ sspower · built for <a href="https://claude.com/claude-code">Claude Code</a> ·
+  macOS-first · MIT licensed.
+</footer>
+
+</main>
+</div>
+</body>
+</html>

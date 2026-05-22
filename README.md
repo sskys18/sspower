@@ -35,6 +35,19 @@
 
 ## ✨ What's new in 1.1
 
+| Feature | In one line |
+|---------|-------------|
+| 🥗 **Diet mode** | Terse-output mode for token efficiency — `/diet lite\|full\|ultra\|off`, on by default. |
+| 🧠 **Project memory** | Every session is archived into `sspower-mem` as searchable memory. |
+| 🔗 **Wired skills** | `brainstorming` / `writing-plans` / `systematic-debugging` recall prior decisions + gotchas before proposing work. |
+| ⚙️ **Codex profiles** | Model / effort / tier come from `~/.codex/config.toml` profiles — per-call `--profile` / `--model` / `--effort` overrides. |
+| ✂️ **Command rewrite** | Three chained `PreToolUse:Bash` hooks rewrite shell commands for token savings. |
+| 🛡️ **Auto-review gate** | Codex reviews the branch diff at `git push` / PR and blocks on a non-`approve` verdict. |
+| 🚧 **Skill HARD-GATEs** | `writing-plans`, SDD, and branch-finish run Codex review at earlier checkpoints. |
+
+<details>
+<summary><b>Full detail</b></summary>
+
 - **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. Three sub-skills: `/diet-commit`, `/diet-review`, `/compress-memory`.
 - **Project memory (sspower-mem)** — PreCompact + SessionEnd hooks archive each session: a structured JSON sidecar into `<cwd>/.claude/wiki/sessions/` (legacy belt) and an `episodic` block ingested into the `sspower-mem` backend. The per-session markdown file and `index.md` are no longer written (Phase E). The JSON sidecar is symlinked into `~/.claude/sessions/` for cross-project tooling.
 - **Wired skills** — `brainstorming`, `writing-plans`, `systematic-debugging`, and `using-sspower` read/write decisions + gotchas via the `sspower-mem` CLI before proposing work, so prior context informs every new design and bug investigation.
@@ -42,6 +55,10 @@
 - **Command rewrite hooks** — three `PreToolUse:Bash` hooks chain in order: (1) `hooks/semble-rewrite.sh` opportunistically rewrites `ls -R [path]` and `grep -R <BARE_IDENT> [path]` to `semble_rs tree` / `semble_rs search --compact` (gitignore-aware; explicit `ask` permission; fail-open noop on unquoted globs/vars or missing binary). (2) `hooks/cmd-rewrite.sh` routes remaining shell commands through an external rewriter for token-saving substitutions — default [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`; needs binary (>= 0.23.0) + `jq` on PATH or no-ops. (3) `hooks/auto-review.sh` (see next bullet). Bypass semble layer with `SSPOWER_SEMBLE_REWRITE=0`.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
+
+</details>
+
+> 📐 Full system internals — hooks, bridge, sandbox, memory — are in **[docs/architecture.html](docs/architecture.html)** and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
