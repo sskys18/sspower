@@ -1,10 +1,39 @@
-# sspower
+<div align="center">
 
-A complete software development workflow for Claude Code — native Codex integration and macOS-first design. A standalone project, inspired by [Superpowers](https://github.com/obra/superpowers) v5.0.5 and several other open-source tools (see [Inspired by](#inspired-by)).
+# ⚡ sspower
 
-**22 composable skills** that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.
+**A complete software development workflow for Claude Code** — native Codex integration, macOS-first design.
 
-## What's new in 1.1
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-1.1.1-green.svg)](.claude-plugin/plugin.json)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2.svg)](https://claude.com/claude-code)
+[![Skills](https://img.shields.io/badge/skills-22-orange.svg)](#-all-22-skills)
+
+*22 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
+
+</div>
+
+> A standalone project, inspired by [Superpowers](https://github.com/obra/superpowers) v5.0.5 and several other open-source tools — see [Inspired by](#-inspired-by).
+
+---
+
+## 📑 Contents
+
+- [What's new in 1.1](#-whats-new-in-11)
+- [Installation](#-installation)
+- [The Complete Flow](#-the-complete-flow)
+- [How SDD Works with Codex](#-how-sdd-works-with-codex)
+- [5 Review Gates Before Merge](#-5-review-gates-before-merge)
+- [All 22 Skills](#-all-22-skills)
+- [Codex Observability](#-codex-observability)
+- [Architecture](#-architecture)
+- [Inspired by](#-inspired-by)
+- [License](#-license)
+
+---
+
+## ✨ What's new in 1.1
 
 - **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. Three sub-skills: `/diet-commit`, `/diet-review`, `/compress-memory`.
 - **Project memory (sspower-mem)** — PreCompact + SessionEnd hooks archive each session: a structured JSON sidecar into `<cwd>/.claude/wiki/sessions/` (legacy belt) and an `episodic` block ingested into the `sspower-mem` backend. The per-session markdown file and `index.md` are no longer written (Phase E). The JSON sidecar is symlinked into `~/.claude/sessions/` for cross-project tooling.
@@ -14,7 +43,9 @@ A complete software development workflow for Claude Code — native Codex integr
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
 
-## Installation
+---
+
+## 🚀 Installation
 
 ```bash
 # Add the marketplace
@@ -33,11 +64,11 @@ npm install -g @openai/codex
 codex login
 ```
 
-Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and `codex-enrich`.
+> Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and `codex-enrich`.
 
 ---
 
-## The Complete Flow
+## 🔄 The Complete Flow
 
 ```
                           USER REQUEST
@@ -137,7 +168,7 @@ Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and
 
 ---
 
-## How SDD Works with Codex
+## 🤖 How SDD Works with Codex
 
 Subagent-Driven Development dispatches a fresh agent per task. Two engines share the same structured JSON contracts:
 
@@ -208,7 +239,7 @@ spec-review --> compliant
 
 ---
 
-## 5 Review Gates Before Merge
+## 🛡️ 5 Review Gates Before Merge
 
 | # | Gate | Who | When |
 |---|------|-----|------|
@@ -220,7 +251,7 @@ spec-review --> compliant
 
 ---
 
-## All 22 Skills
+## 🧩 All 22 Skills
 
 | Skill | Category | What it does |
 |-------|----------|-------------|
@@ -248,7 +279,7 @@ spec-review --> compliant
 
 ---
 
-## Codex Observability
+## 📊 Codex Observability
 
 The bridge + hook write errors and warnings to a single log file:
 
@@ -257,6 +288,9 @@ The bridge + hook write errors and warnings to a single log file:
 ```
 
 One line per event, append-only, rotated at 1000 lines (keeps last 500).
+
+<details>
+<summary><b>Log format, sources & event stream</b></summary>
 
 **Format**:
 ```
@@ -296,6 +330,8 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 }
 ```
 
+</details>
+
 **Diagnose**: say "examine codex log" or invoke the `codex-diagnostics` skill — it groups errors, matches known patterns, and proposes patches.
 
 **Enrichment knobs** (read by `hooks/prompt-submit`):
@@ -307,7 +343,7 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 sspower/
@@ -340,7 +376,7 @@ sspower/
 
 ---
 
-## Inspired by
+## 🙏 Inspired by
 
 sspower is a standalone project, but it stands on ideas and tools from the
 open-source community. Thanks to:
@@ -354,7 +390,13 @@ open-source community. Thanks to:
 | `semble_rs` | gitignore-aware `tree` / `search` rewriting used by `hooks/semble-rewrite.sh`. |
 | `caveman` | The token-diet output mode (`/diet`, SessionStart diet-activate hook). |
 
-## License
+---
 
-MIT — see LICENSE file. Copyright is shared: original Superpowers code
+## 📄 License
+
+MIT — see [LICENSE](LICENSE) file. Copyright is shared: original Superpowers code
 © Jesse Vincent; sspower modifications © sskys18.
+
+<div align="center">
+<sub>Built for <a href="https://claude.com/claude-code">Claude Code</a> · macOS-first · MIT licensed</sub>
+</div>
