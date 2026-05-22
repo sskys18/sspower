@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>The sspower Workflow</title>
+<style>
+  :root{
+    --bg:#090b10; --tx:#f0f3f8; --dim:#9aa3af; --mut:#646c78;
+    --line:rgba(255,255,255,.08);
+    /* main pipeline */
+    --c-route:#b693ff; --c-design:#6cb6ff; --c-plan:#4fd0d9;
+    --c-iso:#56d364; --c-build:#e3b341; --c-ship:#f0883e; --c-gate:#ff6b66;
+    /* sdd loop */
+    --c-impl:#6cb6ff; --c-json:#4fd0d9; --c-spec:#e3b341; --c-qual:#56d364;
+    --gate:#ff6b66;
+    /* fix loop */
+    --c-a:#b693ff; --c-b:#7d8694; --c-bad:#ff6b66; --c-good:#56d364;
+    --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:
+      radial-gradient(1200px 460px at 8% -8%, rgba(150,115,255,.13), transparent 62%),
+      radial-gradient(1200px 520px at 96% 108%, rgba(240,136,62,.10), transparent 60%),
+      var(--bg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+    color:var(--tx); padding:48px 52px 52px; display:inline-block; min-width:100%;
+    -webkit-font-smoothing:antialiased;
+  }
+  .grid{position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:radial-gradient(circle, rgba(255,255,255,.022) 1px, transparent 1.4px);
+    background-size:24px 24px;}
+  .wrap{position:relative; z-index:1}
+
+  .head{margin-bottom:34px}
+  .kick{font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--c-route); margin-bottom:8px}
+  .head h1{
+    font-size:29px; font-weight:800; letter-spacing:-.025em;
+    background:linear-gradient(96deg,#fff 4%,#b693ff 30%,#6cb6ff 55%,#56d364 78%,#f0883e 96%);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+  }
+  .head p{color:var(--dim); font-size:13px; margin-top:8px; letter-spacing:.01em}
+
+  /* ===== shared horizontal track ===== */
+  .track{display:flex; align-items:stretch; gap:0}
+
+  .cap{
+    align-self:center; font-family:var(--mono); font-weight:700; font-size:10.5px;
+    letter-spacing:.06em; padding:11px 18px; border-radius:14px; white-space:nowrap;
+    text-align:center; line-height:1.45;
+  }
+  .cap.start{
+    background:linear-gradient(180deg,rgba(40,46,56,.7),rgba(20,24,30,.8));
+    border:1px solid var(--line); color:var(--dim);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .cap.end{
+    background:linear-gradient(180deg,rgba(86,211,100,.2),rgba(86,211,100,.05));
+    border:1px solid rgba(86,211,100,.55); color:#7ee787;
+    box-shadow:0 0 30px rgba(86,211,100,.28), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .cap.end.blue{
+    background:linear-gradient(180deg,rgba(108,182,255,.2),rgba(108,182,255,.05));
+    border:1px solid rgba(108,182,255,.55); color:#9cd1ff;
+    box-shadow:0 0 30px rgba(108,182,255,.26), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+
+  .conn{
+    align-self:center; display:flex; align-items:center; flex-shrink:0; width:46px;
+  }
+  .conn i{
+    height:2px; flex:1; border-radius:2px;
+    background:linear-gradient(90deg, var(--from,#3a4150), var(--to,#3a4150));
+  }
+  .conn b{
+    width:0;height:0; border-style:solid; border-width:5px 0 5px 7px;
+    border-color:transparent transparent transparent var(--to,#4a5260);
+    margin-left:-1px; filter:drop-shadow(0 0 4px var(--to,transparent));
+  }
+
+  .ph{
+    position:relative; width:212px; flex-shrink:0; display:flex; flex-direction:column;
+    background:linear-gradient(180deg,rgba(28,33,42,.92),rgba(15,18,24,.96));
+    border:1px solid var(--line); border-radius:17px; padding:17px 15px 15px;
+    box-shadow:0 14px 34px -12px rgba(0,0,0,.8),
+               inset 0 1px 0 rgba(255,255,255,.055);
+  }
+  .ph::before{
+    content:""; position:absolute; top:0; left:24px; right:24px; height:2px;
+    background:linear-gradient(90deg,transparent,var(--cc),transparent);
+    box-shadow:0 0 14px var(--cc); border-radius:2px;
+  }
+  .bar{display:flex; align-items:center; gap:10px; margin-bottom:11px}
+  .badge{
+    width:42px; height:42px; border-radius:12px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:19px;
+    background:linear-gradient(180deg,rgba(40,46,56,.9),rgba(18,22,28,.95));
+    border:1px solid var(--cc);
+    box-shadow:0 0 16px -4px var(--cc), inset 0 1px 0 rgba(255,255,255,.07);
+  }
+  .num{
+    font-family:var(--mono); font-size:11px; font-weight:800; color:#090b10;
+    background:var(--cc); width:21px; height:21px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 12px -2px var(--cc);
+  }
+  .kic{font-size:9px; font-family:var(--mono); font-weight:700; letter-spacing:.11em;
+    text-transform:uppercase; color:var(--cc)}
+  .nm{font-family:var(--mono); font-size:12px; font-weight:700; margin-top:3px;
+    word-break:break-word; letter-spacing:-.01em}
+  .ds{color:var(--dim); font-size:10.5px; margin-top:5px; line-height:1.55}
+  .ds b{color:#cdd4dd}
+
+  .stack{display:flex; flex-direction:column; gap:6px; margin-top:10px}
+  .chip{
+    background:linear-gradient(180deg,rgba(13,16,21,.9),rgba(9,11,15,.95));
+    border:1px solid var(--line); border-radius:9px; padding:7px 10px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .chip .cn{font-family:var(--mono); font-size:10px; font-weight:600}
+  .chip .cd{color:var(--mut); font-size:9px; margin-top:1.5px}
+  .vs{font-family:var(--mono); font-size:8.5px; color:var(--mut); text-align:center;
+    letter-spacing:.1em; margin:-1px 0}
+
+  .step{
+    display:flex; align-items:center; gap:7px; border-radius:9px; padding:7px 9px;
+    background:linear-gradient(180deg,rgba(13,16,21,.9),rgba(9,11,15,.95));
+    border:1px solid var(--line); box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  }
+  .step .dot{width:5px;height:5px;border-radius:50%;background:var(--cc);flex-shrink:0;
+    box-shadow:0 0 6px var(--cc)}
+  .step .sn{font-family:var(--mono); font-size:9.5px; font-weight:600; line-height:1.3}
+  .step.hot{border-color:rgba(255,107,102,.45); background:rgba(255,107,102,.09)}
+  .step.hot .dot{background:var(--c-gate); box-shadow:0 0 6px var(--c-gate)}
+  .step.hot .sn{color:#ff9d99}
+  .step.rec{border-color:rgba(86,211,100,.4); background:rgba(86,211,100,.08)}
+  .step.rec .dot{background:var(--c-iso); box-shadow:0 0 6px var(--c-iso)}
+  .tg{margin-left:auto; font-family:var(--mono); font-size:7.5px; font-weight:700;
+    padding:2px 5px; border-radius:4px; border:1px solid; white-space:nowrap; letter-spacing:.04em}
+  .tg.gate{border-color:var(--c-gate); color:#ff9d99}
+  .tg.rec{border-color:var(--c-iso); color:#7ee787}
+
+  /* ===== zoom drill-in connectors & panels ===== */
+  .zoomwrap{display:flex; flex-direction:column}
+  .zoom-conn{
+    display:flex; flex-direction:column; align-items:center;
+    padding:6px 0 2px;
+  }
+  .zoom-conn .vline{
+    width:0; height:30px;
+    border-left:2px dashed rgba(227,179,65,.55);
+  }
+  .zoom-conn .vline.fix{ border-left-color:rgba(255,107,102,.5); }
+  .zoom-conn .varrow{
+    width:0;height:0; border-style:solid; border-width:8px 6px 0 6px;
+    border-color:rgba(227,179,65,.7) transparent transparent transparent;
+    filter:drop-shadow(0 2px 4px rgba(227,179,65,.35));
+  }
+  .zoom-conn .varrow.fix{
+    border-color:rgba(255,107,102,.7) transparent transparent transparent;
+    filter:drop-shadow(0 2px 4px rgba(255,107,102,.35));
+  }
+  .zoom-conn .zlabel{
+    font-family:var(--mono); font-size:8.5px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--c-spec); margin-bottom:5px;
+  }
+  .zoom-conn .zlabel.fix{ color:var(--c-bad); }
+
+  /* two converging dashed lines from the SDD review gates into the fix panel */
+  .fork{
+    position:relative; height:38px; align-self:stretch;
+  }
+  .fork .leg{
+    position:absolute; top:0; width:0; height:24px;
+    border-left:2px dashed rgba(255,107,102,.5);
+  }
+  .fork .merge{
+    position:absolute; top:22px; height:2px;
+    border-top:2px dashed rgba(255,107,102,.5);
+  }
+  .fork .drop{
+    position:absolute; top:22px; width:0; height:8px;
+    border-left:2px dashed rgba(255,107,102,.5);
+  }
+  .fork .varrow{
+    position:absolute; top:30px;
+    width:0;height:0; border-style:solid; border-width:8px 6px 0 6px;
+    border-color:rgba(255,107,102,.7) transparent transparent transparent;
+    filter:drop-shadow(0 2px 4px rgba(255,107,102,.35));
+  }
+
+  .panel{
+    border:1px dashed rgba(227,179,65,.35); border-radius:20px;
+    padding:16px 22px 22px; position:relative;
+    background:rgba(227,179,65,.035);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+  }
+  .panel.fix{
+    border-color:rgba(255,107,102,.35);
+    background:rgba(255,107,102,.035);
+  }
+  .panel .ptag{
+    display:inline-flex; align-items:center; gap:8px;
+    font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--c-spec); margin-bottom:14px;
+  }
+  .panel.fix .ptag{ color:var(--c-bad); }
+  .panel .ptag .pdot{
+    width:6px;height:6px;border-radius:50%;background:var(--c-spec);
+    box-shadow:0 0 8px var(--c-spec);
+  }
+  .panel.fix .ptag .pdot{ background:var(--c-bad); box-shadow:0 0 8px var(--c-bad); }
+  .panel .psub{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    text-transform:none; letter-spacing:.01em; font-weight:400;
+    color:var(--dim); font-size:11px;
+  }
+
+  /* ----- SDD panel: scoped widths/conn from flow-sdd.html ----- */
+  .panel.sdd .ph{ width:222px; }
+  .panel.sdd .ph.wide{ width:312px; }
+  .panel .nm{ font-size:12.5px; }
+  .q{font-family:var(--mono); font-size:11px; color:var(--tx); margin-top:7px; font-weight:600}
+  .json{margin-top:10px; background:linear-gradient(180deg,rgba(10,13,18,.95),rgba(7,9,13,.97));
+    border:1px solid var(--line); border-radius:10px; padding:12px 13px;
+    font-family:var(--mono); font-size:10px; line-height:1.7; color:var(--dim);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+  .json .k{color:var(--c-json)} .json .v{color:#7ee787} .json .m{color:#9cd1ff}
+  .fixbox{margin-top:9px; display:flex; flex-direction:column; gap:2px;
+    background:rgba(255,107,102,.09); border:1px solid rgba(255,107,102,.4);
+    border-radius:9px; padding:8px 10px}
+  .fixbox .x{color:#ff9d99; font-family:var(--mono); font-size:9.5px; font-weight:700}
+  .fixbox .ft{color:var(--dim); font-size:9.5px; line-height:1.45}
+
+  /* ----- fix-loop panel: scoped widths + column connectors from flow-fixloop.html ----- */
+  .panel.fix .ph{ width:236px; padding:17px 16px 16px; }
+  .panel.fix .ph.resume{background:linear-gradient(180deg,rgba(40,30,62,.92),rgba(20,16,30,.96))}
+  .panel.fix .conn{
+    flex-direction:column; align-items:center; width:96px; gap:5px;
+  }
+  .panel.fix .conn .line{display:flex; align-items:center; width:100%}
+  .panel.fix .conn.plain{width:54px}
+  .vlabel{font-family:var(--mono); font-size:9.5px; font-weight:700;
+    padding:3px 9px; border-radius:999px; border:1px solid; white-space:nowrap}
+  .vlabel.bad{color:#ff9d99; border-color:rgba(255,107,102,.5); background:rgba(255,107,102,.1)}
+  .vlabel.good{color:#7ee787; border-color:rgba(86,211,100,.5); background:rgba(86,211,100,.1)}
+  .sess{margin-left:auto; font-family:var(--mono); font-size:8.5px; font-weight:700;
+    padding:3px 8px; border-radius:6px; border:1px solid; white-space:nowrap}
+  .sess.a{color:#cdb6ff; border-color:var(--c-a); background:rgba(150,115,255,.14)}
+  .sess.b{color:var(--mut); border-color:var(--line)}
+  .keep{margin-top:9px; font-size:9.5px; color:var(--dim); line-height:1.5;
+    border:1px dashed rgba(150,115,255,.45); border-radius:9px; padding:7px 9px;
+    background:rgba(150,115,255,.06)}
+  .keep b{color:#cdb6ff; font-family:var(--mono)}
+</style>
+</head>
+<body>
+  <div class="grid"></div>
+  <div class="wrap">
+    <div class="head">
+      <div class="kick">sspower · workflow</div>
+      <h1>The sspower Workflow</h1>
+      <p>From a user request to a merged branch — the full pipeline up top, drilling down into how each task is executed and how a failed review recovers.</p>
+    </div>
+
+    <div class="zoomwrap">
+
+      <!-- ===================== TOP: 6-PHASE MAIN PIPELINE ===================== -->
+      <div class="track">
+
+        <div class="cap start">◖&nbsp;USER<br>REQUEST</div>
+        <div class="conn" style="--from:#3a4150;--to:var(--c-route)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-route)">
+          <div class="bar"><div class="badge">🧭</div><div class="num">1</div></div>
+          <div class="kic">Route</div>
+          <div class="nm">using-sspower</div>
+          <div class="ds">Meta-router — fires on every message. <b>“1% chance a skill applies → invoke it.”</b></div>
+        </div>
+        <div class="conn" style="--from:var(--c-route);--to:var(--c-design)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-design)">
+          <div class="bar"><div class="badge">💡</div><div class="num">2</div></div>
+          <div class="kic">Investigate &amp; Design</div>
+          <div class="nm">pick the entry skill</div>
+          <div class="stack">
+            <div class="chip"><div class="cn">brainstorming</div><div class="cd">ideas → designs</div></div>
+            <div class="chip"><div class="cn">systematic-debugging</div><div class="cd">4-phase root cause</div></div>
+            <div class="chip"><div class="cn">codex-enrich</div><div class="cd">validate prompts</div></div>
+          </div>
+        </div>
+        <div class="conn" style="--from:var(--c-design);--to:var(--c-plan)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-plan)">
+          <div class="bar"><div class="badge">📋</div><div class="num">3</div></div>
+          <div class="kic">Plan</div>
+          <div class="nm">writing-plans</div>
+          <div class="ds">Specs → step-by-step task plans. <b>HARD-GATE</b> Codex plan-review before hand-off.</div>
+        </div>
+        <div class="conn" style="--from:var(--c-plan);--to:var(--c-iso)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-iso)">
+          <div class="bar"><div class="badge">🌿</div><div class="num">4</div></div>
+          <div class="kic">Isolate</div>
+          <div class="nm">using-git-worktrees</div>
+          <div class="ds">Isolated branch + worktree — execution never touches the main workspace.</div>
+        </div>
+        <div class="conn" style="--from:var(--c-iso);--to:var(--c-build)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-build)">
+          <div class="bar"><div class="badge">⚙️</div><div class="num">5</div></div>
+          <div class="kic">Execution — pick one</div>
+          <div class="nm">subagent-driven-development</div>
+          <div class="stack">
+            <div class="chip"><div class="cn">Claude subagent</div><div class="cd">interactive Q&amp;A</div></div>
+            <div class="vs">— OR —</div>
+            <div class="chip"><div class="cn">Codex (bridge)</div><div class="cd">worktree · auto-commit</div></div>
+            <div class="step rec"><span class="dot"></span><span class="sn">TDD embedded</span><span class="tg rec">REC</span></div>
+            <div class="step"><span class="dot"></span><span class="sn">Spec → Quality Review</span></div>
+            <div class="step"><span class="dot"></span><span class="sn">executing-plans (alt)</span></div>
+          </div>
+        </div>
+        <div class="conn" style="--from:var(--c-build);--to:var(--c-ship)"><i></i><b></b></div>
+
+        <div class="ph" style="--cc:var(--c-ship)">
+          <div class="bar"><div class="badge">🛡️</div><div class="num">6</div></div>
+          <div class="kic">Review Chain → Ship</div>
+          <div class="nm">four gates before merge</div>
+          <div class="stack">
+            <div class="step"><span class="dot"></span><span class="sn">verification-before-completion</span></div>
+            <div class="step"><span class="dot"></span><span class="sn">requesting-code-review</span></div>
+            <div class="step hot"><span class="dot"></span><span class="sn">second-opinion</span><span class="tg gate">HARD GATE</span></div>
+            <div class="step"><span class="dot"></span><span class="sn">finishing-a-development-branch</span></div>
+          </div>
+        </div>
+        <div class="conn" style="--from:var(--c-ship);--to:#56d364"><i></i><b></b></div>
+
+        <div class="cap end">✓&nbsp;MERGED</div>
+
+      </div>
+
+      <!-- ===== zoom connector: Phase 5 → SDD panel =====
+           offset = USER REQUEST cap + 4 conns + 4 phases, centered under Phase 5 -->
+      <div class="zoom-conn" style="margin-left:1090px">
+        <div class="zlabel">▼ inside phase 5 — execution</div>
+        <div class="vline"></div>
+        <div class="varrow"></div>
+      </div>
+
+      <!-- ===================== MIDDLE: SDD PER-TASK LOOP ===================== -->
+      <div class="panel sdd">
+        <div class="ptag"><span class="pdot"></span>Inside Each Task
+          <span class="psub">— the controller dispatches a fresh agent per task and runs this loop</span></div>
+
+        <div class="track">
+
+          <div class="cap start">◖&nbsp;TASK<br>PLAN</div>
+          <div class="conn" style="--from:#3a4150;--to:var(--c-impl)"><i></i><b></b></div>
+
+          <div class="ph" style="--cc:var(--c-impl)">
+            <div class="bar"><div class="badge">⚙️</div><div class="num">1</div></div>
+            <div class="kic">Implement — pick engine</div>
+            <div class="nm">dispatch a fresh agent</div>
+            <div class="stack">
+              <div class="chip"><div class="cn">Claude subagent</div><div class="cd">interactive Q&amp;A · native JSON</div></div>
+              <div class="vs">— OR —</div>
+              <div class="chip"><div class="cn">Codex (bridge)</div><div class="cd">--output-schema · --worktree · --auto-commit</div></div>
+            </div>
+          </div>
+          <div class="conn" style="--from:var(--c-impl);--to:var(--c-json)"><i></i><b></b></div>
+
+          <div class="ph wide" style="--cc:var(--c-json)">
+            <div class="bar"><div class="badge">📦</div><div class="num">2</div></div>
+            <div class="kic">Structured Result</div>
+            <div class="nm">one JSON envelope — either engine</div>
+            <div class="json">
+{ <span class="k">status</span>: <span class="v">"DONE"</span>, <span class="k">files_changed</span>: [ … ],<br>
+&nbsp;&nbsp;<span class="k">tests</span>: { passed: 5 },<br>
+&nbsp;&nbsp;<span class="k">_commit</span>: <span class="v">"abc123"</span>, <span class="k">_branch</span>: <span class="v">"codex/task-1"</span>,<br>
+&nbsp;&nbsp;<span class="k">_meta</span>: <span class="m">{ session_id, duration_ms,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;tool_calls, edits, tokens }</span> }
+            </div>
+          </div>
+          <div class="conn" style="--from:var(--c-json);--to:var(--c-spec)"><i></i><b></b></div>
+
+          <div class="ph" style="--cc:var(--c-spec)">
+            <div class="bar"><div class="badge">🔍</div><div class="num">3</div></div>
+            <div class="kic">Gate 1 · Spec Review</div>
+            <div class="nm">spec-review</div>
+            <div class="q">“Does it match the spec?”</div>
+            <div class="ds">Reads the actual code — not the implementer's report.</div>
+            <div class="fixbox"><span class="x">✗ non-compliant</span><span class="ft">→ resume the implementer's session → fix → re-check</span></div>
+          </div>
+          <div class="conn" style="--from:var(--c-spec);--to:var(--c-qual)"><i></i><b></b></div>
+
+          <div class="ph" style="--cc:var(--c-qual)">
+            <div class="bar"><div class="badge">✅</div><div class="num">4</div></div>
+            <div class="kic">Gate 2 · Quality Review</div>
+            <div class="nm">review</div>
+            <div class="q">“Is it well-built?”</div>
+            <div class="ds">Architecture · test coverage · security.</div>
+            <div class="fixbox"><span class="x">✗ needs-attention</span><span class="ft">→ resume the implementer's session → fix → re-check</span></div>
+          </div>
+          <div class="conn" style="--from:var(--c-qual);--to:var(--c-impl)"><i></i><b></b></div>
+
+          <div class="cap end blue">↻&nbsp;NEXT<br>TASK</div>
+
+        </div>
+
+        <!-- ===== fork connector: two review gates → fix-loop panel =====
+             two dashed legs descend from under Spec Review + Quality Review,
+             converge, and drop into the fix panel below -->
+        <div class="fork">
+          <div class="leg"  style="left:592px"></div>
+          <div class="leg"  style="left:872px"></div>
+          <div class="merge" style="left:592px; width:280px"></div>
+          <div class="drop"  style="left:732px"></div>
+          <div class="varrow" style="left:726px"></div>
+        </div>
+      </div>
+
+      <!-- ===================== BOTTOM: CODEX FIX LOOP ===================== -->
+      <div class="panel fix">
+        <div class="ptag"><span class="pdot"></span>When a Review Fails
+          <span class="psub">— the controller resumes the implementer's Codex session; it remembers everything it built</span></div>
+
+        <div class="track">
+
+          <div class="ph" style="--cc:var(--c-a)">
+            <div class="bar"><div class="badge">🔨</div><span class="sess a">SESSION A</span></div>
+            <div class="nm">implement</div>
+            <div class="ds">Codex builds the task. The session is kept alive — <b style="color:#cdb6ff">persisted</b>, full context retained.</div>
+          </div>
+          <div class="conn plain" style="--from:var(--c-a);--to:var(--c-b)">
+            <div class="line"><i></i><b></b></div>
+          </div>
+
+          <div class="ph" style="--cc:var(--c-b)">
+            <div class="bar"><div class="badge">🔍</div><span class="sess b">SESSION B</span></div>
+            <div class="nm">spec-review</div>
+            <div class="ds">A fresh reviewer checks the code against the spec — <b>ephemeral</b>, no build context.</div>
+          </div>
+          <div class="conn" style="--from:var(--c-b);--to:var(--c-a)">
+            <div class="vlabel bad">✗ non-compliant</div>
+            <div class="line"><i></i><b></b></div>
+          </div>
+
+          <div class="ph resume" style="--cc:var(--c-a)">
+            <div class="bar"><div class="badge">↩️</div><span class="sess a">SESSION A</span></div>
+            <div class="nm">resume --session-id A</div>
+            <div class="ds">Codex re-enters the original session and fixes the issue.</div>
+            <div class="keep">Why it works — session A still holds the <b>full build context</b>. No re-explaining.</div>
+          </div>
+          <div class="conn plain" style="--from:var(--c-a);--to:var(--c-b)">
+            <div class="line"><i></i><b></b></div>
+          </div>
+
+          <div class="ph" style="--cc:var(--c-b)">
+            <div class="bar"><div class="badge">🔍</div><span class="sess b">SESSION B</span></div>
+            <div class="nm">spec-review</div>
+            <div class="ds">Re-checks the fix against the spec.</div>
+          </div>
+          <div class="conn" style="--from:var(--c-b);--to:var(--c-good)">
+            <div class="vlabel good">✓ compliant</div>
+            <div class="line"><i></i><b></b></div>
+          </div>
+
+          <div class="cap end">✓&nbsp;TASK<br>CLEARED</div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

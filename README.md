@@ -23,7 +23,7 @@
 
 - [What's new in 1.1](#-whats-new-in-11)
 - [Installation](#-installation)
-- [The Complete Flow](#-the-complete-flow)
+- [The Workflow](#-the-workflow)
 - [How SDD Works with Codex](#-how-sdd-works-with-codex)
 - [5 Review Gates Before Merge](#-5-review-gates-before-merge)
 - [All 22 Skills](#-all-22-skills)
@@ -86,23 +86,20 @@ codex login
 
 ---
 
-## 🔄 The Complete Flow
+## 🔄 The Workflow
+
+One picture, end to end — the 6-phase pipeline up top, drilling down into the SDD per-task loop and the Codex fix loop.
 
 <div align="center">
-  <img src="docs/assets/flow-complete.png" width="440"
-       alt="The Complete Flow: using-sspower routes the request, then design, plan, isolate, execute (SDD), and a four-gate review chain before merge.">
+  <img src="docs/assets/flow.png" width="100%"
+       alt="The sspower workflow: a 6-phase pipeline (Route, Design, Plan, Isolate, Execution, Ship) drilling into the SDD per-task loop (implement, structured result, spec review, quality review) and the Codex fix loop (session A implement, session B spec-review, resume A on non-compliant, re-review until compliant).">
 </div>
 
 ---
 
 ## 🤖 How SDD Works with Codex
 
-Subagent-Driven Development dispatches a fresh agent per task. Two engines share the same structured JSON contracts:
-
-<div align="center">
-  <img src="docs/assets/flow-sdd.png" width="430"
-       alt="SDD with Codex: implement (Claude subagent or Codex bridge) emits one JSON envelope, then a spec-review gate and a quality-review gate, each with a fix loop, before the next task.">
-</div>
+Subagent-Driven Development dispatches a fresh agent per task. Two engines share the same structured JSON contracts — see the **Inside Each Task** and **When a Review Fails** panels in the diagram above.
 
 ### Engine Selection
 
@@ -115,12 +112,7 @@ Subagent-Driven Development dispatches a fresh agent per task. Two engines share
 
 ### Fix Loops
 
-When a review fails, the controller resumes the implementer's Codex session — Codex remembers everything it built:
-
-<div align="center">
-  <img src="docs/assets/flow-fixloop.png" width="400"
-       alt="Codex fix loop: implement runs in persisted session A; spec-review runs in ephemeral session B; on non-compliant, resume session A to fix with full context, then re-review until compliant.">
-</div>
+When a review fails, the controller resumes the implementer's Codex session — Codex remembers everything it built. The implementer runs in a **persisted** session; each reviewer is **ephemeral**. On a non-compliant verdict, the controller resumes the persisted session so the fix carries full build context. (See the **When a Review Fails** panel in the diagram above.)
 
 ---
 
