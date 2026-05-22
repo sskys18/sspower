@@ -8,10 +8,10 @@
 [![Version](https://img.shields.io/badge/version-1.1.1-green.svg)](.claude-plugin/plugin.json)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2.svg)](https://claude.com/claude-code)
-[![Skills](https://img.shields.io/badge/skills-22-orange.svg)](#-all-22-skills)
+[![Skills](https://img.shields.io/badge/skills-19-orange.svg)](#-all-19-skills)
 [![Docs](https://img.shields.io/badge/docs-architecture%20site-a371f7.svg)](https://sskys18.github.io/sspower/)
 
-*22 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
+*19 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
 
 <img src="docs/assets/flow.png" width="100%"
      alt="The sspower workflow: a 6-phase pipeline (Route, Design, Plan, Isolate, Execution, Ship) drilling into the SDD per-task loop (implement, structured result, spec review, quality review) and the Codex fix loop (session A implement, session B spec-review, resume A on non-compliant, re-review until compliant).">
@@ -30,7 +30,7 @@
 - [Installation](#-installation)
 - [How SDD Works with Codex](#-how-sdd-works-with-codex)
 - [5 Review Gates Before Merge](#-5-review-gates-before-merge)
-- [All 22 Skills](#-all-22-skills)
+- [All 19 Skills](#-all-19-skills)
 - [Codex Observability](#-codex-observability)
 - [Architecture](#-architecture)
 - [Inspired by](#-inspired-by)
@@ -86,7 +86,7 @@ npm install -g @openai/codex
 codex login
 ```
 
-> Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and `codex-enrich`.
+> Without Codex, all skills work except `second-opinion` and the Codex engine in SDD.
 
 ---
 
@@ -121,7 +121,7 @@ When a review fails, the controller resumes the implementer's Codex session — 
 
 ---
 
-## 🧩 All 22 Skills
+## 🧩 All 19 Skills
 
 | Skill | Category | What it does |
 |-------|----------|-------------|
@@ -139,7 +139,7 @@ When a review fails, the controller resumes the implementer's Codex session — 
 | `verification-before-completion` | QA | Evidence before claims |
 | `using-git-worktrees` | Workflow | Isolated workspace setup |
 | `finishing-a-development-branch` | Workflow | Merge/PR/keep/discard + cleanup |
-| `codex-enrich` | Codex | Validate prompts via Codex repo scan |
+| `codex-tracking` | Codex | Inspect / steer / kill running Codex bridge sessions |
 | `codex-diagnostics` | Codex | Examine bridge log, propose patches for recurring errors |
 | `writing-skills` | Meta | TDD for skill development |
 | `diet` | Output | Terse-mode toggle (`/diet lite\|full\|ultra\|off`); also governs commit-message + code-review formatting |
@@ -228,7 +228,7 @@ sspower/
   hooks/
     session-start              -- Injects using-sspower context
     prompt-submit              -- Skill reminder + Codex enrichment (gated)
-  skills/                      -- 22 skill directories
+  skills/                      -- 19 skill directories
     */SKILL.md                 -- Lean entry point (<100 lines)
     */references/              -- Detailed docs (loaded on demand)
 ```

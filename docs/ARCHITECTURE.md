@@ -19,7 +19,7 @@ sspower/
 ├── README.md                    # User-facing overview, install, flow diagram
 ├── package.json                 # ESM root; hooks/package.json overrides to CJS
 │
-├── skills/<skill>/SKILL.md      # 22 skills + per-skill references/
+├── skills/<skill>/SKILL.md      # 19 skills + per-skill references/
 ├── hooks/                       # Lifecycle hooks (SessionStart, UserPromptSubmit, PreToolUse, …)
 ├── scripts/                     # codex-bridge.mjs, codex-registry.mjs
 ├── agents/                      # Subagent prompts (code-reviewer, codex-rescue, security-reviewer, sanity-reviewer)
@@ -42,7 +42,7 @@ Per-cwd artifacts written by hooks live outside the plugin:
 ~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
 ```
 
-## Skills (22)
+## Skills (19)
 
 Skills are loaded on demand by Claude Code's skill router. Each is one directory with `SKILL.md` and optional `references/`. Trigger discipline: Claude must invoke any skill whose description matches the request — even at 1% probability — via the `Skill` tool. `using-sspower` runs every turn as a backup router.
 
@@ -70,7 +70,6 @@ Skills are loaded on demand by Claude Code's skill router. Each is one directory
 
 | Skill | Purpose |
 |-------|---------|
-| `codex-enrich` | Send a user prompt to Codex, return enriched prompt validated against the codebase. |
 | `codex-tracking` | List / inspect / kill / steer running bridge sessions. |
 | `codex-diagnostics` | Triage `~/.claude/sspower/codex.log` failures. |
 

@@ -158,7 +158,7 @@
   <a href="#layout">Directory Layout</a>
   <div class="grp">Runtime</div>
   <a href="#lifecycle">Hook Lifecycle</a>
-  <a href="#skills">Skills (22)</a>
+  <a href="#skills">Skills (19)</a>
   <div class="grp">Codex</div>
   <a href="#bridge">Codex Bridge</a>
   <a href="#sandbox">Sandbox &amp; Security</a>
@@ -176,7 +176,7 @@
   <p>End-to-end map of the plugin — layout, components, integration points, and runtime
      behavior. What runs when, where state lives, how the pieces compose.</p>
   <div class="pills">
-    <span class="pill"><b>22</b> skills</span>
+    <span class="pill"><b>19</b> skills</span>
     <span class="pill"><b>13</b> hooks</span>
     <span class="pill">native <b>Codex</b> bridge</span>
     <span class="pill">macOS-first</span>
@@ -235,7 +235,7 @@ sspower/
 ├── .claude-plugin/plugin.json   <span class="c"># Plugin manifest (name, version, keywords)</span>
 ├── CLAUDE.md                    <span class="c"># Plugin-scoped instructions</span>
 ├── README.md                    <span class="c"># User-facing overview</span>
-├── skills/&lt;skill&gt;/SKILL.md      <span class="c"># 22 skills + per-skill references/</span>
+├── skills/&lt;skill&gt;/SKILL.md      <span class="c"># 19 skills + per-skill references/</span>
 ├── hooks/                       <span class="c"># Lifecycle hooks + hooks.json</span>
 ├── scripts/                     <span class="c"># codex-bridge.mjs, codex-registry.mjs, sspower_mem/</span>
 ├── agents/                      <span class="c"># Subagent prompts</span>
@@ -325,7 +325,7 @@ sspower/
 
 <!-- SKILLS -->
 <section id="skills">
-  <h2><span class="ico">🧩</span>Skills (22)</h2>
+  <h2><span class="ico">🧩</span>Skills (19)</h2>
   <p class="lead">Each skill is one directory — a lean <code>SKILL.md</code> entry point
      (&lt;100 lines) plus a <code>references/</code> folder loaded on demand. Claude must
      invoke any skill whose description matches the request.</p>
@@ -352,7 +352,6 @@ sspower/
   <h3>Codex integration</h3>
   <table>
     <tr><th>Skill</th><th>Purpose</th></tr>
-    <tr><td><code>codex-enrich</code></td><td>Validate &amp; enrich a prompt against the codebase via Codex</td></tr>
     <tr><td><code>codex-tracking</code></td><td>List / inspect / kill / steer running bridge sessions</td></tr>
     <tr><td><code>codex-diagnostics</code></td><td>Triage <code>codex.log</code> failures, propose patches</td></tr>
   </table>
