@@ -1,0 +1,18 @@
+description = "Dev pipeline - start/advance/abort the plan->review->exec->test->review flow"
+prompt = """Run the sspower flow state machine.
+
+Execute: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/flow.sh" {{args}}` and report the
+resulting stage line. If `${CLAUDE_PLUGIN_ROOT}` is unset, the script is at
+`scripts/flow.sh` under the sspower plugin directory.
+
+If no argument was given, default to the `status` subcommand.
+
+If the subcommand was `start`, the pipeline is now ACTIVE and auto-advancing.
+Drive it yourself - do not wait for the user between stages:
+- The UserPromptSubmit hook injects the current stage's marching orders.
+- Begin the PLAN stage now: invoke the sspower:writing-plans skill.
+- When PLAN produces a plan file, run `flow.sh set-plan <path>` so the path
+  survives compaction, then `flow.sh advance`.
+- As each later stage's deliverable is done, run `flow.sh advance` and continue.
+- On test failure, run `flow.sh back` (returns to EXEC), fix, retry.
+- Stop only on failure. The flow clears itself after the REVIEW stage."""

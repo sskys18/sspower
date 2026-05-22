@@ -1,23 +1,96 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: inject the skill-routing reminder.
+# UserPromptSubmit hook: state-aware skill-routing injection.
 #
-# Prompt enrichment was removed (spec D-A2): codex `enrich` had a
-# disabled-notice injection bug and duplicated what semble-context.sh
-# now provides via the much-faster `semble_rs` rust binary. The
-# remaining job here is to keep the skill-routing reminder in front of
-# the model so it survives compaction.
+#   FLOW ACTIVE - inject the current pipeline stage's marching orders
+#                 (replaces the generic reminder entirely).
+#   FLOW IDLE   - inject the skill-routing reminder only on coding/planning
+#                 intent; stay silent for pure Q&A (kills the per-turn tax).
 #
-# Fail-open: a JSON write failure must NOT block prompt submission.
+# Failure policy: a crash never blocks prompt submission (the EXIT trap
+# guarantees exit 0). On *ambiguity* the hook is conservative, not silent:
+#   - jq missing             -> legacy unconditional reminder (compat exception)
+#   - malformed/empty prompt -> reminder (cannot classify -> assume coding)
+# This is deliberate - a missed skill trigger costs more than an extra
+# reminder. "Fail-open" here means "never block", not "never inject".
 
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
 trap '_sspower_exit_guard $? "0" hook.prompt-submit' EXIT
 
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+FLOW_SH="${PLUGIN_ROOT}/scripts/flow.sh"
+
 REMINDER="sspower: BEFORE responding, check which skills apply (even 1% chance = invoke via Skill tool). Priority: process skills first (brainstorming, systematic-debugging), then implementation skills (test-driven-development, writing-plans, executing-plans, subagent-driven-development). Rigid skills (TDD, debugging): follow exactly. Flexible skills: adapt to context. If about to claim done: verification-before-completion. If completing a feature: requesting-code-review. Skip only for pure Q&A with zero coding/planning intent."
 
-# Drain stdin so the supervisor sees a consumed pipe. We do not act on
-# the prompt body anymore; semble-context.sh handles per-prompt context.
-cat >/dev/null 2>&1 || true
+INPUT="$(cat 2>/dev/null || true)"
 
-printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "$REMINDER"
+# No jq -> fall back to the legacy unconditional reminder (printf-escaped).
+if ! command -v jq >/dev/null 2>&1; then
+  printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "$REMINDER"
+  exit 0
+fi
+
+emit() {
+  # $1 = additionalContext text; jq -Rs makes it JSON-safe.
+  printf '%s' "$1" | jq -Rs '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:.}}'
+}
+
+PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // empty' 2>/dev/null || true)"
+CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
+# Normalize cwd so the lookup key matches flow.sh's `pwd -P` writer key.
+# Without this, a symlinked project path stored by flow.sh would never be
+# found here and active flows would silently appear idle.
+if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+  CWD="$(cd "$CWD" 2>/dev/null && pwd -P || printf '%s' "$CWD")"
+else
+  CWD="$(pwd -P)"
+fi
+
+# --- FLOW ACTIVE? -------------------------------------------------------
+# Stage instructions are NOT duplicated here - flow.sh's render_orders() is
+# the single source of truth. Ask flow.sh for the current stage's orders;
+# `cd "$CWD"` so flow.sh's `pwd -P` key matches the normalized cwd.
+ORDERS=""
+if [ -f "$FLOW_SH" ]; then
+  ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
+fi
+if [ -n "$ORDERS" ]; then
+  emit "$ORDERS"
+  exit 0
+fi
+
+# --- FLOW IDLE: gate the reminder on skill / coding intent --------------
+needs_reminder() {
+  local p
+  p="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  # (1) explicit skill requests - must NEVER be suppressed (hook's core job)
+  case "$p" in
+    *'sspower:'*|*'systematic-debugging'*|*'writing-plans'*|*'test-driven'*|\
+    *'subagent-driven'*|*'executing-plans'*|*'brainstorm'*|*'verification-before'*|\
+    *'requesting-code-review'*|*'code-review'*|*'second-opinion'*|\
+    *'finishing-a-development'*|*' skill'*|*'invoke '*|*' use the '*)
+      return 0 ;;
+  esac
+  # (2) code signals - fenced code, file extensions
+  case "$p" in
+    *'```'*|*'.js'*|*'.ts'*|*'.py'*|*'.sh'*|*'.go'*|*'.rs'*|*'.tsx'*|*'.json'*|*'.md'*)
+      return 0 ;;
+  esac
+  # (3) coding / planning verbs
+  case " $p " in
+    *' fix '*|*' bug '*|*' bugs '*|*' implement '*|*' refactor '*|*' build '*|\
+    *' test '*|*' tests '*|*' error '*|*' errors '*|*' debug '*|*' add '*|\
+    *' plan '*|*' feature '*|*' broken '*|*' fail '*|*' fails '*|\
+    *' failing '*|*' crash '*|*' function '*|*' class '*|*' commit '*|\
+    *' create '*|*' update '*|*' change '*|*' remove '*|*' delete '*|\
+    *' edit '*|*' review '*|*' lint '*|*' typecheck '*|*' compile '*|\
+    *' run '*|*' merge '*|*' rename '*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+if [ -z "$PROMPT" ] || needs_reminder "$PROMPT"; then
+  emit "$REMINDER"
+fi
 exit 0
