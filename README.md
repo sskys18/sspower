@@ -88,101 +88,10 @@ codex login
 
 ## 🔄 The Complete Flow
 
-```
-                          USER REQUEST
-                               |
-                               v
-                    +--------------------+
-                    |   using-sspower    |  <-- meta router
-                    |  "1% chance =      |      fires on every message
-                    |   invoke skill"    |
-                    +--------------------+
-                               |
-              +----------------+----------------+
-              |                |                |
-              v                v                v
-     +--------------+  +--------------+  +--------------+
-     | brainstorming|  | systematic-  |  |    codex-    |
-     |              |  |  debugging   |  |   enrich     |
-     | ideas -->    |  | 4-phase      |  | validate     |
-     | designs      |  | investigation|  | prompts via  |
-     +--------------+  |      |       |  | Codex        |
-              |        | Phase 4:     |  +--------------+
-              v        | invoke TDD   |
-     +--------------+  |      |       |
-     | writing-     |  +------+-------+
-     |   plans      |         |
-     |              |         v
-     | specs -->    |  +--------------+
-     | task plans   |  | test-driven- |  <-- TDD fires here:
-     +--------------+  | development  |      inside debugging (phase 4),
-              |        | RED-GREEN-   |      inside SDD implementer,
-              v        | REFACTOR     |      or standalone before
-     +--------------------+ +--------+      any implementation
-     | using-git-worktrees|
-     |                    |
-     | isolated branch    |
-     +--------------------+
-              |
-              v
-+----------------------------------+
-|  EXECUTION (pick one)            |
-|                                  |
-|  +----------------------------+  |
-|  | subagent-driven-development|  |   <-- recommended
-|  |                            |  |
-|  | Per task:                  |  |
-|  |   Pick engine:             |  |
-|  |   +--------+  +---------+ |  |
-|  |   | Claude |  |  Codex  | |  |
-|  |   |subagent|  |(bridge) | |  |
-|  |   +--------+  +---------+ |  |
-|  |        |           |      |  |
-|  |        +-----+-----+     |  |
-|  |              |            |  |
-|  |              v            |  |
-|  |     +----------------+   |  |
-|  |     |  TDD embedded  |   |  |   <-- implementer follows
-|  |     |  write test    |   |  |       RED-GREEN-REFACTOR
-|  |     |  watch fail    |   |  |       when building code
-|  |     |  make pass     |   |  |
-|  |     +----------------+   |  |
-|  |              |            |  |
-|  |              v            |  |
-|  |        Spec Review        |  |
-|  |     (compliant? --->)     |  |
-|  |              |            |  |
-|  |              v            |  |
-|  |      Quality Review       |  |
-|  |     (approve? --->)       |  |
-|  |              |            |  |
-|  |        Next Task          |  |
-|  +----------------------------+  |
-|                                  |
-|  +----------------------------+  |
-|  |     executing-plans        |  |   <-- simpler alternative
-|  |  inline / subagent / Codex |  |
-|  +----------------------------+  |
-+----------------------------------+
-              |
-              v
-+----------------------------------+
-|  REVIEW CHAIN                    |
-|                                  |
-|  verification-before-completion  |
-|  --> evidence before claims      |
-|                                  |
-|  requesting-code-review          |
-|  --> Claude reviewer subagent    |
-|                                  |
-|  second-opinion  [HARD GATE]     |
-|  --> sanity / security subagents |
-|      OR Codex review / rescue    |
-|                                  |
-|  finishing-a-development-branch  |
-|  --> merge / PR / keep / discard |
-+----------------------------------+
-```
+<div align="center">
+  <img src="docs/assets/flow-complete.png" width="440"
+       alt="The Complete Flow: using-sspower routes the request, then design, plan, isolate, execute (SDD), and a four-gate review chain before merge.">
+</div>
 
 ---
 
@@ -190,49 +99,10 @@ codex login
 
 Subagent-Driven Development dispatches a fresh agent per task. Two engines share the same structured JSON contracts:
 
-```
-Controller reads plan --> extracts tasks
-
-  For each task:
-
-  IMPLEMENT
-  +------------------+     +-------------------+
-  | Claude subagent  | OR  | Codex (bridge)    |
-  | interactive Q&A  |     | --output-schema   |
-  | native JSON      |     | --worktree        |
-  +------------------+     | --auto-commit     |
-         |                 +-------------------+
-         |                        |
-         +----------+-------------+
-                    |
-                    v
-            { status: "DONE",
-              files_changed: [...],
-              tests: { passed: 5 },
-              _commit: "abc123",
-              _branch: "codex/task-1",
-              _meta: { session_id, duration_ms,
-                       tool_calls, edits, tokens } }
-                    |
-  SPEC REVIEW       v
-  +----------------------------------+
-  | "Does it match the spec?"        |
-  | Reads actual code, not report    |
-  | Returns: compliant / non-compliant
-  | --> fix loop via resume if needed|
-  +----------------------------------+
-                    |
-  QUALITY REVIEW    v
-  +----------------------------------+
-  | "Is it well-built?"              |
-  | Architecture, tests, security    |
-  | Returns: approve / needs-attention
-  | --> fix loop via resume if needed|
-  +----------------------------------+
-                    |
-                    v
-              Next task
-```
+<div align="center">
+  <img src="docs/assets/flow-sdd.png" width="430"
+       alt="SDD with Codex: implement (Claude subagent or Codex bridge) emits one JSON envelope, then a spec-review gate and a quality-review gate, each with a fix loop, before the next task.">
+</div>
 
 ### Engine Selection
 
@@ -247,13 +117,10 @@ Controller reads plan --> extracts tasks
 
 When a review fails, the controller resumes the implementer's Codex session — Codex remembers everything it built:
 
-```
-implement --> session A (persisted)
-spec-review --> session B (ephemeral)
-  non-compliant!
-resume --session-id A --> Codex fixes with full context
-spec-review --> compliant
-```
+<div align="center">
+  <img src="docs/assets/flow-fixloop.png" width="400"
+       alt="Codex fix loop: implement runs in persisted session A; spec-review runs in ephemeral session B; on non-compliant, resume session A to fix with full context, then re-review until compliant.">
+</div>
 
 ---
 
