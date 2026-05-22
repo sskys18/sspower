@@ -253,6 +253,11 @@
     border:1px dashed rgba(150,115,255,.45); border-radius:9px; padding:7px 9px;
     background:rgba(150,115,255,.06)}
   .keep b{color:#cdb6ff; font-family:var(--mono)}
+  /* single-page PDF export */
+  @media print{
+    @page{ size:1760px 1010px; margin:0 }
+    html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
+  }
 </style>
 </head>
 <body>

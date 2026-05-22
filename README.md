@@ -13,6 +13,11 @@
 
 *22 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
 
+<img src="docs/assets/flow.png" width="100%"
+     alt="The sspower workflow: a 6-phase pipeline (Route, Design, Plan, Isolate, Execution, Ship) drilling into the SDD per-task loop (implement, structured result, spec review, quality review) and the Codex fix loop (session A implement, session B spec-review, resume A on non-compliant, re-review until compliant).">
+
+<sub>The full sspower workflow, end to end — 6-phase pipeline · SDD per-task loop · Codex fix loop &nbsp;·&nbsp; <a href="docs/assets/flow.pdf">PDF</a></sub>
+
 </div>
 
 > A standalone project, inspired by [Superpowers](https://github.com/obra/superpowers) v5.0.5 and several other open-source tools — see [Inspired by](#-inspired-by).
@@ -23,7 +28,6 @@
 
 - [What's new in 1.1](#-whats-new-in-11)
 - [Installation](#-installation)
-- [The Workflow](#-the-workflow)
 - [How SDD Works with Codex](#-how-sdd-works-with-codex)
 - [5 Review Gates Before Merge](#-5-review-gates-before-merge)
 - [All 22 Skills](#-all-22-skills)
@@ -83,17 +87,6 @@ codex login
 ```
 
 > Without Codex, all skills work except `second-opinion`, Codex engine in SDD, and `codex-enrich`.
-
----
-
-## 🔄 The Workflow
-
-One picture, end to end — the 6-phase pipeline up top, drilling down into the SDD per-task loop and the Codex fix loop.
-
-<div align="center">
-  <img src="docs/assets/flow.png" width="100%"
-       alt="The sspower workflow: a 6-phase pipeline (Route, Design, Plan, Isolate, Execution, Ship) drilling into the SDD per-task loop (implement, structured result, spec review, quality review) and the Codex fix loop (session A implement, session B spec-review, resume A on non-compliant, re-review until compliant).">
-</div>
 
 ---
 
