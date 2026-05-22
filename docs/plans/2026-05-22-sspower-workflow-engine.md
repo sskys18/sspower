@@ -2,7 +2,9 @@
 
 **Date:** 2026-05-22
 **Repo:** `sspower` plugin (`github.com/sskys18/sspower`)
-**Status:** plan — awaiting plan-review + approval
+**Status:** approved — Codex plan-review `approve-with-followups`
+(session 019e4e76); the one LOW finding (`sspower:`-prefixed skill IDs in
+`emit_trigger`) is applied inline.
 **Spec:** `docs/specs/2026-05-22-sspower-workflow-engine-design.md`
 **Builds on:** branch `feat/flow-state-machine` (v1 flow state machine,
 commit `8d895c5`)
@@ -96,15 +98,16 @@ sspower_classify_intent() {
       echo qa; return 0 ;;
   esac
 
-  # 2. explicit-skill — "sspower:" or a skill basename on a word boundary
+  # 2. explicit-skill — "sspower:" or a skill basename on a word boundary.
+  #    Skill basenames are [a-z-] only, so each is safe as a literal regex
+  #    fragment; the (^|…)/(…|$) groups are the spec's boundary rule.
   case "$p" in *"sspower:"*) echo explicit-skill; return 0 ;; esac
   local name
   for name in $_sspower_skill_names; do
-    case "$p" in
-      "$name"|"$name "*|*" $name"|*" $name "*|\
-      *" $name."*|*" $name,"*|*" $name?"*|*" $name'"'"'"*)
-        echo explicit-skill; return 0 ;;
-    esac
+    [ -n "$name" ] || continue
+    if [[ "$p" =~ (^|[^[:alnum:]_-])"$name"([^[:alnum:]_-]|$) ]]; then
+      echo explicit-skill; return 0
+    fi
   done
 
   # 3. skill-relevant signal test
@@ -166,17 +169,19 @@ sspower_target_trigger() {
   case "$p" in *'not working'*|*'test fail'*|*'tests fail'*)
     echo debugging; return 0 ;;
   esac
-  # 2. code-review — review of an IMPLEMENTED artifact
+  # 2. review/approve of a NON-impl artifact → none.
+  #    MUST come before the code-review guard: "review this implementation
+  #    plan" has both "implementation" and "plan" — the plan wins → none.
+  case "$p" in *review*|*approve*|*approval*)
+    case "$p" in
+      *design*|*spec*|*plan*) echo none; return 0 ;;
+    esac ;;
+  esac
+  # 3. code-review — review of an IMPLEMENTED artifact (diff/PR/code)
   case "$p" in *review*)
     case "$p" in
       *diff*|*' pr '*|*' pr'|*'pull request'*|*' change'*|\
       *implementation*|*'this code'*) echo code-review; return 0 ;;
-    esac ;;
-  esac
-  # 3. review/approve of a NON-impl artifact → none
-  case "$p" in *review*|*approve*|*approval*)
-    case "$p" in
-      *design*|*spec*|*plan*) echo none; return 0 ;;
     esac ;;
   esac
   # 4. brainstorming
@@ -302,6 +307,20 @@ if printf '%s' "$PROMPT" | grep -qiE '^[[:space:]]*quick:[[:space:]]*'; then
 fi
 
 # --- Step 5: classify + route -----------------------------------------
+# Targeted skill line for a simple-coding prompt ($1). Used by the
+# simple-coding branch AND the auto-start-failure fallback (spec: a failed
+# auto-start degrades to the simple-coding trigger, not a generic nudge).
+emit_trigger() {
+  case "$(sspower_target_trigger "$1")" in
+    debugging)     emit "sspower → invoke sspower:systematic-debugging before proposing a fix." ;;
+    brainstorming) emit "sspower → invoke sspower:brainstorming before designing." ;;
+    planning)      emit "sspower → invoke sspower:writing-plans for this multi-step work." ;;
+    tdd)           emit "sspower → invoke sspower:test-driven-development before writing code." ;;
+    code-review)   emit "sspower → invoke sspower:requesting-code-review for this diff." ;;
+    *)             emit "sspower: a skill may apply — check before acting." ;;
+  esac
+}
+
 INTENT="$(sspower_classify_intent "$CLEAN")"
 [ "$INTENT" = "multi-step" ] && [ "$QUICK" -eq 1 ] && INTENT="simple-coding"
 
@@ -315,10 +334,10 @@ case "$INTENT" in
         exit 0
       fi
     fi
-    # start failed → degrade to a nudge, log it
+    # auto-start failed → log, then fall back to the simple-coding trigger
     command -v log_event >/dev/null 2>&1 && \
       log_event warn hook.prompt-submit kind=autostart_failed
-    emit "sspower: a skill may apply — check before acting."
+    emit_trigger "$CLEAN"
     exit 0
     ;;
   explicit-skill)
@@ -326,14 +345,7 @@ case "$INTENT" in
     exit 0
     ;;
   simple-coding)
-    case "$(sspower_target_trigger "$CLEAN")" in
-      debugging)     emit "sspower → invoke the systematic-debugging skill before proposing a fix." ;;
-      brainstorming) emit "sspower → invoke the brainstorming skill before designing." ;;
-      planning)      emit "sspower → invoke the writing-plans skill for this multi-step work." ;;
-      tdd)           emit "sspower → invoke the test-driven-development skill before writing code." ;;
-      code-review)   emit "sspower → invoke the requesting-code-review skill for this diff." ;;
-      *)             emit "sspower: a skill may apply — check before acting." ;;
-    esac
+    emit_trigger "$CLEAN"
     exit 0
     ;;
   *)  # qa
@@ -393,6 +405,11 @@ bash -n hooks/semble-context.sh && echo "syntax ok"
 
 ## Task 4 — `hooks/session-start`
 
+**Surgical edit — preserve local changes.** `hooks/session-start` already
+has uncommitted local modifications (the sspower-mem `bin/` wrapper work).
+Apply only the two edits below; do not overwrite the file or revert
+unrelated lines.
+
 The hook injects the full `using-sspower/SKILL.md` wrapped in
 `<EXTREMELY_IMPORTANT>… your introduction to using skills …`. Replace the
 body it injects with a short workflow-engine notice.
@@ -438,6 +455,11 @@ Leave the skill body unchanged (still usable via explicit `/using-sspower`).
 ---
 
 ## Task 6 — `CLAUDE.md`
+
+**Surgical edit — preserve local changes.** `CLAUDE.md` already has
+uncommitted local modifications (the sspower-mem wrapper rewrite). Replace
+only the single line below; leave every other line, including the modified
+sspower-mem paragraph, intact.
 
 In the "Key Rules" list, replace the line:
 ```
@@ -507,6 +529,8 @@ ci "refactor the auth module, then add token rotation" \
 tt "the parser is broken"               debugging      "trig: debugging"
 tt "tests fail after the merge"         debugging      "trig: test-fail"
 tt "review this PR diff"                code-review    "trig: code-review"
+tt "review this implementation diff"    code-review    "trig: impl diff → code-review"
+tt "review this implementation plan"    none           "trig: impl plan → none"
 tt "review the spec for me"             none           "trig: review spec → none"
 tt "approve this plan"                  none           "trig: approve plan → none"
 tt "brainstorm options for caching"     brainstorming  "trig: brainstorm"
@@ -610,6 +634,22 @@ out="$(run '{"prompt":"what is a closure?","cwd":"'"$CWD"'"}')"
 sub "active flow → orders" "FLOW[plan 1/5]" "$out"
 ( cd "$CWD" && bash "$FLOW" abort >/dev/null ); teardown
 
+# active flow wins even with an empty prompt (flow spine sacrosanct)
+setup
+( cd "$CWD" && bash "$FLOW" start "demo task" >/dev/null )
+out="$(run '{"prompt":"","cwd":"'"$CWD"'"}')"
+sub "active flow + empty prompt → orders" "FLOW[plan 1/5]" "$out"
+( cd "$CWD" && bash "$FLOW" abort >/dev/null ); teardown
+
+# auto-start failure → falls back to the targeted trigger, not a flow.
+# Force failure: make the state file a directory so flow.sh start dies.
+setup
+mkdir -p "$HOME/.claude/sspower/flow-state.json"
+out="$(run '{"prompt":"implement a retry layer with backoff and jitter for the api client","cwd":"'"$CWD"'"}')"
+no_sub "autostart-fail → no AUTO-FLOW" "AUTO-FLOW" "$out"
+sub    "autostart-fail → targeted trigger" "test-driven-development" "$out"
+teardown
+
 echo "---"
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
@@ -626,24 +666,63 @@ bash tests/hooks/test_prompt_submit.sh   # → passed: N  failed: 0
 
 ## Task 9 — `tests/hooks/test-semble-context.sh`
 
-The file exists. Add cases pinning the consolidated gate. Append these
-inside the existing test structure (follow the file's existing helper
-names; the cases below assume a `run`-style invocation of the hook with a
-JSON payload and a substring/empty check — adapt to the file's helpers):
+The file exists — **read it first** to learn its helper names and harness
+shape, then add the cases below following that shape.
 
-- **coding intent passes the gate** — payload prompt `"fix the bug in
-  auth.ts"` → hook does NOT skip with `reason=no-coding-intent`.
-- **pure Q&A skips** — prompt `"what is this repo about"` → hook skips
-  (`emit_nothing`).
-- **`.ts` mention now counts** — prompt `"look at handler.ts"` (≥20 chars)
-  → not skipped for `no-coding-intent` (widened gate vs old regex).
-- **unset-variable safety** — run the hook under `set -u` with a normal
-  payload; it must not abort with an unbound-variable error (guards the
-  `USER_PROMPT` vs `PROMPT` fix).
+**The gate is not reachable by default.** `semble-context.sh` exits early
+(lines ~47–48) when `SSPOWER_SEMBLE=0` or `semble_rs` is not on `PATH`,
+*before* the consolidated coding-intent gate. So a test that just pipes a
+payload and checks stdout proves nothing. Each gate test MUST:
 
-If the existing file has no hook-invocation harness, add a minimal one
-mirroring `test_prompt_submit.sh`'s `run()` (pipe JSON to
-`bash "$ROOT/hooks/semble-context.sh"`, capture stdout+stderr).
+1. Put a deterministic `semble_rs` shim first on `PATH` (a 1-line script
+   that `exit 0`s, or echoes empty), so the hook reaches the gate.
+2. Use an isolated `HOME` (`mktemp -d`) so the hook's log
+   (`$HOME/.claude/sspower/codex.log`, via `_log.sh`) is test-private.
+3. Assert on the **log line**, not stdout — grep the hook log for
+   `kind=skip reason=no-coding-intent` (present = skipped, absent = passed
+   the gate). `emit_context` exits before logging a skip.
+
+Setup sketch:
+```bash
+setup() {
+  TMP="$(mktemp -d)"; export HOME="$TMP"
+  SHIM="$TMP/bin"; mkdir -p "$SHIM"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$SHIM/semble_rs"
+  chmod +x "$SHIM/semble_rs"; export PATH="$SHIM:$PATH"
+}
+ran_hook() { printf '%s' "$1" | bash "$ROOT/hooks/semble-context.sh" >/dev/null 2>&1; }
+skipped_no_intent() {  # → 0 if the hook logged a no-coding-intent skip
+  grep -q 'kind=skip reason=no-coding-intent' "$HOME/.claude/sspower/codex.log" 2>/dev/null
+}
+```
+
+**Prompt choice matters.** `semble-context.sh` skips read-verb prefixes
+(`what is`, `show`, `explain`, …) at its *own* `case` block — *before* the
+consolidated gate, and without logging `no-coding-intent`. So a gate test
+must use a prompt that is **≥20 chars, not a read-verb prefix, not a
+greeting** — only then does it reach the `_intent.sh` gate. The negative
+prompt must be non-coding *and* non-read-verb.
+
+Cases (each: `setup`, build a `{"prompt":…,"cwd":…}` payload, `ran_hook`,
+assert, `teardown` with `rm -R`):
+
+- **coding intent passes the gate** — `"please fix the bug in auth code"`
+  (31 ch; modal-stripped → `fix`/`bug` signal) → `skipped_no_intent` FALSE.
+- **non-coding reaches the gate and skips** — `"compare the repository
+  purpose today"` (not a read-verb prefix, no coding verb → `_intent.sh`
+  returns `qa`) → `skipped_no_intent` TRUE.
+- **`.ts` mention now counts** — `"take a look at the handler.ts file"`
+  (not a read-verb prefix; `.ts` is a coding signal) →
+  `skipped_no_intent` FALSE (widened gate vs old regex).
+- **read-verb prompt** — `"what is this repository for"` → assert hook
+  stdout is **empty** (skipped at semble's own read-verb `case`); do NOT
+  assert the `no-coding-intent` log — that path exits before the gate.
+- **unset-variable safety** — run the hook under a normal payload and
+  confirm it does not abort with `USER_PROMPT: unbound variable` on stderr.
+- **`_intent.sh`-missing fallback** — run against a copy of the hook tree
+  with `_intent.sh` removed; the legacy regex still passes
+  `"please fix the bug in auth code"` (FALSE) and skips
+  `"compare the repository purpose today"` (TRUE).
 
 **Verify:**
 
@@ -730,3 +809,42 @@ Spec: docs/specs/2026-05-22-sspower-workflow-engine-design.md
 - **Open risk (accepted, per spec):** classifier is bash substring
   matching — lossy; conservative `multi-step` bar + model-bail are the
   mitigations.
+
+### Codex plan-review fixes applied (session 019e4e69)
+
+- **[high] `_intent.sh` invalid bash** — the hand-enumerated explicit-skill
+  `case` arms had broken apostrophe quoting and did not implement the
+  spec's word-boundary rule. Replaced with the spec's exact regex via
+  `[[ "$p" =~ (^|[^[:alnum:]_-])"$name"([^[:alnum:]_-]|$) ]]` — fixes both
+  the syntax error and the boundary-coverage gap (`/writing-plans`,
+  `systematic-debugging:` now match).
+- **[med] Task 9 gate unreachable** — `semble-context.sh` exits before the
+  consolidated gate when `semble_rs` is absent. Task 9 now mandates a
+  `semble_rs` PATH shim, isolated `HOME`, and assertion on the hook **log**
+  (`kind=skip reason=no-coding-intent`), not stdout.
+- **[low] target files have local mods** — Tasks 4 and 6 (`session-start`,
+  `CLAUDE.md`) carry unrelated uncommitted sspower-mem changes. Both tasks
+  now flag a surgical edit that preserves those local changes.
+
+### Codex plan-review fixes applied (session 019e4e6e)
+
+- **[high] `target_trigger` ordering** — the non-impl review/approval guard
+  (`design|spec|plan` → `none`) now runs **before** the code-review guard,
+  so "review this implementation plan" → `none`, not `code-review`. Added
+  truth-table cases for both impl-plan and impl-diff.
+- **[med] active-flow-vs-bad-payload not pinned** — `test_prompt_submit.sh`
+  now has an explicit case: flow active + `{"prompt":"","cwd":"$CWD"}` →
+  emits `FLOW[plan 1/5]` (flow spine survives an empty prompt).
+
+### Codex plan-review fixes applied (session 019e4e71)
+
+- **[high] Task 9 test prompts unreachable** — `what is …` prompts exit at
+  `semble-context.sh`'s own read-verb `case` before the consolidated gate.
+  Task 9 now uses gate-reachable prompts (`compare the repository purpose
+  today` for the non-coding case) and asserts read-verb prompts via empty
+  stdout, not the `no-coding-intent` log.
+- **[med] auto-start-failure dropped the targeted trigger** — Task 2 now
+  defines `emit_trigger()`; a failed `flow.sh start` logs `autostart_failed`
+  then calls `emit_trigger` (same as `simple-coding`), per spec. Added a
+  `test_prompt_submit.sh` case that forces start-failure (state file made a
+  directory) and asserts the targeted line, not a generic nudge.

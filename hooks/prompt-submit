@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: state-aware skill-routing injection.
+# UserPromptSubmit hook: workflow-engine router.
 #
-#   FLOW ACTIVE - inject the current pipeline stage's marching orders
-#                 (replaces the generic reminder entirely).
-#   FLOW IDLE   - inject the skill-routing reminder only on coding/planning
-#                 intent; stay silent for pure Q&A (kills the per-turn tax).
+#   ACTIVE FLOW -> inject the current stage's marching orders (flow.sh).
+#   IDLE        -> classify intent (hooks/_intent.sh):
+#     multi-step    -> auto-start a flow (conservative; model can abort)
+#     explicit-skill-> short skill-confirmation line
+#     simple-coding -> one targeted skill trigger
+#     qa            -> nothing
 #
-# Failure policy: a crash never blocks prompt submission (the EXIT trap
-# guarantees exit 0). On *ambiguity* the hook is conservative, not silent:
-#   - jq missing             -> legacy unconditional reminder (compat exception)
-#   - malformed/empty prompt -> reminder (cannot classify -> assume coding)
-# This is deliberate - a missed skill trigger costs more than an extra
-# reminder. "Fail-open" here means "never block", not "never inject".
+# Failure policy: never blocks submission (EXIT trap -> exit 0). On
+# ambiguity (no jq, malformed/empty payload, _intent.sh missing) it falls
+# back to the legacy catalog REMINDER - a missed trigger costs more than a
+# spare reminder.
 
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
@@ -19,37 +19,33 @@ trap '_sspower_exit_guard $? "0" hook.prompt-submit' EXIT
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 FLOW_SH="${PLUGIN_ROOT}/scripts/flow.sh"
+INTENT_SH="${PLUGIN_ROOT}/hooks/_intent.sh"
 
 REMINDER="sspower: BEFORE responding, check which skills apply (even 1% chance = invoke via Skill tool). Priority: process skills first (brainstorming, systematic-debugging), then implementation skills (test-driven-development, writing-plans, executing-plans, subagent-driven-development). Rigid skills (TDD, debugging): follow exactly. Flexible skills: adapt to context. If about to claim done: verification-before-completion. If completing a feature: requesting-code-review. Skip only for pure Q&A with zero coding/planning intent."
 
 INPUT="$(cat 2>/dev/null || true)"
 
-# No jq -> fall back to the legacy unconditional reminder (printf-escaped).
+# No jq -> legacy reminder, printf-escaped.
 if ! command -v jq >/dev/null 2>&1; then
   printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' "$REMINDER"
   exit 0
 fi
 
-emit() {
-  # $1 = additionalContext text; jq -Rs makes it JSON-safe.
+emit() {  # $1 = additionalContext text; jq -Rs makes it JSON-safe
   printf '%s' "$1" | jq -Rs '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:.}}'
 }
 
-PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // empty' 2>/dev/null || true)"
+# --- Step 0: parse payload, resolve cwd -------------------------------
+PAYLOAD_OK=1
+PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // empty' 2>/dev/null)" || PAYLOAD_OK=0
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
-# Normalize cwd so the lookup key matches flow.sh's `pwd -P` writer key.
-# Without this, a symlinked project path stored by flow.sh would never be
-# found here and active flows would silently appear idle.
 if [ -n "$CWD" ] && [ -d "$CWD" ]; then
   CWD="$(cd "$CWD" 2>/dev/null && pwd -P || printf '%s' "$CWD")"
 else
   CWD="$(pwd -P)"
 fi
 
-# --- FLOW ACTIVE? -------------------------------------------------------
-# Stage instructions are NOT duplicated here - flow.sh's render_orders() is
-# the single source of truth. Ask flow.sh for the current stage's orders;
-# `cd "$CWD"` so flow.sh's `pwd -P` key matches the normalized cwd.
+# --- Step 1: ACTIVE FLOW wins (even on a bad prompt) ------------------
 ORDERS=""
 if [ -f "$FLOW_SH" ]; then
   ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
@@ -59,38 +55,69 @@ if [ -n "$ORDERS" ]; then
   exit 0
 fi
 
-# --- FLOW IDLE: gate the reminder on skill / coding intent --------------
-needs_reminder() {
-  local p
-  p="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
-  # (1) explicit skill requests - must NEVER be suppressed (hook's core job)
-  case "$p" in
-    *'sspower:'*|*'systematic-debugging'*|*'writing-plans'*|*'test-driven'*|\
-    *'subagent-driven'*|*'executing-plans'*|*'brainstorm'*|*'verification-before'*|\
-    *'requesting-code-review'*|*'code-review'*|*'second-opinion'*|\
-    *'finishing-a-development'*|*' skill'*|*'invoke '*|*' use the '*)
-      return 0 ;;
+# --- Step 2: idle - malformed/empty payload -> legacy reminder ---------
+if [ "$PAYLOAD_OK" -eq 0 ] || [ -z "$PROMPT" ]; then
+  emit "$REMINDER"
+  exit 0
+fi
+
+# --- Step 3: source the classifier -----------------------------------
+if ! source "$INTENT_SH" 2>/dev/null || ! command -v sspower_classify_intent >/dev/null 2>&1; then
+  emit "$REMINDER"
+  exit 0
+fi
+
+# --- Step 4: quick: opt-out -------------------------------------------
+QUICK=0
+CLEAN="$PROMPT"
+if printf '%s' "$PROMPT" | grep -qiE '^[[:space:]]*quick:[[:space:]]*'; then
+  QUICK=1
+  CLEAN="$(printf '%s' "$PROMPT" | sed -E 's/^[[:space:]]*[Qq][Uu][Ii][Cc][Kk]:[[:space:]]*//')"
+fi
+
+# --- Step 5: classify + route -----------------------------------------
+# Targeted skill line for a simple-coding prompt ($1). Used by the
+# simple-coding branch AND the auto-start-failure fallback (spec: a failed
+# auto-start degrades to the simple-coding trigger, not a generic nudge).
+emit_trigger() {
+  case "$(sspower_target_trigger "$1")" in
+    debugging)     emit "sspower -> invoke sspower:systematic-debugging before proposing a fix." ;;
+    brainstorming) emit "sspower -> invoke sspower:brainstorming before designing." ;;
+    planning)      emit "sspower -> invoke sspower:writing-plans for this multi-step work." ;;
+    tdd)           emit "sspower -> invoke sspower:test-driven-development before writing code." ;;
+    code-review)   emit "sspower -> invoke sspower:requesting-code-review for this diff." ;;
+    *)             emit "sspower: a skill may apply - check before acting." ;;
   esac
-  # (2) code signals - fenced code, file extensions
-  case "$p" in
-    *'```'*|*'.js'*|*'.ts'*|*'.py'*|*'.sh'*|*'.go'*|*'.rs'*|*'.tsx'*|*'.json'*|*'.md'*)
-      return 0 ;;
-  esac
-  # (3) coding / planning verbs
-  case " $p " in
-    *' fix '*|*' bug '*|*' bugs '*|*' implement '*|*' refactor '*|*' build '*|\
-    *' test '*|*' tests '*|*' error '*|*' errors '*|*' debug '*|*' add '*|\
-    *' plan '*|*' feature '*|*' broken '*|*' fail '*|*' fails '*|\
-    *' failing '*|*' crash '*|*' function '*|*' class '*|*' commit '*|\
-    *' create '*|*' update '*|*' change '*|*' remove '*|*' delete '*|\
-    *' edit '*|*' review '*|*' lint '*|*' typecheck '*|*' compile '*|\
-    *' run '*|*' merge '*|*' rename '*)
-      return 0 ;;
-  esac
-  return 1
 }
 
-if [ -z "$PROMPT" ] || needs_reminder "$PROMPT"; then
-  emit "$REMINDER"
-fi
-exit 0
+INTENT="$(sspower_classify_intent "$CLEAN")"
+[ "$INTENT" = "multi-step" ] && [ "$QUICK" -eq 1 ] && INTENT="simple-coding"
+
+case "$INTENT" in
+  multi-step)
+    TASK="$(printf '%s' "$CLEAN" | head -n1 | cut -c1-100)"
+    if ( cd "$CWD" 2>/dev/null && bash "$FLOW_SH" start "$TASK" ) >/dev/null 2>&1; then
+      ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
+      if [ -n "$ORDERS" ]; then
+        emit "AUTO-FLOW: a pipeline was auto-started for this task. If this is actually a quick, single-step change, run: bash \"$FLOW_SH\" abort - and just do it directly. Otherwise: ${ORDERS}"
+        exit 0
+      fi
+    fi
+    # auto-start failed -> log, then fall back to the simple-coding trigger
+    command -v log_event >/dev/null 2>&1 && \
+      log_event warn hook.prompt-submit kind=autostart_failed
+    emit_trigger "$CLEAN"
+    exit 0
+    ;;
+  explicit-skill)
+    emit "sspower: you named a skill - invoke it via the Skill tool before acting."
+    exit 0
+    ;;
+  simple-coding)
+    emit_trigger "$CLEAN"
+    exit 0
+    ;;
+  *)  # qa
+    exit 0
+    ;;
+esac

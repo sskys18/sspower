@@ -63,8 +63,15 @@ case "$LC" in
   "hi"|"hello"|"hey"|"thanks"|"thank you"|"ok"|"yes"|"no"|"done"|"go"|"push") emit_nothing ;;
   "help"|"status"|"why"*) emit_nothing ;;
 esac
-echo "$LC" | grep -qE '\b(add|fix|build|refactor|implement|change|write|create|debug|update|modify|remove|delete|rename|move|migrate|port|wire|ship|integrate|setup|install|configure|test|bug|error|broken|failing|crash)\b' \
-  || { log_hook info "kind=skip reason=no-coding-intent"; emit_nothing; }
+if source "$(dirname "${BASH_SOURCE[0]}")/_intent.sh" 2>/dev/null \
+   && command -v sspower_classify_intent >/dev/null 2>&1; then
+  [ "$(sspower_classify_intent "$USER_PROMPT")" = "qa" ] \
+    && { log_hook info "kind=skip reason=no-coding-intent"; emit_nothing; }
+else
+  # fail-open: _intent.sh unavailable -> exact legacy regex
+  echo "$LC" | grep -qE '\b(add|fix|build|refactor|implement|change|write|create|debug|update|modify|remove|delete|rename|move|migrate|port|wire|ship|integrate|setup|install|configure|test|bug|error|broken|failing|crash)\b' \
+    || { log_hook info "kind=skip reason=no-coding-intent"; emit_nothing; }
+fi
 
 # Only inject inside a git repo (semble is gitignore-aware; non-repo = noise)
 git -C "$CWD" rev-parse --is-inside-work-tree >/dev/null 2>&1 \

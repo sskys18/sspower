@@ -12,9 +12,6 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Capture the SessionStart payload (JSON on stdin) BEFORE any other read.
 hook_payload="$(cat 2>/dev/null || true)"
 
-# Read using-sspower content
-using_sspower_content=$(cat "${PLUGIN_ROOT}/skills/using-sspower/SKILL.md" 2>&1 || echo "Error reading using-sspower skill")
-
 # Escape string for JSON embedding using bash parameter substitution.
 # Each ${s//old/new} is a single C-level pass - orders of magnitude
 # faster than the character-by-character loop this replaces.
@@ -62,8 +59,6 @@ sspower_mem_call() {
     return 0  # CRITICAL: never propagate via return value under set -e.
 }
 
-using_sspower_escaped=$(escape_for_json "$using_sspower_content")
-
 # --- Recent project memory from sspower-mem (best-effort, never blocks) ---
 mem_block=""
 payload_cwd="$(printf '%s' "$hook_payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
@@ -88,7 +83,7 @@ if [ -n "$payload_cwd" ]; then
     esac
 fi
 
-session_context="<EXTREMELY_IMPORTANT>\nYou have sspower.\n\n**Below is the full content of your 'sspower:using-sspower' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_sspower_escaped}\n</EXTREMELY_IMPORTANT>${mem_block}"
+session_context="<EXTREMELY_IMPORTANT>\nYou have sspower - a workflow engine. The prompt-submit hook routes skills by intent and auto-starts a plan->review->exec->test->review flow on multi-step work. Run \`/flow status\` to inspect an active flow, \`/flow abort\` to clear one. Invoke skills via the Skill tool; \`/using-sspower\` is the skill reference.\n</EXTREMELY_IMPORTANT>${mem_block}"
 
 # Output context injection as JSON (Claude Code format).
 # Uses printf instead of heredoc to work around bash 5.3+ heredoc hang.

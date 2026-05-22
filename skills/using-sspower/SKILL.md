@@ -1,6 +1,8 @@
 ---
 name: using-sspower
-description: Use when starting any conversation or deciding whether a skill applies to the current task
+description: sspower skill reference - the catalog of available skills and
+  when each applies. The prompt-submit hook routes skills automatically;
+  consult this when you want the full list or an explicit lookup.
 ---
 
 <SUBAGENT-STOP>
