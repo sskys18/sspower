@@ -35,8 +35,6 @@ CWD="$(pwd -P)"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 [ -L "$STATE_FILE" ] && die "refusing to follow symlink: $STATE_FILE"
-[ -f "$STATE_FILE" ] || printf '{"version":1,"flows":{}}\n' > "$STATE_FILE"
-chmod 600 "$STATE_FILE" 2>/dev/null || true
 
 # --- serialize state access -------------------------------------------
 # flow-state.json is shared across projects; concurrent flow.sh runs would
@@ -63,6 +61,11 @@ while :; do
 done
 # invariant past this point: _flow_locked=1 (every state write holds the
 # mutex; an unacquirable lock dies above rather than writing unlocked).
+
+# First-use init — inside the lock, so concurrent first runs cannot race
+# to create the state file.
+[ -f "$STATE_FILE" ] || printf '{"version":1,"flows":{}}\n' > "$STATE_FILE"
+chmod 600 "$STATE_FILE" 2>/dev/null || true
 
 jq_get() { jq -r --arg c "$CWD" "$1" "$STATE_FILE" 2>/dev/null; }
 
