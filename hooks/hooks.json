@@ -85,6 +85,12 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/codex-lsp-posttool.sh\"",
             "timeout": 6,
             "async": false
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/graph-mark-dirty.sh\"",
+            "timeout": 3,
+            "async": false
           }
         ]
       }
