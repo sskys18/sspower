@@ -626,7 +626,11 @@ export function spanSha8(text) {
 }
 
 function nameFromFunctionText(text) {
-  const m = text.match(/^function\s+\*?\s*([A-Za-z_$][\w$]*)/);
+  // `async function NAME` is a single function_declaration node whose text
+  // starts with `async`, so the regex MUST tolerate an optional async prefix
+  // — every `cmd*` in codex-bridge.mjs is `async function`, and the P1
+  // acceptance demo depends on extracting `cmdImplement` correctly.
+  const m = text.match(/^(?:async\s+)?function\s+\*?\s*([A-Za-z_$][\w$]*)/);
   return m ? m[1] : null;
 }
 
@@ -653,15 +657,42 @@ function firstLineOf(text) {
   return text.split('\n', 1)[0].slice(0, 200);
 }
 
+// The YAML rules under scripts/graph/rules/ all pin `language: typescript`.
+// ast-grep refuses to apply those rules to .js / .mjs / .cjs source even
+// though TypeScript grammar is a JavaScript superset. Cheapest fix for P1
+// is to materialize JavaScript sources as a temp .ts file before scanning,
+// then delete it. P2 cleanup: add parallel js-*.yml rules instead.
+async function scanPathFor({ absPath, source, language }) {
+  if (language !== 'javascript') return { scanPath: absPath, cleanup: async () => {} };
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sspower-graph-'));
+  const scanPath = path.join(tmpDir, `${path.basename(absPath)}.ts`);
+  await fs.writeFile(scanPath, source, 'utf8');
+  return {
+    scanPath,
+    cleanup: async () => {
+      await fs.unlink(scanPath).catch(() => {});
+      await fs.rmdir(tmpDir).catch(() => {});
+    },
+  };
+}
+
 export async function extractFile({ absPath, source, language = 'typescript' }) {
-  const [fns, arrows, classes, methods, calls, imps] = await Promise.all([
-    runRule(RULES.function, absPath),
-    runRule(RULES.arrow,    absPath),
-    runRule(RULES.class,    absPath),
-    runRule(RULES.method,   absPath),
-    runRule(RULES.call,     absPath),
-    runRule(RULES.import,   absPath),
-  ]);
+  const { scanPath, cleanup } = await scanPathFor({ absPath, source, language });
+  let fns, arrows, classes, methods, calls, imps;
+  try {
+    [fns, arrows, classes, methods, calls, imps] = await Promise.all([
+      runRule(RULES.function, scanPath),
+      runRule(RULES.arrow,    scanPath),
+      runRule(RULES.class,    scanPath),
+      runRule(RULES.method,   scanPath),
+      runRule(RULES.call,     scanPath),
+      runRule(RULES.import,   scanPath),
+    ]);
+  } finally {
+    await cleanup();
+  }
 
   const nodes = [];
 
