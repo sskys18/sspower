@@ -28,10 +28,14 @@ export function resolveEdges({ nodes, callSites }) {
   const byQualified = new Map();
   const byName = new Map();
   const byFileAndName = new Map();
+  const byFileAndQualified = new Map();  // for import-resolution: match top-level
+                                          // exports (qname == name) but NOT class
+                                          // methods that happen to share a name.
   for (const n of nodes) {
     pushMap(byQualified, n.qualifiedName, n);
     pushMap(byName, n.name, n);
     pushMap(byFileAndName, `${n.filePath}::${n.name}`, n);
+    pushMap(byFileAndQualified, `${n.filePath}::${n.qualifiedName}`, n);
   }
 
   const edges = [];
@@ -64,7 +68,9 @@ export function resolveEdges({ nodes, callSites }) {
       const lookupName = (entry.imported === '*' || entry.imported === 'default')
         ? bareName  // namespace member calls (`ns.foo()` with bareName='foo')
         : entry.imported;
-      const imported = byFileAndName.get(`${entry.path}::${lookupName}`) ?? [];
+      // Match by qualified_name so `import { helper }` resolves to the
+      // top-level `helper` export, NOT every class method named `helper`.
+      const imported = byFileAndQualified.get(`${entry.path}::${lookupName}`) ?? [];
       if (imported.length > 0) {
         for (const target of imported) {
           edges.push(edge(callerNode.id, target.id, cs.line, 2));

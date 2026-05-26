@@ -127,4 +127,22 @@ assert.equal(nsEdges.length, 1, `namespace member should resolve, got ${nsEdges.
 assert.equal(nsEdges[0].confidence, 2);
 assert.equal(nsEdges[0].target, 'mod#bar#yyyyyyyy');
 
+// Regression: `import { helper } from './mod'` must resolve to the top-level
+// `helper` export in mod.ts, NOT every class method also named `helper`.
+const modWithMethod = '/tmp/mod2.ts';
+const appFile2 = '/tmp/app2.ts';
+const qnameNodes = [
+  { id: 'app#caller#aaaaaaaa', name: 'caller', qualifiedName: 'caller', filePath: appFile2 },
+  { id: 'mod#helper-top#bbbbbbbb', name: 'helper', qualifiedName: 'helper', filePath: modWithMethod },
+  { id: 'mod#C.helper#cccccccc',   name: 'helper', qualifiedName: 'C.helper', filePath: modWithMethod },
+];
+const qnameCall = [{
+  callerQualifiedName: 'caller', calleeIdent: 'helper', line: 5, callerFile: appFile2,
+  importedNames: { helper: { path: modWithMethod, imported: 'helper' } },
+}];
+const qnameEdges = resolveEdges({ nodes: qnameNodes, callSites: qnameCall });
+assert.equal(qnameEdges.length, 1, `named import must match top-level only, got ${qnameEdges.length} edges: ${JSON.stringify(qnameEdges)}`);
+assert.equal(qnameEdges[0].target, 'mod#helper-top#bbbbbbbb');
+assert.equal(qnameEdges[0].confidence, 2);
+
 console.log('OK resolve');
