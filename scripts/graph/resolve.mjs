@@ -37,7 +37,40 @@ function resolveModuleTs(importerAbs, moduleSpec) {
 
 // Per-language module resolvers — real bodies land with the extractor
 // for each language (Task 9 = Python, Task 10 = Go, Task 11 = Rust).
-function resolveModulePy(_importerAbs, _moduleSpec) { return null; }
+function resolveModulePy(importerAbs, moduleSpec) {
+  const importerDir = path.dirname(importerAbs);
+
+  // Relative dots: ".x", "..pkg.mod", "."
+  if (moduleSpec.startsWith('.')) {
+    const dots = moduleSpec.match(/^\.+/)[0].length;
+    let base = importerDir;
+    for (let i = 1; i < dots; i++) base = path.dirname(base);
+    const rest = moduleSpec.slice(dots).replace(/\./g, '/');
+    const candidate = rest ? path.join(base, rest) : base;
+    const py = candidate + '.py';
+    const initF = path.join(candidate, '__init__.py');
+    if (fs.existsSync(py) && fs.statSync(py).isFile()) return py;
+    if (fs.existsSync(initF) && fs.statSync(initF).isFile()) return initF;
+    return null;
+  }
+
+  // Absolute (top-level pkg). Search the project root for a matching path.
+  // Walk up from importerDir looking for the FIRST ancestor that contains a
+  // matching <spec>.py OR <spec>/__init__.py. This matches CPython's
+  // sys.path-first-hit behavior for in-repo packages without simulating sys.path.
+  const rel = moduleSpec.replace(/\./g, '/');
+  let dir = importerDir;
+  for (let i = 0; i < 10; i++) {
+    const py = path.join(dir, rel + '.py');
+    const initF = path.join(dir, rel, '__init__.py');
+    if (fs.existsSync(py) && fs.statSync(py).isFile()) return py;
+    if (fs.existsSync(initF) && fs.statSync(initF).isFile()) return initF;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
 function resolveModuleGo(_importerAbs, _moduleSpec) { return null; }
 function resolveModuleRs(_importerAbs, _moduleSpec) { return null; }
 

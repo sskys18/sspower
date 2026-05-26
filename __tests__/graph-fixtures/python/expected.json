@@ -1,0 +1,15 @@
+{
+  "language": "python",
+  "nodes": [
+    { "name": "caller", "qualifiedName": "caller", "kind": "function", "file": "main.py", "start_line": 4, "end_line": 5 },
+    { "name": "Worker", "qualifiedName": "Worker", "kind": "class", "file": "main.py", "start_line": 7, "end_line": 9 },
+    { "name": "run", "qualifiedName": "Worker.run", "kind": "method", "file": "main.py", "start_line": 8, "end_line": 9 },
+    { "name": "helper", "qualifiedName": "helper", "kind": "function", "file": "helpers.py", "start_line": 1, "end_line": 2 },
+    { "name": "calc", "qualifiedName": "calc", "kind": "function", "file": "pkg/util.py", "start_line": 1, "end_line": 2 }
+  ],
+  "edges": [
+    { "source": "caller", "target": "helper", "kind": "calls", "confidence": 2 },
+    { "source": "caller", "target": "calc", "kind": "calls", "confidence": 2 },
+    { "source": "Worker.run", "target": "helper", "kind": "calls", "confidence": 2 }
+  ]
+}

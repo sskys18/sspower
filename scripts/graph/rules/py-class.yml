@@ -1,0 +1,4 @@
+id: py-class
+language: python
+rule:
+  kind: class_definition

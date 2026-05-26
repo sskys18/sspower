@@ -1,0 +1,4 @@
+id: py-function
+language: python
+rule:
+  kind: function_definition

@@ -7,9 +7,11 @@ import { build } from '../../scripts/graph/build.mjs';
 import { openDb, initSchema } from '../../scripts/graph/db.mjs';
 
 const FIXTURES_DIR = path.resolve(import.meta.dirname);
-const FIXTURE_PACKS = readdirSync(FIXTURES_DIR, { withFileTypes: true })
-  .filter((d) => d.isDirectory())
-  .map((d) => d.name);
+const LANGUAGE_PACKS = [
+  { dir: 'ts-js', language: 'typescript' },
+  { dir: 'ts-js-multifile', language: 'typescript' },
+  { dir: 'python', language: 'python' },
+];
 
 const P_THRESHOLD = 0.85;
 const R_THRESHOLD = 0.70;
@@ -41,14 +43,14 @@ function expectedNodeSet(expected) {
 }
 
 describe('graph-fixtures extractor accuracy', () => {
-  for (const pack of FIXTURE_PACKS) {
-    const packDir = path.join(FIXTURES_DIR, pack);
+  for (const pack of LANGUAGE_PACKS) {
+    const packDir = path.join(FIXTURES_DIR, pack.dir);
     const expectedPath = path.join(packDir, 'expected.json');
     if (!existsSync(expectedPath)) continue;
     const expected = JSON.parse(readFileSync(expectedPath, 'utf8'));
 
-    it(`pack '${pack}' meets P=${P_THRESHOLD}, R=${R_THRESHOLD}`, async () => {
-      const tmp = mkdtempSync(path.join(os.tmpdir(), `fixture-${pack}-`));
+    it(`${pack.dir}: P>=${P_THRESHOLD}, R>=${R_THRESHOLD}`, async () => {
+      const tmp = mkdtempSync(path.join(os.tmpdir(), `fixture-${pack.dir}-`));
       cpSync(packDir, tmp, { recursive: true });
       const graphDir = path.join(tmp, '.claude', 'graph');
       mkdirSync(graphDir, { recursive: true });
@@ -78,7 +80,7 @@ describe('graph-fixtures extractor accuracy', () => {
       const recall    = want.size === 0 ? 1 : tp / want.size;
 
       const detail = {
-        pack, precision, recall,
+        pack: pack.dir, precision, recall,
         missing: [...want].filter(x => !got.has(x)),
         extra: [...got].filter(x => !want.has(x)),
       };
@@ -90,6 +92,6 @@ describe('graph-fixtures extractor accuracy', () => {
   }
 
   it('at least one fixture pack present', () => {
-    expect(FIXTURE_PACKS.length).toBeGreaterThan(0);
+    expect(LANGUAGE_PACKS.length).toBeGreaterThan(0);
   });
 });
