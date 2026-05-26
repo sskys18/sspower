@@ -115,7 +115,7 @@ export async function refresh({ rootDir, graphDir, log = () => {} }) {
   for (const f of perFile) {
     const map = {};
     for (const imp of f.extracted.imports) {
-      const resolved = resolveModule(f.filePath, imp.moduleSpec);
+      const resolved = resolveModule(f.filePath, imp.moduleSpec, f.language);
       if (!resolved) continue;
       for (const n of imp.names) {
         map[n.local] = { path: resolved, imported: n.imported };
@@ -156,7 +156,7 @@ export async function refresh({ rootDir, graphDir, log = () => {} }) {
         insNode.run(n.id, n.kind, n.name, n.qualifiedName, f.filePath, n.language, n.startLine, n.endLine, n.signature, n.spanSha8, now);
       }
       for (const imp of f.extracted.imports) {
-        const resolved = resolveModule(f.filePath, imp.moduleSpec);
+        const resolved = resolveModule(f.filePath, imp.moduleSpec, f.language);
         if (resolved) insImport.run(f.filePath, resolved);
       }
     }

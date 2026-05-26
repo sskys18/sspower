@@ -6,9 +6,20 @@ const TS_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
 const JS_EXTS = ['.js', '.jsx', '.mjs', '.cjs'];
 const ALL_EXTS = [...TS_EXTS, ...JS_EXTS];
 
-export function resolveModule(importerAbs, moduleSpec) {
+export function resolveModule(importerAbs, moduleSpec, language) {
+  switch (language) {
+    case 'python': return resolveModulePy(importerAbs, moduleSpec);
+    case 'go':     return resolveModuleGo(importerAbs, moduleSpec);
+    case 'rust':   return resolveModuleRs(importerAbs, moduleSpec);
+    case 'typescript':
+    case 'javascript':
+    default:       return resolveModuleTs(importerAbs, moduleSpec);
+  }
+}
+
+function resolveModuleTs(importerAbs, moduleSpec) {
   if (!moduleSpec.startsWith('./') && !moduleSpec.startsWith('../') && !moduleSpec.startsWith('/')) {
-    return null;  // bare module (npm pkg etc.) — external
+    return null;
   }
   const importerDir = path.dirname(importerAbs);
   const base = path.resolve(importerDir, moduleSpec);
@@ -23,6 +34,12 @@ export function resolveModule(importerAbs, moduleSpec) {
   }
   return null;
 }
+
+// Per-language module resolvers — real bodies land with the extractor
+// for each language (Task 9 = Python, Task 10 = Go, Task 11 = Rust).
+function resolveModulePy(_importerAbs, _moduleSpec) { return null; }
+function resolveModuleGo(_importerAbs, _moduleSpec) { return null; }
+function resolveModuleRs(_importerAbs, _moduleSpec) { return null; }
 
 export function resolveEdges({ nodes, callSites }) {
   const byQualified = new Map();

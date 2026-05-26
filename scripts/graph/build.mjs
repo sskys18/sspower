@@ -3,13 +3,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { walkSources } from './walk.mjs';
-import { extractFile } from './extract-ts.mjs';
+import { extractorFor } from './extract.mjs';
 import { resolveModule, resolveEdges } from './resolve.mjs';
 import { openDb, initSchema, nodeId } from './db.mjs';
 
 function languageFor(filePath) {
   const ext = path.extname(filePath);
   if (ext === '.ts' || ext === '.tsx' || ext === '.mts' || ext === '.cts') return 'typescript';
+  if (ext === '.js' || ext === '.jsx' || ext === '.mjs' || ext === '.cjs') return 'javascript';
+  if (ext === '.py') return 'python';
+  if (ext === '.go') return 'go';
+  if (ext === '.rs') return 'rust';
   return 'javascript';
 }
 
@@ -40,7 +44,10 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     }
     const language = languageFor(filePath);
     let extracted;
-    try { extracted = await extractFile({ absPath: filePath, source, language }); }
+    try {
+      const ex = await extractorFor(language);
+      extracted = await ex.extractFile({ absPath: filePath, source, language });
+    }
     catch (e) {
       log(`skip extract ${filePath}: ${e.message}`);
       extractFailures++;
@@ -93,7 +100,7 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
   for (const f of perFile) {
     const map = {};
     for (const imp of f.extracted.imports) {
-      const resolved = resolveModule(f.filePath, imp.moduleSpec);
+      const resolved = resolveModule(f.filePath, imp.moduleSpec, f.language);
       if (!resolved) continue;
       for (const n of imp.names) {
         map[n.local] = { path: resolved, imported: n.imported };
@@ -144,7 +151,7 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
         insNode.run(n.id, n.kind, n.name, n.qualifiedName, f.filePath, n.language, n.startLine, n.endLine, n.signature, n.spanSha8, now);
       }
       for (const imp of f.extracted.imports) {
-        const resolved = resolveModule(f.filePath, imp.moduleSpec);
+        const resolved = resolveModule(f.filePath, imp.moduleSpec, f.language);
         if (resolved) insImport.run(f.filePath, resolved);
       }
     }
