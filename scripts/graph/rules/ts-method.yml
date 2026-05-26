@@ -1,0 +1,4 @@
+id: ts-method
+language: typescript
+rule:
+  kind: method_definition

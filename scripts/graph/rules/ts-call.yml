@@ -1,0 +1,4 @@
+id: ts-call
+language: typescript
+rule:
+  kind: call_expression

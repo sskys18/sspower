@@ -1,0 +1,4 @@
+id: ts-import
+language: typescript
+rule:
+  kind: import_statement
