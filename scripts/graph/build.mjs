@@ -24,6 +24,7 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
 
   const allNodes = [];
   const perFile = [];
+  let extractFailures = 0;
 
   // Phase 1: walk + extract per file (no DB writes -- pure in-memory).
   let fileCount = 0;
@@ -35,7 +36,11 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     const language = languageFor(filePath);
     let extracted;
     try { extracted = await extractFile({ absPath: filePath, source, language }); }
-    catch (e) { log(`skip extract ${filePath}: ${e.message}`); continue; }
+    catch (e) {
+      log(`skip extract ${filePath}: ${e.message}`);
+      extractFailures++;
+      continue;
+    }
 
     const idedNodes = extracted.nodes.map(n => ({
       ...n,
@@ -50,7 +55,24 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     });
     if (fileCount % 100 === 0) log(`extracted ${fileCount} files`);
   }
-  log(`extract done: ${fileCount} files, ${allNodes.length} nodes`);
+  log(`extract done: ${fileCount} files, ${allNodes.length} nodes, ${extractFailures} failures`);
+
+  // Refuse to clobber a healthy index with a broken build. If ast-grep
+  // disappeared, the JSON shape changed, or the JS temp-file path blew
+  // up universally, we must NOT proceed to delete the previous index.
+  // Thresholds:
+  //   - Any files walked but NONE successfully extracted -> tooling broke;
+  //     abort hard (don't even open the destructive tx).
+  //   - extractFailures / fileCount > 0.25 -> material extractor regression;
+  //     abort to preserve the existing index. Operator can re-run after fix.
+  if (fileCount > 0 && perFile.length === 0) {
+    db.close();
+    throw new Error(`build aborted: ${fileCount} files walked, 0 extracted (${extractFailures} failures). Existing index left untouched.`);
+  }
+  if (fileCount > 0 && extractFailures / fileCount > 0.25) {
+    db.close();
+    throw new Error(`build aborted: ${extractFailures}/${fileCount} files failed extraction (>25%). Existing index left untouched. Fix the extractor regression and re-run.`);
+  }
 
   // Phase 2: build import maps in memory (no DB writes).
   // Map shape: local-name -> { path, imported }.

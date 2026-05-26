@@ -43,16 +43,19 @@ assert.equal(intraEdges[0].confidence, 1, `expected intra=1, got ${intraEdges[0]
 assert.equal(intraEdges[0].source, 'a#caller#11111111');
 assert.equal(intraEdges[0].target, 'a#helper#22222222');
 
-// Imported (conf=2): caller in b.ts calls something imported from a.ts
+// Imported (conf=2): caller in b.ts calls something imported from a.ts.
+// Clean node set — b.ts must NOT have its own `helper` for this test,
+// otherwise the same-file shadow rule (intra wins) takes over correctly
+// but bypasses the import code path under test.
+const importNodes = [
+  { id: 'a#helper#22222222', name: 'helper', qualifiedName: 'helper', filePath: intraFile },
+  { id: 'b#main#44444444',   name: 'main',   qualifiedName: 'main',   filePath: otherFile },
+];
 const importedCall = [{
   callerQualifiedName: 'main', calleeIdent: 'helper', line: 3, callerFile: otherFile,
   importedNames: { helper: { path: intraFile, imported: 'helper' } },
 }];
-const nodes2 = [
-  ...nodes,
-  { id: 'b#main#44444444', name: 'main', qualifiedName: 'main', filePath: otherFile },
-];
-const importedEdges = resolveEdges({ nodes: nodes2, callSites: importedCall });
+const importedEdges = resolveEdges({ nodes: importNodes, callSites: importedCall });
 assert.equal(importedEdges.length, 1);
 assert.equal(importedEdges[0].confidence, 2);
 assert.equal(importedEdges[0].target, 'a#helper#22222222');
@@ -63,7 +66,7 @@ const aliasCall = [{
   callerQualifiedName: 'main', calleeIdent: 'h', line: 7, callerFile: otherFile,
   importedNames: { h: { path: intraFile, imported: 'helper' } },
 }];
-const aliasEdges = resolveEdges({ nodes: nodes2, callSites: aliasCall });
+const aliasEdges = resolveEdges({ nodes: importNodes, callSites: aliasCall });
 assert.equal(aliasEdges.length, 1, `alias should resolve, got ${aliasEdges.length} edges`);
 assert.equal(aliasEdges[0].confidence, 2);
 assert.equal(aliasEdges[0].target, 'a#helper#22222222');
@@ -126,6 +129,25 @@ const nsEdges = resolveEdges({ nodes: memberNodes, callSites: nsCall });
 assert.equal(nsEdges.length, 1, `namespace member should resolve, got ${nsEdges.length}`);
 assert.equal(nsEdges[0].confidence, 2);
 assert.equal(nsEdges[0].target, 'mod#bar#yyyyyyyy');
+
+// Regression: same-file local definition shadows a same-name import.
+// `import { helper } from './u'; function caller() { function helper(){}; helper(); }`
+// — the inner `helper` is the call target, NOT the imported one.
+const shadowApp = '/tmp/shadow-app.ts';
+const shadowMod = '/tmp/shadow-mod.ts';
+const shadowNodes = [
+  { id: 'app#caller#11111100', name: 'caller', qualifiedName: 'caller', filePath: shadowApp },
+  { id: 'app#helper#22222200', name: 'helper', qualifiedName: 'helper', filePath: shadowApp },
+  { id: 'mod#helper#33333300', name: 'helper', qualifiedName: 'helper', filePath: shadowMod },
+];
+const shadowCall = [{
+  callerQualifiedName: 'caller', calleeIdent: 'helper', line: 8, callerFile: shadowApp,
+  importedNames: { helper: { path: shadowMod, imported: 'helper' } },
+}];
+const shadowEdges = resolveEdges({ nodes: shadowNodes, callSites: shadowCall });
+assert.equal(shadowEdges.length, 1, `shadow case should emit 1 edge, got ${shadowEdges.length}: ${JSON.stringify(shadowEdges)}`);
+assert.equal(shadowEdges[0].target, 'app#helper#22222200', `local shadow must win, got target ${shadowEdges[0].target}`);
+assert.equal(shadowEdges[0].confidence, 1, `local shadow is intra-file conf=1, got ${shadowEdges[0].confidence}`);
 
 // Regression: `import { helper } from './mod'` must resolve to the top-level
 // `helper` export in mod.ts, NOT every class method also named `helper`.

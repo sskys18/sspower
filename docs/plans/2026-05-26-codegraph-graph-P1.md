@@ -1043,18 +1043,22 @@ export function resolveEdges({ nodes, callSites }) {
       continue;
     }
 
-    // Step 2: imported.
-    //   Direct call `foo()`     → use importedNames[foo] keyed by local name.
-    //   Member call `foo.bar()` → ONLY use importedNames[foo] if foo is a
-    //                              namespace (`* as foo`) or default import.
-    //                              `foo` as a local receiver + an unrelated
-    //                              `bar` in importedNames must NOT forge a
-    //                              conf=2 edge to that imported bar (a
-    //                              blocking codex review finding).
-    // importedNames[localName] = { path, imported } — when we DO have an
-    // entry, look up the target by the UPSTREAM `imported` name in the
-    // resolved path so `import { greet as g } from './u'; g()` resolves to
-    // greet@u.ts (alias-aware).
+    // Resolution order (JS scoping):
+    //   Direct call `foo()`:
+    //     1. Same-file local definition of `foo` (could be a nested function
+    //        shadowing an outer import) -> wins over import.
+    //     2. Imported binding `foo` -> conf=2.
+    //     3. Cross-graph same-name fallback -> conf=0.
+    //   Member call `foo.bar()`:
+    //     1. Namespace/default import on `foo` -> resolve `bar` in that path,
+    //        conf=2. NEVER use intra-file by bareName for member calls
+    //        (`foo.bar` is NOT method `bar` defined in the same file).
+    //     2. Cross-graph same-name fallback on `bar` -> conf=0.
+    //
+    // The intra-file step (below) runs FIRST for direct calls so a local
+    // shadow wins over an import — matches JS scoping. Member calls skip
+    // the intra step because property-name lookup in the caller's file
+    // would manufacture false edges to unrelated same-name top-level fns.
     const parts = cs.calleeIdent.split('.');
     const receiverName = parts[0].replace(/\?$/, '');
     const isMemberCall = parts.length > 1;

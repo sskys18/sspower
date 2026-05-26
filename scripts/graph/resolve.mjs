@@ -47,14 +47,34 @@ export function resolveEdges({ nodes, callSites }) {
     const bareName = parts.at(-1);
     const isMemberCall = parts.length > 1;
 
-    // Cross-file import resolution.
-    //   Direct call `foo()`     → look up the local binding `foo` in importedNames.
-    //   Member call `foo.bar()` → only use importedNames if `foo` is a namespace
-    //                              (* as foo) or a default import; otherwise `foo`
-    //                              is a local receiver and `bar` is a property,
-    //                              NOT an imported binding. Without this guard,
-    //                              `import { bar }` + a separate `foo.bar()` call
-    //                              would forge a false conf=2 edge to the import.
+    // Resolution order (JS scoping):
+    //   Direct call `foo()`:
+    //     1. Same-file local definition of `foo` (could be a nested function
+    //        shadowing an outer import) -> wins over import.
+    //     2. Imported binding `foo` -> conf=2.
+    //     3. Cross-graph same-name fallback -> conf=0.
+    //   Member call `foo.bar()`:
+    //     1. Namespace/default import on `foo` -> resolve `bar` in that path,
+    //        conf=2. NEVER use intra-file by bareName for member calls
+    //        (`foo.bar` is NOT method `bar` defined in the same file).
+    //     2. Cross-graph same-name fallback on `bar` -> conf=0.
+
+    if (!isMemberCall) {
+      // Step 1: intra-file lookup wins. Single match -> conf=1; multi -> 0.
+      const intra = byFileAndName.get(`${cs.callerFile}::${bareName}`) ?? [];
+      if (intra.length === 1) {
+        edges.push(edge(callerNode.id, intra[0].id, cs.line, 1));
+        continue;
+      }
+      if (intra.length > 1) {
+        for (const target of intra) {
+          edges.push(edge(callerNode.id, target.id, cs.line, 0));
+        }
+        continue;
+      }
+    }
+
+    // Step 2: imports.
     let entry;
     if (isMemberCall) {
       const receiver = cs.importedNames?.[localName];
@@ -77,22 +97,6 @@ export function resolveEdges({ nodes, callSites }) {
         }
         continue;
       }
-    }
-
-    // Step 1: intra-file. Single match → confidence=1. Multiple matches
-    // (e.g., two methods named `shared` in classes A and B sharing the same
-    // file) → ambiguous, emit confidence=0 for each — the resolver cannot
-    // pick without type information.
-    const intra = byFileAndName.get(`${cs.callerFile}::${bareName}`) ?? [];
-    if (intra.length === 1) {
-      edges.push(edge(callerNode.id, intra[0].id, cs.line, 1));
-      continue;
-    }
-    if (intra.length > 1) {
-      for (const target of intra) {
-        edges.push(edge(callerNode.id, target.id, cs.line, 0));
-      }
-      continue;
     }
 
     // Step 3: ambiguous same-name fallback across the entire graph.
