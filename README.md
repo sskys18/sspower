@@ -65,6 +65,34 @@
 
 </details>
 
+## sspower-graph
+
+### CLI (P1)
+
+```
+sspower-graph build [--cwd <dir>]
+sspower-graph callers <name> [--limit N] [--disambiguate] [--json]
+sspower-graph callees <name> [--limit N] [--json]
+sspower-graph node <name> [--json]
+sspower-graph status [--json]
+sspower-graph serve --mcp                # P0 stub MCP server
+```
+
+`build` indexes the current working directory (or `--cwd`) into
+`<cwd>/.claude/graph/index.sqlite`. The current build is full-only;
+incremental refresh ships in P2.
+
+`callers <name>` returns the call-sites that target `<name>`. If
+multiple symbols match by name, pass `--disambiguate` (or query with
+a `Class.method` form). Output line shape:
+
+```
+<file>:<line>\t<caller_qname>\t-> <target_qname>\t(conf=<0|1|2>)
+```
+
+Confidence: `1` = intra-file qname match, `2` = cross-file via
+resolved import, `0` = ambiguous same-name fallback.
+
 > 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
