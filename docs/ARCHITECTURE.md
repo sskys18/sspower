@@ -21,12 +21,15 @@ sspower/
 │
 ├── skills/<skill>/SKILL.md      # 19 skills + per-skill references/
 ├── hooks/                       # Lifecycle hooks (SessionStart, UserPromptSubmit, PreToolUse, …)
-├── scripts/                     # codex-bridge.mjs, codex-registry.mjs
+├── scripts/                     # codex-bridge.mjs, codex-registry.mjs, graph-append-dirty.py, graph-with-lock.py
 ├── agents/                      # Subagent prompts (code-reviewer, codex-rescue, security-reviewer, sanity-reviewer)
+├── bin/                         # On-PATH entrypoints: sspower-mem, sspower-graph.mjs, sspower-graph-bootstrap.sh
+├── .mcp.json                    # Plugin-root MCP server declaration (sspower-graph)
 ├── commands/                    # Slash command entrypoints (.toml/.md)
 ├── schemas/                     # Structured-output JSON schemas for Codex
 ├── docs/                        # This doc, plans, specs, customization notes
-├── tests/                       # Skill & brainstorm-server tests
+├── tests/                       # Skill, hook, graph & brainstorm-server tests
+├── __tests__/                   # vitest harness for sspower-graph fixture suite
 └── .claude/sspower/             # Per-repo runtime state (followups, proposed-fixes)
 ```
 
@@ -613,6 +616,48 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
+## sspower-graph (P0, stub MCP surface)
+
+Per-project symbol graph subsystem inspired by codegraph (MIT). Built on
+ast-grep, exposed to Claude Code + sub-agents via MCP stdio.
+
+**Status:** P0 shipped (this branch). P1+ extractor/refresh/full-tool-set
+phased per spec.
+
+**Entry points:**
+
+| Path | Role |
+|------|------|
+| `.mcp.json` | Plugin-root MCP server declaration. Registers `sspower-graph` with `command = bin/sspower-graph-bootstrap.sh`. |
+| `bin/sspower-graph.mjs` | MCP stdio server. P0 exposes one tool: `graph_status`. Uses `@modelcontextprotocol/sdk` with `ListToolsRequestSchema` / `CallToolRequestSchema`. |
+| `bin/sspower-graph-bootstrap.sh` | Lazy `bun install` wrapper invoked by `.mcp.json`. Enforces Node ≥22. Fails fast if bun absent (npm fallback dropped per Codex review A1). |
+| `hooks/_intent.sh` (`architecture` class) | Routes prompts like "callers of X" / "how does X reach Y" / "trace X" so future graph-context hook (P4) can inject without colliding with the qa guard. |
+| `scripts/graph-append-dirty.py` | JSONL appender for `<cwd>/.claude/graph/dirty`. Reuses `sspower_mem.lock.acquire_lock` (anchored, O_NOFOLLOW). |
+| `scripts/graph-with-lock.py` | Holds `<cwd>/.claude/graph/.lock` for the duration of a child process. Brackets the cross-language Node↔Python SQLite transaction (P2). |
+| `__tests__/graph-fixtures/` | vitest fixture harness (goldens-only mode in P0; P1 wires extractor + precision/recall gate). |
+| `tests/graph/test-mcp-stub.mjs` | Executable MCP smoke through bootstrap (StdioClientTransport → initialize → tools/list → tools/call). |
+
+**Hard deps (P0):** ast-grep ≥0.43 (brew), Node ≥22 (bootstrap-enforced),
+bun (committed `bun.lock`), `@modelcontextprotocol/sdk` ^1.0, vitest ^2.1.
+
+**Per-cwd state (P2 onwards, not yet active):**
+```
+<cwd>/.claude/graph/index.sqlite      # WAL-mode SQLite cache
+<cwd>/.claude/graph/dirty             # JSONL: {op,path} per PostToolUse event
+<cwd>/.claude/graph/.lock             # POSIX fcntl flock anchor
+<cwd>/.claude/graph/version           # schema rev + ast-grep version + git_filesethash
+```
+
+**Spec + plan:**
+- [docs/specs/2026-05-26-codegraph-style-graph-design.md](specs/2026-05-26-codegraph-style-graph-design.md) — 5 codex plan-review passes to `approve-with-followups`. 40 locked decisions.
+- [docs/plans/2026-05-26-codegraph-graph-P0.md](plans/2026-05-26-codegraph-graph-P0.md) — P0 plan, `approve` verdict.
+- [docs/codegraph-graph-P0-followups.md](codegraph-graph-P0-followups.md) — A1/A2/A3 resolved inline.
+
+**Anti-goal circuit-breaker:** if the full MCP layer (P3) exceeds 2 weeks,
+ship `codegraph install` companion via sspower installer instead. Don't
+sunk-cost rebuilding what's MIT-licensed and already shipping at
+[colbymchenry/codegraph](https://github.com/colbymchenry/codegraph).
+
 ## Reference docs
 
 - [README.md](../README.md) — user-facing overview
@@ -623,3 +668,5 @@ gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness 
 - [auto-review-followups.md](auto-review-followups.md) — followup file conventions
 - [testing.md](testing.md) — skill + brainstorm-server tests
 - [handoff.md](handoff.md) — handoff skill conventions
+- [specs/2026-05-26-codegraph-style-graph-design.md](specs/2026-05-26-codegraph-style-graph-design.md) — sspower-graph design spec
+- [plans/2026-05-26-codegraph-graph-P0.md](plans/2026-05-26-codegraph-graph-P0.md) — sspower-graph P0 plan
