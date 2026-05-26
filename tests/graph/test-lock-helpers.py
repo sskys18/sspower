@@ -61,11 +61,17 @@ def test_with_lock_runs_child():
 
 
 def test_with_lock_blocks_concurrent():
-    """Second invocation must wait for first to release."""
+    """Second invocation must wait for first to release.
+
+    Uses a readiness marker so we deterministically know the first child
+    holds the lock before launching the second, instead of a fragile
+    sleep(0.2) timer (review followup A3, 2026-05-26).
+    """
     with tempfile.TemporaryDirectory() as cwd:
         graph_dir = pathlib.Path(cwd) / ".claude" / "graph"
         graph_dir.mkdir(parents=True)
         marker = pathlib.Path(cwd) / "log.txt"
+        ready = pathlib.Path(cwd) / "ready"
         p1 = subprocess.Popen(
             [
                 "python3",
@@ -75,11 +81,15 @@ def test_with_lock_blocks_concurrent():
                 "--",
                 "sh",
                 "-c",
-                f"sleep 1 && echo A >> {marker}",
+                f"touch {ready} && sleep 1 && echo A >> {marker}",
             ],
             env=ENV,
         )
-        time.sleep(0.2)
+        deadline = time.monotonic() + 5.0
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "first child never signaled readiness"
+        # Extra guard: first child has lock now; second must block.
         p2 = subprocess.Popen(
             [
                 "python3",
