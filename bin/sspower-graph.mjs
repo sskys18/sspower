@@ -165,7 +165,20 @@ async function runRefreshUnlocked(opts) {
 }
 
 async function runSessionRefresh(opts) {
-  throw new Error('not yet implemented — see Task 7');
+  const { sessionRefresh } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/session-refresh.mjs'));
+  const graphDir = graphDirFor(opts.cwd);
+  if (!fs.existsSync(path.join(graphDir, 'index.sqlite'))) {
+    emit(opts, { action: 'noop', reason: 'no-index' }, r => `noop: ${r.reason}`);
+    return;
+  }
+  const maxTimeMs = Math.max(1, (opts.maxTime ?? 5) * 1000);
+  const planner = await sessionRefresh({
+    rootDir: opts.cwd, graphDir, maxTime: maxTimeMs,
+    log: msg => process.stderr.write(`[session-refresh] ${msg}\n`),
+  });
+  emit(opts, planner, p => `action=${p.action} reason=${p.reason} dirty=${p.dirtyEmitted ?? 0}`);
+  if (planner.action === 'build')         await runBuildLocked(opts);
+  else if (planner.action === 'refresh')  await runRefreshLocked(opts);
 }
 
 async function runTrace(opts, from, to) {
