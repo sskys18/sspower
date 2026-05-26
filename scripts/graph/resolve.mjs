@@ -60,8 +60,15 @@ export function resolveEdges({ nodes, callSites }) {
     //     2. Cross-graph same-name fallback on `bar` -> conf=0.
 
     if (!isMemberCall) {
-      // Step 1: intra-file lookup wins. Single match -> conf=1; multi -> 0.
-      const intra = byFileAndName.get(`${cs.callerFile}::${bareName}`) ?? [];
+      // Step 1: intra-file lookup wins. Bare direct calls only target
+      // LEXICAL/TOP-LEVEL symbols (qualifiedName === name) — a class method
+      // `C.helper` MUST NOT capture a bare `helper()` call just because
+      // they share a bare name. Class methods are reached via member-call
+      // path (`this.helper()`, `obj.helper()`) or — for now — via the
+      // cross-graph ambiguous fallback when the call site is itself a
+      // method body referring to a sibling method.
+      const intraAll = byFileAndName.get(`${cs.callerFile}::${bareName}`) ?? [];
+      const intra = intraAll.filter(n => n.qualifiedName === n.name);
       if (intra.length === 1) {
         edges.push(edge(callerNode.id, intra[0].id, cs.line, 1));
         continue;

@@ -130,6 +130,25 @@ assert.equal(nsEdges.length, 1, `namespace member should resolve, got ${nsEdges.
 assert.equal(nsEdges[0].confidence, 2);
 assert.equal(nsEdges[0].target, 'mod#bar#yyyyyyyy');
 
+// Regression: bare direct call `helper()` must NOT resolve to a class
+// method `C.helper` in the same file just because they share a bare name.
+// The intra-file step is restricted to top-level symbols (qualifiedName == name).
+const classFile = '/tmp/class-collide.ts';
+const classModFile = '/tmp/class-mod.ts';
+const classCollisionNodes = [
+  { id: 'cc#caller#a1a1a1a1', name: 'caller',   qualifiedName: 'caller',   filePath: classFile },
+  { id: 'cc#C.helper#b1b1b1b1', name: 'helper', qualifiedName: 'C.helper', filePath: classFile },
+  { id: 'cm#helper#c1c1c1c1', name: 'helper',   qualifiedName: 'helper',   filePath: classModFile },
+];
+const classCollisionCall = [{
+  callerQualifiedName: 'caller', calleeIdent: 'helper', line: 5, callerFile: classFile,
+  importedNames: { helper: { path: classModFile, imported: 'helper' } },
+}];
+const classCollisionEdges = resolveEdges({ nodes: classCollisionNodes, callSites: classCollisionCall });
+assert.equal(classCollisionEdges.length, 1, `class-collision should resolve once, got ${classCollisionEdges.length}`);
+assert.equal(classCollisionEdges[0].target, 'cm#helper#c1c1c1c1', `class method C.helper must NOT capture bare helper() call`);
+assert.equal(classCollisionEdges[0].confidence, 2);
+
 // Regression: same-file local definition shadows a same-name import.
 // `import { helper } from './u'; function caller() { function helper(){}; helper(); }`
 // — the inner `helper` is the call target, NOT the imported one.

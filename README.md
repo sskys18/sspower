@@ -93,6 +93,21 @@ a `Class.method` form). Output line shape:
 Confidence: `1` = intra-file qname match, `2` = cross-file via
 resolved import, `0` = ambiguous same-name fallback.
 
+### Known P1 limits (P2 followups)
+
+- **Default-import aliases not resolved.** `import run from './mod'`
+  where `mod.ts` has `export default function actualName` produces no
+  edge — the resolver doesn't know which node in `mod.ts` is the default
+  export. Workaround: re-export by name (`export { actualName }` +
+  `import { actualName } from './mod'`) or call the actual function
+  name. P2 will tag default-exported nodes during extraction.
+- **JS files round-trip through a temp `.ts`/`.tsx`** because the
+  ast-grep rules pin `language: typescript`. Adds I/O per JS file.
+  P2 cleanup: parallel `js-*.yml` rules.
+- **`.jsx`/`.tsx` JSX parsing is best-effort.** Component declarations
+  and JSX handler call-sites are extracted, but exotic JSX-ts edge
+  cases may miss. P5+ adds React-specific framework patterns.
+
 > 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
