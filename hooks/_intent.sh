@@ -3,7 +3,7 @@
 # SOURCED (not executed) by hooks/prompt-submit and hooks/semble-context.sh.
 #
 #   sspower_classify_intent "<prompt>"
-#     -> qa | explicit-skill | simple-coding | multi-step
+#     -> qa | architecture | explicit-skill | simple-coding | multi-step
 #   sspower_target_trigger "<prompt>"
 #     -> debugging | brainstorming | planning | tdd | code-review | none
 #
@@ -36,7 +36,7 @@ _sspower_strip_modal() {
   esac
 }
 
-# qa | explicit-skill | simple-coding | multi-step
+# qa | architecture | explicit-skill | simple-coding | multi-step
 sspower_classify_intent() {
   local p; p="$(_sspower_lc "${1:-}")"
   [ -n "$p" ] || { echo qa; return 0; }
@@ -49,6 +49,17 @@ sspower_classify_intent() {
 
   # 1. read-only guard (after stripping a politeness modal)
   local r; r="$(_sspower_strip_modal "$p")"
+  # Architecture prompts: structural questions about THIS codebase that
+  # benefit from graph lookup, not generic Q&A. Must be classified before
+  # the broader qa case, which also matches "how does".
+  case "$r" in
+    "how does "*" reach "*|"how does "*" call "*|\
+    "what calls "*|"what call "*|"who calls "*|\
+    "where is "*" used"*|"where is "*" called"*|\
+    "trace "*|"callers of "*|"callees of "*|\
+    "show the path "*|"show the call path "*|"call graph "*)
+      echo architecture; return 0 ;;
+  esac
   case "$r" in
     "what is"*|"what's"*|"what does"*|"how does"*|"show "*|"list "*|\
     "explain"*|"describe"*|"tell me"*|"why "*|"summarize"*|"analyze"*)
