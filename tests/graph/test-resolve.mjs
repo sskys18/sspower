@@ -97,4 +97,34 @@ const multiEdges = resolveEdges({ nodes: nodes4, callSites: multiCall });
 assert.equal(multiEdges.length, 2, `intra-file multi-match should emit 2 edges, got ${multiEdges.length}`);
 for (const e of multiEdges) assert.equal(e.confidence, 0, `intra-file multi-match must be ambiguous (conf=0), got ${e.confidence}`);
 
+// Member call MUST NOT forge a false conf=2 edge through a same-named import.
+// Regression: `foo.bar()` where `bar` is imported from elsewhere but `foo` is
+// a local receiver. The pre-fix resolver looked up importedNames[bareName='bar']
+// and incorrectly produced an import edge.
+const appFile  = '/tmp/app.ts';
+const modFile  = '/tmp/mod.ts';
+const memberNodes = [
+  { id: 'app#caller#xxxxxxxx', name: 'caller', qualifiedName: 'caller', filePath: appFile },
+  { id: 'mod#bar#yyyyyyyy',    name: 'bar',    qualifiedName: 'bar',    filePath: modFile },
+];
+const memberCall = [{
+  callerQualifiedName: 'caller', calleeIdent: 'foo.bar', line: 3, callerFile: appFile,
+  // `import { bar } from './mod'` — local binding 'bar' present, but the
+  // call is `foo.bar()`, NOT `bar()`. Resolver MUST ignore the import here.
+  importedNames: { bar: { path: modFile, imported: 'bar' } },
+}];
+const memberEdges = resolveEdges({ nodes: memberNodes, callSites: memberCall });
+const forged = memberEdges.find(e => e.target === 'mod#bar#yyyyyyyy' && e.confidence === 2);
+assert.ok(!forged, `member call foo.bar() must not forge conf=2 edge through imported bar: ${JSON.stringify(memberEdges)}`);
+
+// Namespace member: `import * as ns from './mod'; ns.bar()` → conf=2.
+const nsCall = [{
+  callerQualifiedName: 'caller', calleeIdent: 'ns.bar', line: 4, callerFile: appFile,
+  importedNames: { ns: { path: modFile, imported: '*' } },
+}];
+const nsEdges = resolveEdges({ nodes: memberNodes, callSites: nsCall });
+assert.equal(nsEdges.length, 1, `namespace member should resolve, got ${nsEdges.length}`);
+assert.equal(nsEdges[0].confidence, 2);
+assert.equal(nsEdges[0].target, 'mod#bar#yyyyyyyy');
+
 console.log('OK resolve');

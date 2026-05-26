@@ -1039,15 +1039,30 @@ export function resolveEdges({ nodes, callSites }) {
       continue;
     }
 
-    // Step 2: imported. importedNames[local] = { path, imported } — look up
-    // the target by the UPSTREAM imported name in the resolved path, NOT by
-    // the local alias. `import { greet as g } from './u'; g()` calls with
-    // bareName='g' but resolves to greet@u.ts.
-    // Special case: `imported === '*'` (namespace) or `imported === 'default'`
-    // skip the bareName-in-target lookup and instead match anything in the
-    // resolved path (* covers all exports; default lookups in P1 fall back to
-    // Step 3 since extractor doesn't yet mark default exports).
-    const entry = cs.importedNames?.[bareName];
+    // Step 2: imported.
+    //   Direct call `foo()`     → use importedNames[foo] keyed by local name.
+    //   Member call `foo.bar()` → ONLY use importedNames[foo] if foo is a
+    //                              namespace (`* as foo`) or default import.
+    //                              `foo` as a local receiver + an unrelated
+    //                              `bar` in importedNames must NOT forge a
+    //                              conf=2 edge to that imported bar (a
+    //                              blocking codex review finding).
+    // importedNames[localName] = { path, imported } — when we DO have an
+    // entry, look up the target by the UPSTREAM `imported` name in the
+    // resolved path so `import { greet as g } from './u'; g()` resolves to
+    // greet@u.ts (alias-aware).
+    const parts = cs.calleeIdent.split('.');
+    const receiverName = parts[0].replace(/\?$/, '');
+    const isMemberCall = parts.length > 1;
+    let entry;
+    if (isMemberCall) {
+      const receiver = cs.importedNames?.[receiverName];
+      if (receiver && (receiver.imported === '*' || receiver.imported === 'default')) {
+        entry = receiver;
+      }
+    } else {
+      entry = cs.importedNames?.[receiverName];
+    }
     if (entry) {
       const lookupName = (entry.imported === '*' || entry.imported === 'default')
         ? bareName  // namespace member calls (`ns.foo()` with bareName='foo')

@@ -38,13 +38,28 @@ export function resolveEdges({ nodes, callSites }) {
   for (const cs of callSites) {
     const callerNode = byQualified.get(cs.callerQualifiedName)?.find(n => n.filePath === cs.callerFile);
     if (!callerNode) continue;
-    const localName = cs.calleeIdent.split('.')[0];
-    const bareName = cs.calleeIdent.split('.').pop();
+    const parts = cs.calleeIdent.split('.');
+    const localName = parts[0].replace(/\?$/, '');  // strip optional chaining on receiver
+    const bareName = parts.at(-1);
+    const isMemberCall = parts.length > 1;
 
-    // Prefer explicit imports when the extractor recorded one for this local
-    // binding. This avoids a graph-wide/same-file name collision overriding
-    // an import edge.
-    const entry = cs.importedNames?.[bareName] ?? cs.importedNames?.[localName];
+    // Cross-file import resolution.
+    //   Direct call `foo()`     → look up the local binding `foo` in importedNames.
+    //   Member call `foo.bar()` → only use importedNames if `foo` is a namespace
+    //                              (* as foo) or a default import; otherwise `foo`
+    //                              is a local receiver and `bar` is a property,
+    //                              NOT an imported binding. Without this guard,
+    //                              `import { bar }` + a separate `foo.bar()` call
+    //                              would forge a false conf=2 edge to the import.
+    let entry;
+    if (isMemberCall) {
+      const receiver = cs.importedNames?.[localName];
+      if (receiver && (receiver.imported === '*' || receiver.imported === 'default')) {
+        entry = receiver;
+      }
+    } else {
+      entry = cs.importedNames?.[localName];
+    }
     if (entry) {
       const lookupName = (entry.imported === '*' || entry.imported === 'default')
         ? bareName  // namespace member calls (`ns.foo()` with bareName='foo')
