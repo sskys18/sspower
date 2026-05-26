@@ -432,6 +432,39 @@ function runCodexExec(prompt, options = {}) {
 }
 
 /**
+ * Wrap runCodexExec with a single retry on schema parse failure.
+ * Retry is SAFE only for non-mutating runs (sandbox=read-only, hardenWrite=false);
+ * mutating runs would re-edit files. Caller passes allowRetry=false to opt out.
+ */
+async function runCodexExecWithSchemaRetry(prompt, options = {}) {
+  const allowRetry = options.allowRetry !== false
+    && options.schema
+    && options.sandbox !== "workspace-write"
+    && !options.hardenWrite;
+  const first = await runCodexExec(prompt, options);
+  if (!allowRetry) return first;
+  if (first.exitCode !== 0) return first;
+  if (first.structured) return first;
+  if (!first.lastMessage) return first;
+  const cmd = process.argv[2] || "exec";
+  logEvent("warn", `bridge.${cmd}`, {
+    kind: "schema_parse_retry",
+    session: first.sessionId,
+    raw_preview: first.lastMessage.slice(0, 120),
+  });
+  process.stderr.write(
+    `[codex:retry] schema parse failed; retrying with explicit JSON-only directive\n`,
+  );
+  const fixup =
+    "Your previous response was NOT valid JSON matching the required output schema. "
+    + "Re-emit ONLY a single JSON object that conforms to the schema. "
+    + "No prose, no markdown fences, no commentary, no leading/trailing text.\n\n"
+    + "Original task follows:\n---\n"
+    + prompt;
+  return await runCodexExec(fixup, options);
+}
+
+/**
  * Run `codex exec resume` for fix loops.
  * Only supports flags that `codex exec resume` accepts:
  * SESSION_ID, --last, --skip-git-repo-check, -m, -o, --json
@@ -1395,8 +1428,9 @@ async function runLspGate(cwd, baseHead, blockMode) {
       const { ok, text } = await client.diagnostics(f, Math.min(30000, remaining));
       checked.push(f);
       if (!ok) {
+        const reason = client.lastReason || "unknown";
         await client.stop();
-        logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_call", file: f });
+        logEvent("warn", "bridge.lsp", { kind: "gate_unavailable_call", file: f, reason });
         return { ...base, status: "unavailable", checked_files: checked };
       }
       if (!isCleanDiagnosticsText(text)) errors.push({ file: f, text });
@@ -1540,7 +1574,7 @@ async function cmdImplement(argv) {
     // not a git repo or no commits yet — skip snapshot, autoCommit acts as before
   }
 
-  const result = await runCodexExec(prompt, {
+  const result = await runCodexExecWithSchemaRetry(prompt, {
     schema: schemaPath("implementation-output"),
     sandbox: opts.write ? "workspace-write" : "read-only",
     hardenWrite: !!opts.write,
@@ -1629,7 +1663,7 @@ async function cmdLspCheck(argv) {
 async function cmdSpecReview(argv) {
   const opts = parseOpts(argv);
   const prompt = resolvePrompt(opts.prompt);
-  const result = await runCodexExec(prompt, {
+  const result = await runCodexExecWithSchemaRetry(prompt, {
     schema: schemaPath("spec-review-output"),
     sandbox: "read-only",
     profile: opts.profile || COMMAND_PROFILE["spec-review"],
@@ -1645,7 +1679,7 @@ async function cmdSpecReview(argv) {
 async function cmdPlanReview(argv) {
   const opts = parseOpts(argv);
   const prompt = resolvePrompt(opts.prompt);
-  const result = await runCodexExec(prompt, {
+  const result = await runCodexExecWithSchemaRetry(prompt, {
     schema: schemaPath("plan-review-output"),
     sandbox: "read-only",
     profile: opts.profile || COMMAND_PROFILE["plan-review"],
@@ -1661,7 +1695,7 @@ async function cmdPlanReview(argv) {
 async function cmdReview(argv) {
   const opts = parseOpts(argv);
   const prompt = resolvePrompt(opts.prompt);
-  const result = await runCodexExec(prompt, {
+  const result = await runCodexExecWithSchemaRetry(prompt, {
     schema: schemaPath("quality-review-output"),
     sandbox: "read-only",
     profile: opts.profile || COMMAND_PROFILE["review"],

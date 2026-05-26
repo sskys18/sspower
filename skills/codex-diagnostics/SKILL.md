@@ -48,7 +48,11 @@ grep -oE 'kind="?[a-z_]+' "$LOG" | sort | uniq -c | sort -rn | head -10
 | Pattern | Likely cause | Patch |
 |---------|-------------|-------|
 | `kind=codex_timeout_allow` (hook.auto-review) | Codex review slower than 90s cap | Raise `SSPOWER_REVIEW_TIMEOUT`; check repo size + diff size |
-| `kind=schema_parse_fail` | Codex returned non-JSON despite schema | Check Codex CLI version; schema-to-model mismatch; add fallback extraction |
+| `kind=schema_parse_retry` (warn) | Codex first response not valid JSON; bridge auto-retried with explicit JSON directive (read-only cmds only) | None — retry path. Recurring → check schema-to-model mismatch |
+| `kind=schema_parse_fail` (error) | Codex returned non-JSON despite schema, AND retry (if eligible) also failed | Check Codex CLI version; schema-to-model mismatch; `implement --write` skips retry intentionally (avoid duplicate writes) |
+| `kind=gate_unavailable_call reason=tool_error: <stderr>` | LSP server started but errored on diagnostics (e.g. rustup shim without `rust-analyzer` component) | Inspect `reason` — install missing component / language server |
+| `kind=gate_unavailable_call reason=infra: missing_dependency` | codex-lsp wrapper reports no LSP server for the file type | Install the LSP server (`rustup component add rust-analyzer`, `npm i -g typescript-language-server`, etc.) |
+| `kind=gate_unavailable_call reason=timeout_or_no_response` | LSP server too slow under 30s per-file cap | Raise per-file timeout or first-warm rust-analyzer on the workspace |
 | `kind=bridge_failed rc=1` | Codex CLI error (auth, trust) | Run `node scripts/codex-bridge.mjs setup` — check auth + trusted dir |
 | `bridge.die msg="codex CLI not found"` | CLI missing | `npm install -g @openai/codex` |
 | `bridge.die msg="Not inside a trusted directory"` | cwd outside git repo without `--skip-git-repo-check` | Bridge passes the flag automatically since codex 0.131; if still failing, codex CLI < 0.131 |

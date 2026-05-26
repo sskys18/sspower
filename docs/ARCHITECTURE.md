@@ -39,7 +39,7 @@ Per-cwd artifacts written by hooks live outside the plugin:
 <cwd>/.claude/sspower/proposed-fixes/round-N.patch  # Codex-suggested patches (auto-applied)
 ~/.claude/state/sspower/codex/<id>.json       # Codex session registry
 ~/.claude/state/sspower/codex/<id>.events.jsonl
-~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (10min TTL)
+~/.cache/sspower/verdicts/<hash>.json         # Verdict cache (24h TTL for approve, 10min for other verdicts)
 ```
 
 ## Skills (19)
@@ -128,7 +128,7 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 | Re-entry | `SSPOWER_REVIEW_IN_FLIGHT=1` set by bridge before spawning codex |
 | Depth | `SSPOWER_REVIEW_DEPTH >= 1` skips |
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
-| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, 10min TTL |
+| Verdict cache | `~/.cache/sspower/verdicts/<diff-hash>.json`, split TTL: 24h (approve/approve-with-followups), 10min (other) |
 | Round counter | `<repo>/.git/sspower-review-rounds-<branch>`, capped at 3 |
 | Branch tier | `wip/*`, `tmp/*`, `draft/*`, `scratch/*` skip; `main`, `master`, `prod`, `release/*` always strict |
 
@@ -138,7 +138,8 @@ To capture push output: `git push > /tmp/push.log 2>&1` on its own line, then re
 # Auto-review (hooks/auto-review.sh)
 SSPOWER_AUTO_REVIEW=off               # Full bypass (emergencies)
 SSPOWER_REVIEW_TIMEOUT=90             # Per-call codex timeout (s)
-SSPOWER_REVIEW_CACHE_TTL=600          # Verdict cache TTL (s; 10min)
+SSPOWER_REVIEW_CACHE_TTL=600          # Non-approve verdict cache TTL (s; 10min)
+SSPOWER_REVIEW_APPROVE_TTL=86400       # Approve-class verdict cache TTL (s; 24h)
 SSPOWER_REVIEW_MAX_ROUNDS=3           # Iterations before hard cap
 # Auto-apply was removed: suggested patches are saved to
 # <repo>/.claude/sspower/proposed-fixes/round-N.patch for manual review.
@@ -346,7 +347,7 @@ Toggle: `/diet <level>`, "stop diet", "normal mode". Persists until session end 
 | Per-repo opt-out | `<repo>/.sspower-skip-auto-review` |
 | Per-call codex options | `--profile`, `--model`, `--effort`, `--cd`, `--write`, `--worktree`, `--auto-commit` |
 | Session state | `~/.claude/state/sspower/codex/<id>.{json,events.jsonl}` |
-| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (10min TTL) |
+| Verdict cache | `~/.cache/sspower/verdicts/<hash>.json` (24h TTL for approve, 10min for other) |
 | Bridge log | `~/.claude/sspower/codex.log` (failures/diagnostics) |
 
 ## Codex LSP self-repair (P2, advisory)

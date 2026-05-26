@@ -15,6 +15,8 @@ export class McpLspClient {
     this._buf = "";
     this._nextId = 1;
     this._pending = new Map(); // id -> {resolve, timer}
+    this._stderrBuf = "";       // capped stderr for diagnostic surfacing
+    this.lastReason = "";       // populated on ok=false (D-B8)
   }
 
   // Spawn `node <cli> mcp` and run the initialize handshake.
@@ -23,7 +25,7 @@ export class McpLspClient {
     try {
       this.child = spawn("node", [this.cliPath, "mcp"], {
         cwd: this.cwd,
-        stdio: ["pipe", "pipe", "ignore"],
+        stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env },
       });
     } catch {
@@ -32,6 +34,15 @@ export class McpLspClient {
     this.child.on("error", () => this._failAll());
     this.child.stdout.setEncoding("utf8");
     this.child.stdout.on("data", (d) => this._onData(d));
+    if (this.child.stderr) {
+      this.child.stderr.setEncoding("utf8");
+      this.child.stderr.on("data", (d) => {
+        // Cap at 2 KiB — first error line is what matters for diagnostics.
+        if (this._stderrBuf.length < 2048) {
+          this._stderrBuf += String(d).slice(0, 2048 - this._stderrBuf.length);
+        }
+      });
+    }
     try {
       const res = await this._request("initialize", {
         protocolVersion: PROTOCOL_VERSION,
@@ -51,28 +62,44 @@ export class McpLspClient {
   // severity defaults to "error". Returns { ok, text } — ok=false on
   // timeout/error (fail-open; caller treats as unavailable).
   async diagnostics(filePath, perCallTimeoutMs = 30000, severity = "error") {
+    this.lastReason = "";
+    const _stderr = () => (this._stderrBuf.split("\n").find((l) => l.trim()) || "").slice(0, 200);
     try {
       const res = await this._request("tools/call", {
         name: "diagnostics",
         arguments: { filePath, severity },
       }, perCallTimeoutMs);
-      if (!res || res.error || !res.result) return { ok: false, text: "" };
+      if (!res) { this.lastReason = `timeout_or_no_response${_stderr() ? `: ${_stderr()}` : ""}`; return { ok: false, text: "" }; }
+      if (res.error) { this.lastReason = `jsonrpc_error: ${(res.error.message || JSON.stringify(res.error)).slice(0, 160)}`; return { ok: false, text: "" }; }
+      if (!res.result) { this.lastReason = "no_result_field"; return { ok: false, text: "" }; }
       // MCP tool-level failure (server crash/timeout/dep-missing) comes back
-      // as a SUCCESSFUL JSON-RPC response with result.isError===true. Treat
-      // as unavailable → fail-open, exactly like a JSON-RPC error (Issue 2).
-      if (res.result.isError) return { ok: false, text: "" };
+      // as a SUCCESSFUL JSON-RPC response with result.isError===true. Capture
+      // first text block as the reason so callers can surface actionable info.
+      if (res.result.isError) {
+        const errText = (res.result.content || [])
+          .filter((b) => b && b.type === "text")
+          .map((b) => b.text)
+          .join(" | ")
+          .slice(0, 200);
+        this.lastReason = `tool_error: ${errText || _stderr() || "unknown"}`;
+        return { ok: false, text: "" };
+      }
       // codex-lsp signals infra absence (missing language server, no source
       // files) as a SUCCESSFUL response with isError:false but a non-diagnostic
       // details.errorKind. Treat these as fail-open unavailable (D-B7), NOT as
       // code diagnostics — else a machine merely lacking a server false-blocks.
       const ek = res.result.details && res.result.details.errorKind;
-      if (ek === "missing_dependency" || ek === "no_files") return { ok: false, text: "" };
+      if (ek === "missing_dependency" || ek === "no_files") {
+        this.lastReason = `infra: ${ek}`;
+        return { ok: false, text: "" };
+      }
       const text = (res.result.content || [])
         .filter((b) => b && b.type === "text")
         .map((b) => b.text)
         .join("\n");
       return { ok: true, text };
-    } catch {
+    } catch (e) {
+      this.lastReason = `throw: ${(e && e.message || String(e)).slice(0, 160)}`;
       return { ok: false, text: "" };
     }
   }

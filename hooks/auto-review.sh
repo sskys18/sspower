@@ -26,7 +26,8 @@
 #
 # Tunables (env):
 #   SSPOWER_REVIEW_TIMEOUT     (default 90s)
-#   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min)
+#   SSPOWER_REVIEW_CACHE_TTL   (default 600s = 10min; applies to non-approve verdicts)
+#   SSPOWER_REVIEW_APPROVE_TTL (default 86400s = 24h; applies to approve & approve-with-followups)
 #   SSPOWER_REVIEW_MAX_ROUNDS  (default 3)
 #   (auto-apply removed — patches are saved to .claude/sspower/proposed-fixes/round-N.patch
 #    for manual review; use `git apply` on accepted patches yourself.)
@@ -254,6 +255,10 @@ DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_HASH" ] && DIFF_HASH=$(printf '%s' "$HASH_INPUT" | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$DIFF_HASH.json"
 CACHE_TTL="${SSPOWER_REVIEW_CACHE_TTL:-600}"
+# Approve-class verdicts on an unchanged diff are stable — extend TTL to 24h
+# so repushes of the same diff don't re-burn codex. Non-approve verdicts keep
+# the short TTL so fixes get a fresh review quickly.
+APPROVE_CACHE_TTL="${SSPOWER_REVIEW_APPROVE_TTL:-86400}"
 
 # ---------- Diff-stability bypass ----------
 # Same diff hash denied 2x consecutively → user pushing same changes, codex stuck.
@@ -272,7 +277,12 @@ CACHE_HIT=0
 if [ -f "$CACHE_FILE" ]; then
   MTIME=$(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0)
   AGE=$(( $(date +%s) - MTIME ))
-  if [ "$AGE" -lt "$CACHE_TTL" ]; then
+  CACHED_VERDICT=$(jq -r '.verdict // empty' "$CACHE_FILE" 2>/dev/null)
+  case "$CACHED_VERDICT" in
+    approve|approve-with-followups) EFFECTIVE_TTL="$APPROVE_CACHE_TTL" ;;
+    *) EFFECTIVE_TTL="$CACHE_TTL" ;;
+  esac
+  if [ "$AGE" -lt "$EFFECTIVE_TTL" ]; then
     RESULT=$(cat "$CACHE_FILE")
     CACHE_HIT=1
   fi
