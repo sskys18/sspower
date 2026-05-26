@@ -1,0 +1,15 @@
+{
+  "language": "typescript",
+  "nodes": [
+    { "name": "helper", "kind": "function", "start_line": 5, "end_line": 7 },
+    { "name": "caller", "kind": "function", "start_line": 9, "end_line": 11 },
+    { "name": "A.shared", "kind": "method", "start_line": 14, "end_line": 14 },
+    { "name": "B.shared", "kind": "method", "start_line": 17, "end_line": 17 },
+    { "name": "ambiguous", "kind": "function", "start_line": 20, "end_line": 22 }
+  ],
+  "edges": [
+    { "source": "caller", "target": "helper", "kind": "calls", "confidence": 2 },
+    { "source": "ambiguous", "target": "A.shared", "kind": "calls", "confidence": 0, "ambiguous": true },
+    { "source": "ambiguous", "target": "B.shared", "kind": "calls", "confidence": 0, "ambiguous": true }
+  ]
+}
