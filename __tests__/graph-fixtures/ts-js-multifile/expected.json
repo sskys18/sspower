@@ -1,0 +1,10 @@
+{
+  "language": "typescript",
+  "nodes": [
+    { "name": "greet", "qualifiedName": "greet", "kind": "function", "file": "util.ts", "start_line": 1, "end_line": 3 },
+    { "name": "main",  "qualifiedName": "main",  "kind": "function", "file": "app.ts",  "start_line": 3, "end_line": 5 }
+  ],
+  "edges": [
+    { "source": "main", "target": "greet", "kind": "calls", "confidence": 2 }
+  ]
+}

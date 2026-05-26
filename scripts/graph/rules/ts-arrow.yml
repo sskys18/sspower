@@ -1,0 +1,7 @@
+id: ts-arrow
+language: typescript
+rule:
+  all:
+    - kind: variable_declarator
+    - has:
+        kind: arrow_function

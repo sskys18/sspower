@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sspower-graph": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}

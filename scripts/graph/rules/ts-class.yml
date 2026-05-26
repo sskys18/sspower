@@ -1,0 +1,4 @@
+id: ts-class
+language: typescript
+rule:
+  kind: class_declaration

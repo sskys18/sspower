@@ -49,6 +49,7 @@
 | ✂️ **Command rewrite** | Three chained `PreToolUse:Bash` hooks rewrite shell commands for token savings. |
 | 🛡️ **Auto-review gate** | Codex reviews the branch diff at `git push` / PR and blocks on a non-`approve` verdict. |
 | 🚧 **Skill HARD-GATEs** | `writing-plans`, SDD, and branch-finish run Codex review at earlier checkpoints. |
+| 🕸️ **sspower-graph (P0 stub)** | Per-project symbol graph via MCP. P0 ships intent class + lock helpers + MCP stub. P1 adds the TS/JS extractor. Spec: `docs/specs/2026-05-26-codegraph-style-graph-design.md`. |
 
 <details>
 <summary><b>Full detail</b></summary>
@@ -60,14 +61,66 @@
 - **Command rewrite hooks** — three `PreToolUse:Bash` hooks chain in order: (1) `hooks/semble-rewrite.sh` opportunistically rewrites `ls -R [path]` and `grep -R <BARE_IDENT> [path]` to `semble_rs tree` / `semble_rs search --compact` (gitignore-aware; explicit `ask` permission; fail-open noop on unquoted globs/vars or missing binary). (2) `hooks/cmd-rewrite.sh` routes remaining shell commands through an external rewriter for token-saving substitutions — default [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`; needs binary (>= 0.23.0) + `jq` on PATH or no-ops. (3) `hooks/auto-review.sh` (see next bullet). Bypass semble layer with `SSPOWER_SEMBLE_REWRITE=0`.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
+- **sspower-graph (P0 stub)** — per-project symbol graph subsystem inspired by [codegraph (MIT)](https://github.com/colbymchenry/codegraph). P0 ships the foundation: `architecture` intent class in `hooks/_intent.sh`, Python lock helpers (`scripts/graph-append-dirty.py` + `graph-with-lock.py` reusing `sspower_mem.lock.acquire_lock`), MCP stdio server stub (`bin/sspower-graph.mjs` exposing `graph_status` via `@modelcontextprotocol/sdk`), bootstrap wrapper (`bin/sspower-graph-bootstrap.sh` — bun-managed lazy install, Node ≥22 gated), `.mcp.json` plugin-root registration, and a vitest fixture-suite harness under `__tests__/graph-fixtures/`. Hard deps: ast-grep ≥0.43, Node ≥22, bun (lockfile committed). P1 adds the TS/JS extractor; P2 multi-language + refresh; P3 full MCP toolset for sub-agents (code-reviewer / sanity-reviewer / security-reviewer); P4 hooks orchestration + auto-review enrichment; P5+ framework routes. Anti-goal circuit-breaker: if P3 effort > 2 weeks, ship `codegraph install` companion instead. Full spec at `docs/specs/2026-05-26-codegraph-style-graph-design.md` (5 codex review passes to approve-with-followups).
 
 </details>
+
+## sspower-graph
+
+### CLI (P1)
+
+```
+sspower-graph build [--cwd <dir>]
+sspower-graph callers <name> [--limit N] [--disambiguate] [--json]
+sspower-graph callees <name> [--limit N] [--json]
+sspower-graph node <name> [--json]
+sspower-graph status [--json]
+sspower-graph serve --mcp                # P0 stub MCP server
+```
+
+`build` indexes the current working directory (or `--cwd`) into
+`<cwd>/.claude/graph/index.sqlite`. The current build is full-only;
+incremental refresh ships in P2.
+
+`callers <name>` returns the call-sites that target `<name>`. If
+multiple symbols match by name, pass `--disambiguate` (or query with
+a `Class.method` form). Output line shape:
+
+```
+<file>:<line>\t<caller_qname>\t-> <target_qname>\t(conf=<0|1|2>)
+```
+
+Confidence: `1` = intra-file qname match, `2` = cross-file via
+resolved import, `0` = ambiguous same-name fallback.
+
+### Known P1 limits (P2 followups)
+
+- **Default-import aliases not resolved.** `import run from './mod'`
+  where `mod.ts` has `export default function actualName` produces no
+  edge — the resolver doesn't know which node in `mod.ts` is the default
+  export. Workaround: re-export by name (`export { actualName }` +
+  `import { actualName } from './mod'`) or call the actual function
+  name. P2 will tag default-exported nodes during extraction.
+- **JS files round-trip through a temp `.ts`/`.tsx`** because the
+  ast-grep rules pin `language: typescript`. Adds I/O per JS file.
+  P2 cleanup: parallel `js-*.yml` rules.
+- **`.jsx`/`.tsx` JSX parsing is best-effort.** Component declarations
+  and JSX handler call-sites are extracted, but exotic JSX-ts edge
+  cases may miss. P5+ adds React-specific framework patterns.
 
 > 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
 ## 🚀 Installation
+
+### Prerequisites
+
+- **Node.js ≥ 22** (required by MCP SDK; check with `node --version`).
+- **ast-grep ≥ 0.43** (`brew install ast-grep` on macOS; `cargo install ast-grep`
+  elsewhere). Required for the symbol graph extractor (P1+); P0 install
+  works without it but the graph subsystem won't index code until ast-grep
+  is on `PATH`.
 
 ```bash
 # Add the marketplace
