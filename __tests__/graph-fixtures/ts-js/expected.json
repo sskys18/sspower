@@ -1,15 +1,17 @@
 {
   "language": "typescript",
   "nodes": [
-    { "name": "helper", "kind": "function", "start_line": 5, "end_line": 7 },
-    { "name": "caller", "kind": "function", "start_line": 9, "end_line": 11 },
-    { "name": "A.shared", "kind": "method", "start_line": 14, "end_line": 14 },
-    { "name": "B.shared", "kind": "method", "start_line": 17, "end_line": 17 },
-    { "name": "ambiguous", "kind": "function", "start_line": 20, "end_line": 22 }
+    { "name": "helper", "qualifiedName": "helper", "kind": "function", "start_line": 5, "end_line": 7 },
+    { "name": "caller", "qualifiedName": "caller", "kind": "function", "start_line": 9, "end_line": 11 },
+    { "name": "shared", "qualifiedName": "A.shared", "kind": "method", "start_line": 14, "end_line": 14 },
+    { "name": "shared", "qualifiedName": "B.shared", "kind": "method", "start_line": 17, "end_line": 17 },
+    { "name": "A", "qualifiedName": "A", "kind": "class", "start_line": 13, "end_line": 15 },
+    { "name": "B", "qualifiedName": "B", "kind": "class", "start_line": 16, "end_line": 18 },
+    { "name": "ambiguous", "qualifiedName": "ambiguous", "kind": "function", "start_line": 20, "end_line": 22 }
   ],
   "edges": [
-    { "source": "caller", "target": "helper", "kind": "calls", "confidence": 2 },
-    { "source": "ambiguous", "target": "A.shared", "kind": "calls", "confidence": 0, "ambiguous": true },
-    { "source": "ambiguous", "target": "B.shared", "kind": "calls", "confidence": 0, "ambiguous": true }
+    { "source": "caller", "target": "helper", "kind": "calls", "confidence": 1 },
+    { "source": "ambiguous", "target": "A.shared", "kind": "calls", "confidence": 0 },
+    { "source": "ambiguous", "target": "B.shared", "kind": "calls", "confidence": 0 }
   ]
 }
