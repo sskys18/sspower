@@ -50,8 +50,13 @@ function firstLineOf(text) {
 
 async function scanPathFor({ absPath, source, language }) {
   if (language !== 'javascript') return { scanPath: absPath, cleanup: async () => {} };
+  // Preserve JSX-ness: `.jsx` → temp `.tsx` so JSX syntax still parses under
+  // the TypeScript grammar. Plain `.js`/`.mjs`/`.cjs` → temp `.ts`.
+  const ext = path.extname(absPath).toLowerCase();
+  const isJsx = ext === '.jsx';
+  const tmpExt = isJsx ? '.tsx' : '.ts';
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sspower-graph-'));
-  const scanPath = path.join(tmpDir, `${path.basename(absPath)}.ts`);
+  const scanPath = path.join(tmpDir, `${path.basename(absPath)}${tmpExt}`);
   await fs.writeFile(scanPath, source, 'utf8');
   return {
     scanPath,

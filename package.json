@@ -10,7 +10,8 @@
   "scripts": {
     "graph:serve": "node bin/sspower-graph.mjs serve --mcp",
     "graph:smoke": "node tests/graph/test-mcp-stub.mjs",
-    "graph:fixtures": "vitest run __tests__/graph-fixtures/"
+    "graph:fixtures": "vitest run __tests__/graph-fixtures/",
+    "graph:tests": "node tests/graph/test-db-schema.mjs && node tests/graph/test-astgrep.mjs && node tests/graph/test-walk.mjs && node tests/graph/test-extract-ts.mjs && node tests/graph/test-resolve.mjs && node tests/graph/test-build-query.mjs && node tests/graph/test-mcp-stub.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

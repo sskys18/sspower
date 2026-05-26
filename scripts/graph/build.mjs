@@ -25,6 +25,7 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
   const allNodes = [];
   const perFile = [];
   let extractFailures = 0;
+  let readFailures = 0;
 
   // Phase 1: walk + extract per file (no DB writes -- pure in-memory).
   let fileCount = 0;
@@ -32,7 +33,11 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     fileCount++;
     let source;
     try { source = await fs.readFile(filePath, 'utf8'); }
-    catch (e) { log(`skip read ${filePath}: ${e.message}`); continue; }
+    catch (e) {
+      log(`skip read ${filePath}: ${e.message}`);
+      readFailures++;
+      continue;
+    }
     const language = languageFor(filePath);
     let extracted;
     try { extracted = await extractFile({ absPath: filePath, source, language }); }
@@ -55,23 +60,25 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     });
     if (fileCount % 100 === 0) log(`extracted ${fileCount} files`);
   }
-  log(`extract done: ${fileCount} files, ${allNodes.length} nodes, ${extractFailures} failures`);
+  const totalFailures = extractFailures + readFailures;
+  log(`extract done: ${fileCount} files, ${allNodes.length} nodes, ${extractFailures} extract-fail, ${readFailures} read-fail`);
 
-  // Refuse to clobber a healthy index with a broken build. If ast-grep
-  // disappeared, the JSON shape changed, or the JS temp-file path blew
-  // up universally, we must NOT proceed to delete the previous index.
-  // Thresholds:
-  //   - Any files walked but NONE successfully extracted -> tooling broke;
-  //     abort hard (don't even open the destructive tx).
-  //   - extractFailures / fileCount > 0.25 -> material extractor regression;
-  //     abort to preserve the existing index. Operator can re-run after fix.
+  // Refuse to clobber a healthy index with a broken build. ast-grep gone,
+  // JSON shape regression, JS temp-file path broken, or storage gone read-
+  // only mid-build all surface here. The destructive transaction below
+  // would otherwise replace a good index with an empty/partial one.
+  // Thresholds (read + extract counted together — both are "file not
+  // represented in perFile"):
+  //   - perFile empty AND files walked -> total tooling failure; abort hard.
+  //   - totalFailures / fileCount > 0.25 -> material regression; abort to
+  //     preserve the existing index. Operator re-runs after fixing.
   if (fileCount > 0 && perFile.length === 0) {
     db.close();
-    throw new Error(`build aborted: ${fileCount} files walked, 0 extracted (${extractFailures} failures). Existing index left untouched.`);
+    throw new Error(`build aborted: ${fileCount} files walked, 0 extracted (read-fail=${readFailures}, extract-fail=${extractFailures}). Existing index left untouched.`);
   }
-  if (fileCount > 0 && extractFailures / fileCount > 0.25) {
+  if (fileCount > 0 && totalFailures / fileCount > 0.25) {
     db.close();
-    throw new Error(`build aborted: ${extractFailures}/${fileCount} files failed extraction (>25%). Existing index left untouched. Fix the extractor regression and re-run.`);
+    throw new Error(`build aborted: ${totalFailures}/${fileCount} files failed (read=${readFailures}, extract=${extractFailures}, >25%). Existing index left untouched. Fix the regression and re-run.`);
   }
 
   // Phase 2: build import maps in memory (no DB writes).
