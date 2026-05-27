@@ -735,8 +735,27 @@ Gates the Task 4 refactor and any future spec-incompatible change.
 **Files:**
 - Modify: `bin/sspower-graph.mjs:267-287` (replace stub)
 - Create: `scripts/graph/mcp-tools/index.mjs`
+- Create: `scripts/graph/mcp-tools/{status,callers,callees,trace,impact,node,context}.mjs` (STUB versions; real implementations land in Tasks 6-11)
 
-- [ ] **Step 1: Create `scripts/graph/mcp-tools/index.mjs`**
+- [ ] **Step 1: Create 7 stub handler files** so Task 5's `index.mjs` static imports resolve
+
+For each name in `[status, callers, callees, trace, impact, node, context]` create `scripts/graph/mcp-tools/<name>.mjs` containing only:
+
+```js
+// scripts/graph/mcp-tools/<name>.mjs — STUB. Real implementation in Task <N>.
+export const TOOL = {
+  name: 'graph_<name>',
+  description: 'P3 stub — Task <N> will replace this.',
+  inputSchema: { type: 'object', properties: {}, required: [] },
+};
+export async function handler(args) {
+  throw new Error('graph_<name>: not yet implemented (P3 Task <N>)');
+}
+```
+
+(Substitute `<name>` and the corresponding Task number per the table in §"File map".)
+
+- [ ] **Step 2: Create `scripts/graph/mcp-tools/index.mjs`**
 
 ```js
 // scripts/graph/mcp-tools/index.mjs
@@ -776,7 +795,7 @@ export async function dispatch(name, args) {
 }
 ```
 
-- [ ] **Step 2: Replace `runMcpServer()` in `bin/sspower-graph.mjs:267-287`**
+- [ ] **Step 3: Replace `runMcpServer()` in `bin/sspower-graph.mjs:267-287`**
 
 ```js
 async function runMcpServer() {
@@ -809,15 +828,36 @@ async function runMcpServer() {
 }
 ```
 
-- [ ] **Step 3: Run existing MCP smoke test** (still only tests `graph_status` stub at this point, but listTools should return 7 entries now)
+- [ ] **Step 4: Run existing MCP smoke test** (Task 5 stubs throw on callTool but listTools returns 7 entries)
 
 ```bash
 node tests/graph/test-mcp-stub.mjs
 ```
 
-Will likely fail on `assert.equal(tools.tools[0].name, 'graph_status')` if order isn't deterministic. Either fix the assertion to be order-insensitive, or set TOOLS order with `graph_status` first. Order TOOLS array with `status` first to keep the assertion working until Task 12 rewrites this test.
+The existing smoke test asserts `tools.tools[0].name === 'graph_status'` and calls `graph_status` expecting `{ok:true,stub:true}`. After Task 5, that callTool now throws (stub `handler` throws). Update the smoke test in Task 23 (rename to `test-mcp-integration.mjs`); for Task 5's verification just confirm listTools returns 7 entries:
 
-- [ ] **Step 4: Commit**
+```bash
+node -e "
+import('@modelcontextprotocol/sdk/client/index.js').then(async ({Client}) => {
+  const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
+  const t = new StdioClientTransport({
+    command: process.cwd()+'/bin/sspower-graph-bootstrap.sh',
+    args: ['serve','--mcp'],
+    env: { ...process.env, CLAUDE_PLUGIN_ROOT: process.cwd() },
+  });
+  const c = new Client({name:'t',version:'0'},{capabilities:{}});
+  await c.connect(t);
+  const tools = (await c.listTools()).tools;
+  console.assert(tools.length === 7, 'expected 7 tools');
+  console.log('OK');
+  await c.close();
+});
+"
+```
+
+Expected: `OK`.
+
+- [ ] **Step 5: Commit**
 
 ```
 feat(graph): MCP dispatcher scaffolding (P3-D5)
@@ -949,18 +989,31 @@ export async function handler(args) {
 }
 ```
 
-- [ ] **Step 3: Run + commit**
+- [ ] **Step 3: Run**
 
 ```bash
 node tests/graph/test-mcp-tools-unit.mjs
-git add -A && git commit -F /tmp/commit-msg-t7.txt
 ```
 
-Commit msg:
+- [ ] **Step 4: Stage + commit (Claude-mode)**
+
+```bash
+git add scripts/graph/mcp-tools/callers.mjs tests/graph/test-mcp-tools-unit.mjs
+```
+
+Suggested commit message at `/tmp/commit-msg-t7.txt`:
 
 ```
 feat(graph): graph_callers MCP handler
 ```
+
+Then (standalone Bash invocation per chokepoint policy):
+
+```bash
+git commit -F /tmp/commit-msg-t7.txt
+```
+
+Codex-mode: stop after `git add`; report `staged: scripts/graph/mcp-tools/callers.mjs tests/graph/test-mcp-tools-unit.mjs ; commit-msg: /tmp/commit-msg-t7.txt`.
 
 ---
 
@@ -1225,6 +1278,21 @@ assert.equal(e1.tool, 'graph_status');
 assert.equal(e1.ok, true);
 assert.equal(e1.schema, 1);
 console.log('recordEvent OK');
+
+// Cache invalidation: overwrite state with new sid, record again, expect new spool prefix
+const fs2 = await import('node:fs');
+await new Promise(r => setTimeout(r, 20));  // ensure mtime advances on coarse fs
+fs2.default.writeFileSync(statePathFor(real), JSON.stringify({
+  session_id: 'metric-test-sid-2', cwd: real, started_ts: new Date().toISOString(),
+}));
+process.chdir(real);
+recordEvent({ tool: 'graph_status', ok: true, duration_ms: 1, cwd: real });
+process.chdir(orig);
+const after = fs.readdirSync(SPOOL_DIR).filter(f => f.endsWith('.jsonl'));
+const sids = new Set(after.map(f => f.split('.')[0]));
+assert.ok(sids.has('metric-test-sid'),   'old sid spool still present');
+assert.ok(sids.has('metric-test-sid-2'), 'new sid not picked up — cache stale');
+console.log('cache invalidation OK');
 ```
 
 - [ ] **Step 2: Run — expect FAIL** (module missing)
@@ -1251,16 +1319,21 @@ function degradedId(cwd) {
   return 'deg-' + crypto.createHash('sha256').update(seed).digest('hex').slice(0, 12);
 }
 
-const sessionCache = new Map();  // keyed by canonical cwd
+import { statePathFor } from '../session-state.mjs';
+const sessionCache = new Map();  // canonical-cwd → { sid, source, stateMtimeMs }
 function resolveSession(cwd) {
   let real;
   try { real = fs.realpathSync(cwd); } catch { real = cwd; }
+  // Invalidate cache when the state file mtime changes (new SessionStart for
+  // the same project = new session id, must rebind).
+  let currentMtime = 0;
+  try { currentMtime = fs.statSync(statePathFor(real)).mtimeMs; } catch {}
   const hit = sessionCache.get(real);
-  if (hit) return hit;
+  if (hit && hit.stateMtimeMs === currentMtime) return hit;
   const r = readSessionState(real);
   const out = r.sessionId
-    ? { sid: r.sessionId, source: 'claude_session_id' }
-    : { sid: degradedId(real), source: 'degraded:' + r.source };
+    ? { sid: r.sessionId, source: 'claude_session_id', stateMtimeMs: currentMtime }
+    : { sid: degradedId(real), source: 'degraded:' + r.source, stateMtimeMs: currentMtime };
   sessionCache.set(real, out);
   return out;
 }
@@ -1429,22 +1502,20 @@ function isEligible(cwd) {
 }
 
 function withLock(fn) {
-  // Reuse sspower_mem.lock.acquire_lock by spawning python; alternative is
-  // node-side flock via lockfile lib. Choose the python helper to match the
-  // existing pattern documented in CLAUDE.md.
-  const py = `
-import sys, json, os
-sys.path.insert(0, os.path.join(os.environ['CLAUDE_PLUGIN_ROOT'], 'scripts', 'sspower_mem'))
-from sspower_mem.lock import acquire_lock
-import pathlib
-lock = pathlib.Path(sys.argv[1])
-with acquire_lock(lock, parent_anchor=lock.parent.parent):
-    print('LOCKED')
-    sys.stdin.read(1)  # block until parent signals release
-`;
-  // For simplicity in MVP: use a lockfile via fs.openSync with O_CREAT|O_EXCL.
-  // This is sufficient under the contract that only one SessionEnd hook per
-  // session fires (CC guarantees per-session SessionEnd dispatch).
+  // DECISION: Node-side O_CREAT|O_EXCL lockfile (NOT sspower_mem.lock.acquire_lock).
+  //
+  // Rationale: the Python helper requires spawning a subprocess per lock
+  // acquisition (~30-100ms) for what is otherwise sub-ms work. The reconcile
+  // critical section is small (read JSON, mutate, atomic-rename) and the
+  // contention scenario is rare — CC dispatches one SessionEnd per session,
+  // so concurrent reconcilers only collide if two CC instances exit at
+  // approximately the same moment. Stale-lock recovery (mtime > 30s = force
+  // remove) covers the orphan case.
+  //
+  // The Task 14 commit message must note this divergence from spec §3 which
+  // calls out the Python helper as the canonical lock — Node lock is the
+  // P3-D6 implementation choice and updates the spec implicitly. If spec
+  // amendment is preferred, do that BEFORE Task 14 ships.
   let fd;
   const tries = 10;
   for (let i = 0; i < tries; i++) {
@@ -1591,26 +1662,71 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 ```
 
-- [ ] **Step 3: Run + commit**
+- [ ] **Step 3: Add concurrent-reconcile test** to `tests/graph/test-mcp-metric.mjs`
+
+```js
+// Concurrent reconcilers on different sessions must not lose rows.
+import { reconcile as recon2 } from '../../scripts/graph/mcp-tools/metric.mjs';
+fs.rmSync(SESSIONS_PATH, { force: true });
+// Spawn two real Node processes that both call reconcile concurrently:
+const { spawn } = await import('node:child_process');
+const sidA = 'concurrent-a', sidB = 'concurrent-b';
+// Seed one event per session so both have non-empty spool
+const realA = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-conc-a-'));
+const realB = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-conc-b-'));
+for (const [r, sid] of [[realA, sidA], [realB, sidB]]) {
+  fs.mkdirSync(path.dirname(statePathFor(r)), { recursive: true });
+  fs.writeFileSync(statePathFor(r), JSON.stringify({ session_id: sid, cwd: r, started_ts: new Date().toISOString() }));
+  fs.mkdirSync(path.join(r, '.claude', 'graph'), { recursive: true });
+  process.chdir(r);
+  recordEvent({ tool: 'graph_status', ok: true, duration_ms: 1, cwd: r });
+}
+process.chdir(orig);
+
+const PLUGIN_ROOT_STR = path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), '../..');
+const procs = [sidA, sidB].map(sid => spawn(process.execPath, [
+  path.join(PLUGIN_ROOT_STR, 'scripts', 'graph', 'mcp-tools', 'metric.mjs'),
+  'reconcile', '--session', sid, '--cwd', sid === sidA ? realA : realB,
+]));
+const results = await Promise.all(procs.map(p => new Promise(r => p.on('exit', c => r(c)))));
+assert.deepEqual(results, [0, 0]);
+const finalSess = JSON.parse(fs.readFileSync(SESSIONS_PATH, 'utf8')).sessions;
+const ids = finalSess.map(s => s.session_id);
+assert.ok(ids.includes(sidA), 'concurrent reconcile lost session A');
+assert.ok(ids.includes(sidB), 'concurrent reconcile lost session B');
+console.log('concurrent reconcile OK');
+```
+
+- [ ] **Step 4: Run + commit**
 
 ```bash
 node tests/graph/test-mcp-metric.mjs
 ```
 
-Expected: `recordEvent OK / reconcile OK / reconcile eligibility OK`.
+Expected: `recordEvent OK / cache invalidation OK / reconcile OK / reconcile eligibility OK / concurrent reconcile OK`.
 
-Commit:
+Stage:
+
+```bash
+git add scripts/graph/mcp-tools/metric.mjs tests/graph/test-mcp-metric.mjs
+```
+
+Commit (Claude-mode standalone) using `/tmp/commit-msg-t14.txt`:
 
 ```
 feat(graph): metric.mjs reconcile + sessions.json writer
 
 reconcile() globs <sid>.*.jsonl spool, merges events, computes
 per-session row (eligible if .claude/graph/ exists in cwd, tool_calls,
-unique_tools, first/last/end timestamps, end_reason). Acquires
-O_EXCL file lock around read-modify-write of sessions.json (atomic
-temp+rename inside lock). Archives spool to archive/<YYYYMM>/,
-prunes archives >60 days. CLI surface `node metric.mjs reconcile
---session X --cwd Y --reason Z` invoked by the SessionEnd hook.
+tool_counts, tool_durations, unique_tools, first/last/end timestamps,
+end_reason). Acquires Node-side O_EXCL file lock around read-modify-
+write of sessions.json (atomic temp+rename inside lock). Decision
+note: chose Node lock over sspower_mem.lock.acquire_lock to avoid
+30-100ms python subprocess spawn for sub-ms critical section; stale
+lock (mtime>30s) force-removed. Concurrent-reconcile test gates this
+choice. Archives spool to archive/<YYYYMM>/, prunes archives >60
+days. CLI surface `node metric.mjs reconcile --session X --cwd Y
+--reason Z` invoked by the SessionEnd hook.
 ```
 
 ---
