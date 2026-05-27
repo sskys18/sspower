@@ -43,11 +43,26 @@ export async function readVersionField(graphDir, field) {
 }
 
 export async function writeVersionField(graphDir, field, value) {
+  return writeVersionFields(graphDir, { [field]: value });
+}
+
+// Merge-aware writer: updates the listed keys in <graphDir>/version
+// without clobbering keys we didn't touch. Critical for git_filesethash —
+// build/refresh need to refresh schema/ast_grep/built_at without dropping
+// the SessionStart hash, or the next session-refresh would see
+// `stored=null` and trigger a full rebuild on every session start.
+export async function writeVersionFields(graphDir, fields) {
   const p = path.join(graphDir, 'version');
   let raw = '';
   try { raw = await fs.readFile(p, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  const lines = raw.split('\n').filter(l => l && !l.startsWith(`${field}=`));
-  lines.push(`${field}=${value}`);
+  const keys = new Set(Object.keys(fields));
+  const lines = raw.split('\n').filter(l => {
+    if (!l) return false;
+    const eq = l.indexOf('=');
+    if (eq < 0) return true;
+    return !keys.has(l.slice(0, eq));
+  });
+  for (const [k, v] of Object.entries(fields)) lines.push(`${k}=${v}`);
   await fs.writeFile(p, lines.join('\n') + '\n');
 }
 

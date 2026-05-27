@@ -8,6 +8,7 @@ import { extractorFor } from './extract.mjs';
 import { resolveModule, resolveEdges } from './resolve.mjs';
 import { openDb, initSchema, nodeId } from './db.mjs';
 import { truncateDirty } from './dirty.mjs';
+import { writeVersionFields } from './session-refresh.mjs';
 
 // Phase 1 worker concurrency. Each extractor spawn is an ast-grep subprocess
 // (~5ms cold) -- with 6 rules per file the serial path dominates the 10k-file
@@ -201,11 +202,14 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
   // loop forever.
   await truncateDirty(graphDir);
 
-  await fs.writeFile(
-    path.join(graphDir, 'version'),
-    `schema=1\nast_grep=${process.env.AST_GREP_VERSION ?? 'unknown'}\nbuilt_at=${now}\n`,
-    'utf8'
-  );
+  // Merge-write: do NOT overwrite git_filesethash that session-refresh
+  // may have persisted -- otherwise the next session sees stored=null
+  // and triggers a needless full rebuild.
+  await writeVersionFields(graphDir, {
+    schema: 1,
+    ast_grep: process.env.AST_GREP_VERSION ?? 'unknown',
+    built_at: now,
+  });
 
   db.close();
   return { fileCount, nodeCount: allNodes.length, edgeCount: edges.length };

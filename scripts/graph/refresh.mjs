@@ -20,6 +20,7 @@ import { reverseImportClosure } from './closure.mjs';
 import { extractorFor } from './extract.mjs';
 import { resolveModule, resolveEdges } from './resolve.mjs';
 import { openDb, initSchema, nodeId } from './db.mjs';
+import { writeVersionFields } from './session-refresh.mjs';
 
 const THRASH_THRESHOLD = 500;
 
@@ -194,11 +195,14 @@ export async function refresh({ rootDir, graphDir, log = () => {} }) {
   const edgeCount = db.prepare('SELECT COUNT(*) AS c FROM edges').get().c;
   log(`refresh: ${closure.size} files touched (${perFile.length} extracted), ${nodeCount} nodes, ${edgeCount} edges total`);
 
-  await fs.writeFile(
-    path.join(graphDir, 'version'),
-    `schema=1\nast_grep=${process.env.AST_GREP_VERSION ?? 'unknown'}\nbuilt_at=${now}\nlast_refresh=${now}\n`,
-    'utf8'
-  );
+  // Merge-write: preserve git_filesethash so session-refresh's hash
+  // gate stays valid after an incremental refresh.
+  await writeVersionFields(graphDir, {
+    schema: 1,
+    ast_grep: process.env.AST_GREP_VERSION ?? 'unknown',
+    built_at: now,
+    last_refresh: now,
+  });
 
   db.close();
   return {
