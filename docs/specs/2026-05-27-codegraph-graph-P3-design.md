@@ -81,13 +81,16 @@ SDK translates to `{isError:true, content:[{type:'text',text:<msg>}]}`.
 does `cd "$ROOT"` before `exec node ...`, which makes `process.cwd()`
 the plugin root — NOT the project workspace. P3 must amend the
 bootstrap to PRESERVE the client/project cwd through to the MCP
-server. Concretely: remove the `cd "$ROOT"` line; run the lazy npm
-install with root-qualified args (`npm --prefix "$ROOT" install ...`)
-so the install lands in the right place without changing process cwd;
-`exec node "$ROOT/bin/sspower-graph.mjs" "$@"` from the original cwd.
-Without this fix, per-project session-state lookup (§4.1) collapses
-to a single global state file at the plugin root → re-introduces
-HIGH-2.
+server. The repo is bun-locked
+(`packageManager: bun@1.3.11`, `bun.lock` committed); keep bun as the
+installer. Concretely: remove the top-level `cd "$ROOT"`; run the
+lazy install in a **subshell** so its cwd change is local — e.g.
+`( cd "$ROOT" && bun install --frozen-lockfile --production … )`;
+then `exec node "$ROOT/bin/sspower-graph.mjs" "$@"` from the original
+caller cwd. Do NOT introduce npm — there is no `package-lock.json`,
+and the reproducibility contract (P2-shipped) is bun-only. Without
+this fix, per-project session-state lookup (§4.1) collapses to a
+single global state file at the plugin root → re-introduces HIGH-2.
 
 `MAX_RESULTS=50` cap from §5 of parent spec is preserved per tool
 (limit clamped at 200 hard ceiling).
@@ -660,13 +663,17 @@ spec uses prefix `P3-D*` to avoid collision)
   semantics change, amendment adds explicit `tools: mcp__sspower-graph__*`
   wildcard.
 - **P3-D8**: `bin/sspower-graph-bootstrap.sh` MUST NOT `cd` away from
-  the caller's cwd. The current `cd "$ROOT"` line is removed in P3;
-  npm install uses `npm --prefix "$ROOT" install …`; `exec node
-  "$ROOT/bin/sspower-graph.mjs" "$@"` runs from the original cwd.
-  This is load-bearing for per-project session-state lookup (§4.1) —
-  without it the MCP server always sees the plugin root as cwd and
-  P3-D4 collapses to a global state file. Bootstrap diff is a required
-  T1 deliverable.
+  the caller's cwd at the script-process level. The current top-level
+  `cd "$ROOT"` is removed in P3. Bun install runs inside a subshell
+  (`( cd "$ROOT" && bun install --frozen-lockfile --production … )`)
+  so its cwd change is scoped; `exec node "$ROOT/bin/sspower-graph.mjs"
+  "$@"` runs from the original caller cwd. **Installer stays bun** —
+  the repo is bun-locked (`packageManager: bun@1.3.11`, `bun.lock`);
+  npm has no lockfile here and would break reproducibility. This is
+  load-bearing for per-project session-state lookup (§4.1) — without
+  it the MCP server always sees the plugin root as cwd and P3-D4
+  collapses to a global state file. Bootstrap diff is a required T1
+  deliverable.
 
 ## 11. Open questions (to resolve in plan, not blocking spec)
 
