@@ -8,6 +8,7 @@ const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..')
 const FIXTURES = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures');
 const GRAPH = path.join(PLUGIN_ROOT, 'bin', 'sspower-graph.mjs');
 const VOLATILE_KEYS = new Set(['lastIndexed', 'updated_at', 'indexed_at']);
+const FIXTURE_ROOT_RE = /(?:[A-Za-z]:)?[/\\].*?[/\\]__tests__[/\\]graph-fixtures/g;
 
 function normalizeStdout(s) {
   s = s.replace(/"pendingFilesetHash": "[^"]+"/g, '"pendingFilesetHash": "<volatile>"');
@@ -20,6 +21,7 @@ function normalizeStdout(s) {
         for (const [k, v] of Object.entries(x)) out[k] = VOLATILE_KEYS.has(k) ? 0 : scrub(v);
         return out;
       }
+      if (typeof x === 'string') return x.replace(FIXTURE_ROOT_RE, '<FIXTURES>');
       return x;
     };
     return JSON.stringify(scrub(v), null, 2) + '\n';
