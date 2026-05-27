@@ -11,7 +11,7 @@ agents/          — subagent prompts (code-reviewer, codex-rescue, security-rev
 scripts/         — codex-bridge.mjs (native Codex CLI integration), codex-registry.mjs (session state for tracking), sspower_mem/ (Python package for sspower-mem memory CLI; uv/uvx-runnable), graph-append-dirty.py + graph-with-lock.py (sspower-graph dirty queue + cross-language lock helpers)
 schemas/         — structured output contracts for Codex (implementation, spec-review, quality-review)
 commands/        — slash command entrypoints (diet, codex-track)
-bin/             — on-PATH entrypoints: sspower-mem (memory CLI wrapper), sspower-graph.mjs (MCP stdio server + CLI: build/refresh/session-refresh/callers/callees/trace/impact/context/node/status/metric, P3 ship candidate at 1.4.0), sspower-graph-bootstrap.sh (lazy bun-install wrapper invoked by .mcp.json)
+bin/             — on-PATH entrypoints: sspower-mem (memory CLI wrapper), sspower-graph.mjs (MCP stdio server + CLI: build/refresh/session-refresh/callers/callees/trace/impact/context/node/routes/status/metric, P4 shipped at 1.5.0), sspower-graph-bootstrap.sh (lazy bun-install wrapper invoked by .mcp.json)
 .mcp.json        — plugin-root MCP server declaration; registers sspower-graph for Claude Code + sub-agents
 docs/            — customization docs, plans, specs
 tests/           — skill, hook, graph, and brainstorm-server tests

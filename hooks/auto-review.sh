@@ -253,13 +253,25 @@ DIFF_SHA=$(sha256sum "$DIFF_FILE" 2>/dev/null | cut -d' ' -f1)
 HASH_INPUT=$(printf '%s|%s|%s|%s' "${REPO_ROOT:-}" "$HEAD_SHA" "$BRANCH" "$DIFF_SHA")
 # Graph cache-key terms (P4-D6, spec F9). Append-only — graph-absent leaves
 # HASH_INPUT byte-identical to the pre-P4 form so existing cache entries
-# survive. Graph-present adds GRAPH_VERSION + GRAPH_HASH; one-time cache
-# spike at first deploy is correct behavior (stale verdicts shouldn't
-# survive a graph schema bump).
+# survive. Graph-present adds GRAPH_VERSION (schema rev — bumps invalidate
+# on schema migration) AND GRAPH_HASH (content hash of index.sqlite — bumps
+# invalidate on every build/refresh that actually mutates the index, not
+# just on schema migration; round-1 review finding fix).
 if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude/graph/version" ]; then
   GRAPH_VERSION=$(head -1 "$REPO_ROOT/.claude/graph/version" 2>/dev/null | tr -d '\n')
-  GRAPH_HASH=$(sha256sum "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
-  [ -z "$GRAPH_HASH" ] && GRAPH_HASH=$(shasum -a 256 "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
+  # Hash the index.sqlite bytes directly so incremental refresh (which
+  # rewrites index.sqlite but may not touch version) invalidates cache.
+  GRAPH_HASH=""
+  if [ -f "$REPO_ROOT/.claude/graph/index.sqlite" ]; then
+    GRAPH_HASH=$(sha256sum "$REPO_ROOT/.claude/graph/index.sqlite" 2>/dev/null | cut -c1-16)
+    [ -z "$GRAPH_HASH" ] && GRAPH_HASH=$(shasum -a 256 "$REPO_ROOT/.claude/graph/index.sqlite" 2>/dev/null | cut -c1-16)
+  fi
+  # Fallback: if index missing (edge case — version file orphaned),
+  # hash version file so we still have *some* term.
+  if [ -z "$GRAPH_HASH" ]; then
+    GRAPH_HASH=$(sha256sum "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
+    [ -z "$GRAPH_HASH" ] && GRAPH_HASH=$(shasum -a 256 "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
+  fi
   HASH_INPUT="${HASH_INPUT}|${GRAPH_VERSION}|${GRAPH_HASH}"
 fi
 DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)

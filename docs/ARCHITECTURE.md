@@ -616,7 +616,7 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
-## sspower-graph (P3 shipped at 1.4.0)
+## sspower-graph (P4 shipped at 1.5.0)
 
 Per-project symbol graph subsystem inspired by codegraph (MIT). Built on
 ast-grep, exposed to Claude Code + sub-agents via MCP stdio.
