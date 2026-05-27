@@ -1,16 +1,21 @@
 // scripts/graph/extract-rs.mjs
-import { runRule } from './astgrep.mjs';
+import { runRulesBatch } from './astgrep.mjs';
 import crypto from 'node:crypto';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
 const RULE_DIR = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'rules');
-const RULES = {
-  function: path.join(RULE_DIR, 'rs-function.yml'),
-  impl: path.join(RULE_DIR, 'rs-impl.yml'),
-  method: path.join(RULE_DIR, 'rs-method.yml'),
-  call: path.join(RULE_DIR, 'rs-call.yml'),
-  import: path.join(RULE_DIR, 'rs-use.yml'),
+const RULE_FILES = ['rs-function.yml', 'rs-impl.yml', 'rs-method.yml', 'rs-call.yml', 'rs-use.yml'];
+const RULES_INLINE = RULE_FILES
+  .map(f => fsSync.readFileSync(path.join(RULE_DIR, f), 'utf8').trim())
+  .join('\n---\n');
+const RULE_ID = {
+  function: 'rs-function',
+  impl:     'rs-impl',
+  method:   'rs-method',
+  call:     'rs-call',
+  import:   'rs-use',
 };
 
 function spanSha8(text) {
@@ -94,13 +99,12 @@ function parseUse(text, line) {
 }
 
 export async function extractFile({ absPath, source: _source, language = 'rust' }) {
-  const [fns, impls, methods, calls, imps] = await Promise.all([
-    runRule(RULES.function, absPath),
-    runRule(RULES.impl, absPath),
-    runRule(RULES.method, absPath),
-    runRule(RULES.call, absPath),
-    runRule(RULES.import, absPath),
-  ]);
+  const buckets = await runRulesBatch(RULES_INLINE, absPath);
+  const fns     = buckets.get(RULE_ID.function) ?? [];
+  const impls   = buckets.get(RULE_ID.impl)     ?? [];
+  const methods = buckets.get(RULE_ID.method)   ?? [];
+  const calls   = buckets.get(RULE_ID.call)     ?? [];
+  const imps    = buckets.get(RULE_ID.import)   ?? [];
 
   const implRanges = [];
   for (const m of impls) {

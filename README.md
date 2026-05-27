@@ -108,6 +108,19 @@ resolved import, `0` = ambiguous same-name fallback.
   and JSX handler call-sites are extracted, but exotic JSX-ts edge
   cases may miss. P5+ adds React-specific framework patterns.
 
+### Performance budgets (P2 acceptance gates, spec §4)
+
+- 10k-file repo, cold `build`: < 60s (M-series Mac)
+- warm `callers` p95: < 1s
+
+Reproduce: `SSPOWER_GRAPH_PERF=1 bash tests/graph/test-perf-10k.sh`. The
+bench is opt-in; CI does not run it. P2 baseline on M-series:
+build ≈ 19s, callers p95 ≈ 0.07ms. Achieved via two optimizations:
+(1) Phase 1 extract runs through a bounded worker pool
+(`SSPOWER_GRAPH_BUILD_CONCURRENCY`, defaults to `os.cpus().length`);
+(2) each per-file extractor batches its rule set into one ast-grep
+`--inline-rules` invocation (cuts subprocess spawns 6× for TS).
+
 > 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---

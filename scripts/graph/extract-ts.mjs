@@ -1,19 +1,34 @@
 // scripts/graph/extract-ts.mjs
-import { runRule } from './astgrep.mjs';
+import { runRulesBatch } from './astgrep.mjs';
 import crypto from 'node:crypto';
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
 
 const RULE_DIR = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'rules');
-const RULES = {
-  function: path.join(RULE_DIR, 'ts-function.yml'),
-  arrow: path.join(RULE_DIR, 'ts-arrow.yml'),
-  class: path.join(RULE_DIR, 'ts-class.yml'),
-  method: path.join(RULE_DIR, 'ts-method.yml'),
-  call: path.join(RULE_DIR, 'ts-call.yml'),
-  import: path.join(RULE_DIR, 'ts-import.yml'),
+const RULE_FILES = [
+  'ts-function.yml',
+  'ts-arrow.yml',
+  'ts-class.yml',
+  'ts-method.yml',
+  'ts-call.yml',
+  'ts-import.yml',
+];
+// Concat all rule docs into one `---`-separated inline-rules payload at
+// module init. ast-grep tags each match with its rule `id`, so the call
+// site recovers per-rule buckets.
+const RULES_INLINE = RULE_FILES
+  .map(f => fsSync.readFileSync(path.join(RULE_DIR, f), 'utf8').trim())
+  .join('\n---\n');
+const RULE_ID = {
+  function: 'ts-function',
+  arrow:    'ts-arrow',
+  class:    'ts-class',
+  method:   'ts-method',
+  call:     'ts-call',
+  import:   'ts-import',
 };
 
 export function spanSha8(text) {
@@ -69,24 +84,18 @@ async function scanPathFor({ absPath, source, language }) {
 
 export async function extractFile({ absPath, source, language = 'typescript' }) {
   const { scanPath, cleanup } = await scanPathFor({ absPath, source, language });
-  let fns;
-  let arrows;
-  let classes;
-  let methods;
-  let calls;
-  let imps;
+  let buckets;
   try {
-    [fns, arrows, classes, methods, calls, imps] = await Promise.all([
-      runRule(RULES.function, scanPath),
-      runRule(RULES.arrow, scanPath),
-      runRule(RULES.class, scanPath),
-      runRule(RULES.method, scanPath),
-      runRule(RULES.call, scanPath),
-      runRule(RULES.import, scanPath),
-    ]);
+    buckets = await runRulesBatch(RULES_INLINE, scanPath);
   } finally {
     await cleanup();
   }
+  const fns     = buckets.get(RULE_ID.function) ?? [];
+  const arrows  = buckets.get(RULE_ID.arrow)    ?? [];
+  const classes = buckets.get(RULE_ID.class)    ?? [];
+  const methods = buckets.get(RULE_ID.method)   ?? [];
+  const calls   = buckets.get(RULE_ID.call)     ?? [];
+  const imps    = buckets.get(RULE_ID.import)   ?? [];
 
   const nodes = [];
 

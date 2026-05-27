@@ -1,16 +1,16 @@
 // scripts/graph/extract-go.mjs
-import { runRule } from './astgrep.mjs';
+import { runRulesBatch } from './astgrep.mjs';
 import crypto from 'node:crypto';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
 const RULE_DIR = path.join(path.dirname(url.fileURLToPath(import.meta.url)), 'rules');
-const RULES = {
-  function: path.join(RULE_DIR, 'go-function.yml'),
-  method: path.join(RULE_DIR, 'go-method.yml'),
-  call: path.join(RULE_DIR, 'go-call.yml'),
-  import: path.join(RULE_DIR, 'go-import.yml'),
-};
+const RULE_FILES = ['go-function.yml', 'go-method.yml', 'go-call.yml', 'go-import.yml'];
+const RULES_INLINE = RULE_FILES
+  .map(f => fsSync.readFileSync(path.join(RULE_DIR, f), 'utf8').trim())
+  .join('\n---\n');
+const RULE_ID = { function: 'go-function', method: 'go-method', call: 'go-call', import: 'go-import' };
 
 function spanSha8(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 8);
@@ -57,12 +57,11 @@ function parseImports(text, line) {
 }
 
 export async function extractFile({ absPath, source: _source, language = 'go' }) {
-  const [fns, methods, calls, imps] = await Promise.all([
-    runRule(RULES.function, absPath),
-    runRule(RULES.method, absPath),
-    runRule(RULES.call, absPath),
-    runRule(RULES.import, absPath),
-  ]);
+  const buckets = await runRulesBatch(RULES_INLINE, absPath);
+  const fns     = buckets.get(RULE_ID.function) ?? [];
+  const methods = buckets.get(RULE_ID.method)   ?? [];
+  const calls   = buckets.get(RULE_ID.call)     ?? [];
+  const imps    = buckets.get(RULE_ID.import)   ?? [];
 
   const nodes = [];
 

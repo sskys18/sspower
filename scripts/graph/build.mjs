@@ -1,11 +1,21 @@
 // scripts/graph/build.mjs
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { walkSources } from './walk.mjs';
 import { extractorFor } from './extract.mjs';
 import { resolveModule, resolveEdges } from './resolve.mjs';
 import { openDb, initSchema, nodeId } from './db.mjs';
+
+// Phase 1 worker concurrency. Each extractor spawn is an ast-grep subprocess
+// (~5ms cold) -- with 6 rules per file the serial path dominates the 10k-file
+// build budget. Parallelism is bounded by CPU count to avoid fd / process
+// exhaustion on large monorepos. Override via SSPOWER_GRAPH_BUILD_CONCURRENCY.
+const BUILD_CONCURRENCY = Math.max(
+  2,
+  parseInt(process.env.SSPOWER_GRAPH_BUILD_CONCURRENCY ?? '', 10) || os.cpus().length,
+);
 
 function languageFor(filePath) {
   const ext = path.extname(filePath);
@@ -32,41 +42,59 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
   let readFailures = 0;
 
   // Phase 1: walk + extract per file (no DB writes -- pure in-memory).
-  let fileCount = 0;
-  for await (const filePath of walkSources(rootDir)) {
-    fileCount++;
-    let source;
-    try { source = await fs.readFile(filePath, 'utf8'); }
-    catch (e) {
-      log(`skip read ${filePath}: ${e.message}`);
-      readFailures++;
-      continue;
-    }
-    const language = languageFor(filePath);
-    let extracted;
-    try {
-      const ex = await extractorFor(language);
-      extracted = await ex.extractFile({ absPath: filePath, source, language });
-    }
-    catch (e) {
-      log(`skip extract ${filePath}: ${e.message}`);
-      extractFailures++;
-      continue;
-    }
+  // Bounded worker pool: each file is independent (extractors share no
+  // mutable state, IDs are content-hash deterministic), so concurrency
+  // is safe. Result order doesn't matter -- allNodes/perFile are unordered
+  // collections used for hash-based ID generation and Phase 2 resolution.
+  const filePaths = [];
+  for await (const filePath of walkSources(rootDir)) filePaths.push(filePath);
+  const totalFiles = filePaths.length;
+  let cursor = 0;
+  let processed = 0;
 
-    const idedNodes = extracted.nodes.map(n => ({
-      ...n,
-      id: nodeId(filePath, n.qualifiedName, n.spanSha8),
-      filePath,
-    }));
-    allNodes.push(...idedNodes);
-    perFile.push({
-      filePath, language, content: source, extracted,
-      idedNodes,
-      contentHash: sha8File(source),
-    });
-    if (fileCount % 100 === 0) log(`extracted ${fileCount} files`);
+  async function worker() {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= totalFiles) return;
+      const filePath = filePaths[idx];
+      let source;
+      try { source = await fs.readFile(filePath, 'utf8'); }
+      catch (e) {
+        log(`skip read ${filePath}: ${e.message}`);
+        readFailures++;
+        processed++;
+        continue;
+      }
+      const language = languageFor(filePath);
+      let extracted;
+      try {
+        const ex = await extractorFor(language);
+        extracted = await ex.extractFile({ absPath: filePath, source, language });
+      }
+      catch (e) {
+        log(`skip extract ${filePath}: ${e.message}`);
+        extractFailures++;
+        processed++;
+        continue;
+      }
+      const idedNodes = extracted.nodes.map(n => ({
+        ...n,
+        id: nodeId(filePath, n.qualifiedName, n.spanSha8),
+        filePath,
+      }));
+      allNodes.push(...idedNodes);
+      perFile.push({
+        filePath, language, content: source, extracted,
+        idedNodes,
+        contentHash: sha8File(source),
+      });
+      processed++;
+      if (processed % 100 === 0) log(`extracted ${processed}/${totalFiles} files`);
+    }
   }
+
+  await Promise.all(Array.from({ length: BUILD_CONCURRENCY }, () => worker()));
+  const fileCount = totalFiles;
   const totalFailures = extractFailures + readFailures;
   log(`extract done: ${fileCount} files, ${allNodes.length} nodes, ${extractFailures} extract-fail, ${readFailures} read-fail`);
 
