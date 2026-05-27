@@ -36,7 +36,12 @@ function nameFromCallText(text) {
   const macro = text.match(/^([A-Za-z_]\w*)!/);
   if (macro) return macro[1];
   const m = text.match(/^([A-Za-z_]\w*(?:(?:::|\.)[A-Za-z_]\w*)*)/);
-  return m?.[1] ?? null;
+  if (!m) return null;
+  // Resolver (resolve.mjs:174) splits calleeIdent on `.` to derive
+  // bareName / localName. Rust path syntax (`Type::method`) would
+  // collapse to a single token and drop the edge. Normalize `::` to
+  // `.` so qualified calls reach the resolver's member-call branch.
+  return m[1].replace(/::/g, '.');
 }
 
 function firstLine(text) {

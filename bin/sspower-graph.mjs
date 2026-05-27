@@ -89,7 +89,7 @@ function emit(opts, payload, pretty) {
   }
 }
 
-async function runBuildLocked(opts) {
+async function runBuildLocked(opts, { exitOnReturn = true } = {}) {
   const lockWrapper = path.join(PLUGIN_ROOT, 'scripts/graph-with-lock.py');
   const graphDir = graphDirFor(opts.cwd);
   fs.mkdirSync(graphDir, { recursive: true, mode: 0o700 });
@@ -103,7 +103,9 @@ async function runBuildLocked(opts) {
     env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
     stdio: 'inherit',
   });
-  process.exit(child.status ?? 1);
+  const status = child.status ?? 1;
+  if (exitOnReturn) process.exit(status);
+  return status;
 }
 
 async function runBuildUnlocked(opts) {
@@ -165,20 +167,27 @@ async function runRefreshUnlocked(opts) {
 }
 
 async function runSessionRefresh(opts) {
-  const { sessionRefresh } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/session-refresh.mjs'));
+  const sessionMod = await import(path.join(PLUGIN_ROOT, 'scripts/graph/session-refresh.mjs'));
   const graphDir = graphDirFor(opts.cwd);
   if (!fs.existsSync(path.join(graphDir, 'index.sqlite'))) {
     emit(opts, { action: 'noop', reason: 'no-index' }, r => `noop: ${r.reason}`);
     return;
   }
   const maxTimeMs = Math.max(1, (opts.maxTime ?? 5) * 1000);
-  const planner = await sessionRefresh({
+  const planner = await sessionMod.sessionRefresh({
     rootDir: opts.cwd, graphDir, maxTime: maxTimeMs,
     log: msg => process.stderr.write(`[session-refresh] ${msg}\n`),
   });
   emit(opts, planner, p => `action=${p.action} reason=${p.reason} dirty=${p.dirtyEmitted ?? 0}`);
-  if (planner.action === 'build')         await runBuildLocked(opts);
-  else if (planner.action === 'refresh')  await runRefreshLocked(opts);
+  if (planner.action === 'build') {
+    const status = await runBuildLocked(opts, { exitOnReturn: false });
+    if (status === 0 && planner.pendingFilesetHash) {
+      await sessionMod.writeVersionField(graphDir, 'git_filesethash', planner.pendingFilesetHash);
+    }
+    process.exit(status);
+  } else if (planner.action === 'refresh') {
+    await runRefreshLocked(opts);
+  }
 }
 
 async function runTrace(opts, fromName, toName) {

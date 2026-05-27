@@ -31,7 +31,7 @@ export async function gitFilesetHash(rootDir) {
   } catch { return null; }
 }
 
-async function readVersionField(graphDir, field) {
+export async function readVersionField(graphDir, field) {
   try {
     const raw = await fs.readFile(path.join(graphDir, 'version'), 'utf8');
     for (const line of raw.split('\n')) {
@@ -42,7 +42,7 @@ async function readVersionField(graphDir, field) {
   return null;
 }
 
-async function writeVersionField(graphDir, field, value) {
+export async function writeVersionField(graphDir, field, value) {
   const p = path.join(graphDir, 'version');
   let raw = '';
   try { raw = await fs.readFile(p, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -72,14 +72,16 @@ export async function sessionRefresh({ rootDir, graphDir, maxTime = 5000, log = 
   const dbPath = path.join(graphDir, 'index.sqlite');
   try { await fs.stat(dbPath); } catch { return { action: 'noop', reason: 'no-index' }; }
 
-  // Step 0: filesethash.
+  // Step 0: filesethash. Do NOT persist the new hash here -- if the
+  // subsequent build fails, the next session would see stored===cur and
+  // skip the rebuild trigger. Return the pending hash so the wrapper can
+  // persist after a verified-successful build.
   const cur = await gitFilesetHash(rootDir);
   if (cur !== null) {
     const stored = await readVersionField(graphDir, 'git_filesethash');
     if (stored !== cur) {
-      await writeVersionField(graphDir, 'git_filesethash', cur);
       log(`filesethash changed (${stored ?? 'unset'} -> ${cur}); build`);
-      return { action: 'build', reason: 'filesethash-changed', dirtyEmitted: 0 };
+      return { action: 'build', reason: 'filesethash-changed', dirtyEmitted: 0, pendingFilesetHash: cur };
     }
   }
 

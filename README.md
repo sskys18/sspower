@@ -67,20 +67,37 @@
 
 ## sspower-graph
 
-### CLI (P1)
+### CLI (P1 + P2)
 
 ```
 sspower-graph build [--cwd <dir>]
+sspower-graph refresh [--cwd <dir>]                       # P2
+sspower-graph session-refresh [--max-time <sec>]          # P2
 sspower-graph callers <name> [--limit N] [--disambiguate] [--json]
 sspower-graph callees <name> [--limit N] [--json]
+sspower-graph trace <from> <to> [--max-hops N] [--json]   # P2
+sspower-graph impact <file> [--json]                       # P2
+sspower-graph context <task> [--json]                      # P2
 sspower-graph node <name> [--json]
 sspower-graph status [--json]
 sspower-graph serve --mcp                # P0 stub MCP server
 ```
 
 `build` indexes the current working directory (or `--cwd`) into
-`<cwd>/.claude/graph/index.sqlite`. The current build is full-only;
-incremental refresh ships in P2.
+`<cwd>/.claude/graph/index.sqlite`. `refresh` (P2) does an incremental
+update driven by the JSONL `dirty` queue: a two-phase reverse-import
+closure transaction processes only files touched since the last build,
+with automatic fall-through to a full rebuild when >500 files are
+dirty. `session-refresh` plans the right action at SessionStart via
+git filesethash + rowid-stride sampling. Languages supported:
+TypeScript, JavaScript, Python, Go, Rust (all fixture-gated at
+P≥0.85, R≥0.70).
+
+The P2 query verbs round out the surface: `trace` runs a bidirectional
+BFS between two symbols, `impact` reports transitive callers of any
+node defined in a target file, and `context` composes an FTS5-driven
+top-N lookup with caller/callee neighborhoods (capped at 4KB for the
+P4 graph-orchestrator budget).
 
 `callers <name>` returns the call-sites that target `<name>`. If
 multiple symbols match by name, pass `--disambiguate` (or query with

@@ -28,4 +28,24 @@ const utilExtracted = await extractFile({ absPath: utilPath, source: utilSource,
 const utilNodes = new Set(utilExtracted.nodes.map(n => `${n.kind}:${n.qualifiedName}`));
 assert(utilNodes.has('function:calc'));
 
+// Qualified `Type::method(...)` calls must normalize the path separator to
+// `.` so resolver (resolve.mjs:174) can split calleeIdent into receiver/leaf.
+// Without this, real Rust call sites would never produce edges.
+{
+  const probeSrc = `fn entry() {
+    let x = MyStruct::new();
+    let y = nested::mod_name::helper();
+    let z = receiver.member();
+}\n`;
+  const probePath = '/tmp/sspower-extract-rs-probe.rs';
+  await fs.writeFile(probePath, probeSrc);
+  const probe = await extractFile({ absPath: probePath, source: probeSrc, language: 'rust' });
+  const callIdents = probe.callSites.map(c => c.calleeIdent);
+  assert(callIdents.includes('MyStruct.new'), `expected MyStruct.new, got ${callIdents}`);
+  assert(callIdents.includes('nested.mod_name.helper'), `expected nested.mod_name.helper, got ${callIdents}`);
+  assert(callIdents.includes('receiver.member'), `expected receiver.member, got ${callIdents}`);
+  assert(!callIdents.some(c => c.includes('::')), `no calleeIdent should contain ::, got ${callIdents}`);
+  await fs.unlink(probePath);
+}
+
 console.log('OK');

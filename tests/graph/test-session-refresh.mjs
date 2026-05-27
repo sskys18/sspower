@@ -32,6 +32,14 @@ await fs.writeFile(path.join(tmp, 'c.ts'), `export function baz() {}\n`);
 execFileSync('git', ['-C', tmp, 'add', '-A']);
 const r2 = await sessionRefresh({ rootDir: tmp, graphDir, maxTime: 5000, log: () => {} });
 assert.equal(r2.action, 'build', `expected build, got ${r2.action}/${r2.reason}`);
+assert.ok(r2.pendingFilesetHash, 'planner must surface pendingFilesetHash for wrapper to persist');
+
+// Simulate the wrapper persisting the hash after a verified-successful build
+// (the planner no longer writes optimistically -- a failed build would have
+// left a stale 'success' marker under the old code path).
+await build({ rootDir: tmp, graphDir, log: () => {} });
+await fs.writeFile(path.join(graphDir, 'version'),
+  `schema=1\nbuilt_at=${Math.floor(Date.now()/1000)}\ngit_filesethash=${r2.pendingFilesetHash}\n`);
 
 // (3) External edit -> sampling triggers refresh OR build.
 await fs.writeFile(path.join(tmp, 'a.ts'), `export function fooRenamed() {}\n`);
