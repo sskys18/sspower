@@ -15,6 +15,9 @@ const RULE_FILES = [
   'ts-method.yml',
   'ts-call.yml',
   'ts-import.yml',
+  'ts-express-route.yml',
+  'ts-express-router.yml',
+  'ts-express-mount.yml',
 ];
 // Concat all rule docs into one `---`-separated inline-rules payload at
 // module init. ast-grep tags each match with its rule `id`, so the call
@@ -23,13 +26,68 @@ const RULES_INLINE = RULE_FILES
   .map(f => fsSync.readFileSync(path.join(RULE_DIR, f), 'utf8').trim())
   .join('\n---\n');
 const RULE_ID = {
-  function: 'ts-function',
-  arrow:    'ts-arrow',
-  class:    'ts-class',
-  method:   'ts-method',
-  call:     'ts-call',
-  import:   'ts-import',
+  function:      'ts-function',
+  arrow:         'ts-arrow',
+  class:         'ts-class',
+  method:        'ts-method',
+  call:          'ts-call',
+  import:        'ts-import',
+  expressRoute:  'ts-express-route',
+  expressRouter: 'ts-express-router',
+  expressMount:  'ts-express-mount',
 };
+
+// Parse an Express route call's match text into { method, path, handlerName }.
+// match.text examples:
+//   "app.get('/health', handleHealth)"
+//   "r.post(\"/users\", createUser)"
+//   "app.delete('/items/:id', handleDelete)"
+//   "app.post('/items', (req, res) => { ... })"          -> handler=null
+//   "router.route('/x').get(handlerA, handlerB)"         -> path='/x'
+// Returns null when the match text doesn't fit (defensive — surfaces as
+// dedupe miss, not extractor crash).
+const ROUTE_METHODS = new Set(['get', 'post', 'put', 'delete', 'patch', 'all']);
+function parseExpressRoute(text) {
+  // Try chained `.route(path).METHOD(...)` first — outer call is METHOD,
+  // path is the arg to the inner `.route(...)`.
+  const chained = text.match(/\.route\(\s*(['"`])([^'"`]*)\1\s*\)\s*\.([a-z]+)\s*\(\s*([\s\S]*)\)\s*$/);
+  if (chained) {
+    const method = chained[3].toLowerCase();
+    if (!ROUTE_METHODS.has(method)) return null;
+    return {
+      method: method.toUpperCase(),
+      path: chained[2],
+      handlerName: firstIdentArg(chained[4]),
+    };
+  }
+  // Direct `<ident>.METHOD(path, handler...)` form.
+  const direct = text.match(/^([\s\S]*?)\.([a-z]+)\s*\(\s*(['"`])([^'"`]*)\3\s*(?:,\s*([\s\S]*))?\)\s*$/);
+  if (!direct) return null;
+  const method = direct[2].toLowerCase();
+  if (!ROUTE_METHODS.has(method)) return null;
+  return {
+    method: method.toUpperCase(),
+    path: direct[4],
+    handlerName: direct[5] ? firstIdentArg(direct[5]) : null,
+  };
+}
+
+// Pull the first argument identifier from a comma-separated handler list.
+// Returns null for inline arrows / function expressions / non-identifiers.
+function firstIdentArg(text) {
+  const trimmed = text.trim();
+  // First arg: split at top-level comma. Cheap approximation: first
+  // identifier-only token. Inline arrow `(req,res)=>...` will not match.
+  const m = trimmed.match(/^([A-Za-z_$][\w$]*)\s*(?:,|$)/);
+  return m ? m[1] : null;
+}
+
+// Parse a mount `app.use('/prefix', router)` match into { prefix, routerName }.
+function parseExpressMount(text) {
+  const m = text.match(/\.use\s*\(\s*(['"`])([^'"`]*)\1\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*$/);
+  if (!m) return null;
+  return { prefix: m[2], routerName: m[3] };
+}
 
 export function spanSha8(text) {
   return crypto.createHash('sha256').update(text).digest('hex').slice(0, 8);
@@ -82,7 +140,7 @@ async function scanPathFor({ absPath, source, language }) {
   };
 }
 
-export async function extractFile({ absPath, source, language = 'typescript' }) {
+export async function extractFile({ absPath, source, language = 'typescript', rootDir }) {
   const { scanPath, cleanup } = await scanPathFor({ absPath, source, language });
   let buckets;
   try {
@@ -96,6 +154,9 @@ export async function extractFile({ absPath, source, language = 'typescript' }) 
   const methods = buckets.get(RULE_ID.method)   ?? [];
   const calls   = buckets.get(RULE_ID.call)     ?? [];
   const imps    = buckets.get(RULE_ID.import)   ?? [];
+  const routesA = buckets.get(RULE_ID.expressRoute)  ?? [];
+  const routesB = buckets.get(RULE_ID.expressRouter) ?? [];
+  const mounts  = buckets.get(RULE_ID.expressMount)  ?? [];
 
   const nodes = [];
 
@@ -211,5 +272,63 @@ export async function extractFile({ absPath, source, language = 'typescript' }) 
     });
   }
 
-  return { nodes, imports, callSites };
+  // ---- Express routes ----------------------------------------------------
+  // ts-express-route and ts-express-router patterns overlap on the direct
+  // `<ident>.METHOD(path, ...)` form (one is `$APP.METHOD`, the other
+  // `$ROUTER.METHOD` -- both match any identifier receiver). Collect both
+  // buckets, dedupe by (file, start_line, end_line, METHOD, PATH_LITERAL)
+  // BEFORE emitting -- otherwise every Express call produces 2 route nodes.
+  // Last-write-wins on the tuple key (rule order is stable).
+  const routeSeen = new Map();
+  const routeHandlerRequests = [];
+  for (const m of [...routesA, ...routesB]) {
+    const parsed = parseExpressRoute(m.text);
+    if (!parsed) continue;
+    const dedupeKey = `${absPath}:${m.startLine}:${m.endLine}:${parsed.method}:${parsed.path}`;
+    if (routeSeen.has(dedupeKey)) continue;
+    const name = `${parsed.method} ${parsed.path}`;
+    const relPath = rootDir ? path.relative(rootDir, absPath) : absPath;
+    const qualifiedName = `${relPath}::${name}`;
+    const handlerLabel = parsed.handlerName ?? 'anonymous';
+    const signature = `${parsed.method} ${parsed.path} ${handlerLabel}`;
+    const node = {
+      kind: 'route', name, qualifiedName,
+      startLine: m.startLine, endLine: m.endLine,
+      byteStart: m.byteStart, byteEnd: m.byteEnd,
+      signature,
+      spanSha8: spanSha8(m.text),
+      language,
+    };
+    routeSeen.set(dedupeKey, node);
+    nodes.push(node);
+    // Named handler -> routes-kind edge request. Inline arrows leave the
+    // route node alone; the inline body is already captured in span_sha8.
+    if (parsed.handlerName) {
+      routeHandlerRequests.push({
+        routeQualifiedName: qualifiedName,
+        routeSpanSha8: node.spanSha8,
+        routeFile: absPath,
+        handlerName: parsed.handlerName,
+        line: m.startLine,
+      });
+    }
+  }
+
+  // Mount calls (`app.use('/prefix', router)`) are parsed for the cross-file
+  // expansion pass in build.mjs (P5+). P4 emits bare router routes
+  // (`GET /users`, not `GET /api/v1/users`); the mounts list is returned
+  // so a future expansion pass can join prefix + imported router routes
+  // without re-extracting. No node/edge emitted from mount alone in P4.
+  const routeMounts = [];
+  for (const m of mounts) {
+    const parsed = parseExpressMount(m.text);
+    if (!parsed) continue;
+    routeMounts.push({
+      prefix: parsed.prefix,
+      routerLocalName: parsed.routerName,
+      line: m.startLine,
+    });
+  }
+
+  return { nodes, imports, callSites, routeHandlerRequests, routeMounts };
 }
