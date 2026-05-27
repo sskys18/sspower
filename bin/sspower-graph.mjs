@@ -32,6 +32,11 @@ const PKG_VERSION = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'package.j
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 
+if (cmd === '--print-cwd') {
+  process.stdout.write(process.cwd());
+  process.exit(0);
+}
+
 function usage() {
   console.error(`sspower-graph — symbol graph CLI + MCP server
 

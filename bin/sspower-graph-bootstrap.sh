@@ -3,7 +3,6 @@
 set -euo pipefail
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-cd "$ROOT"
 
 # Node >=22.5 runtime check (engines.node is documented in package.json but
 # not enforced by package managers without engine-strict).
@@ -32,8 +31,9 @@ if [ ! -d "$ROOT/node_modules/@modelcontextprotocol" ]; then
     echo "  install: https://bun.sh — or pre-populate node_modules from another machine" >&2
     exit 127
   fi
-  bun install --frozen-lockfile --production --silent >/dev/null 2>&1 \
-    || bun install --frozen-lockfile --production >&2
+  ( cd "$ROOT" && \
+    ( bun install --frozen-lockfile --production --silent >/dev/null 2>&1 \
+      || bun install --frozen-lockfile --production >&2 ) )
 fi
 
 exec "$NODE_BIN" "$ROOT/bin/sspower-graph.mjs" "$@"
