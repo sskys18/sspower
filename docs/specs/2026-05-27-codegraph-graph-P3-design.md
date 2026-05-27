@@ -50,9 +50,11 @@ scope per locked decision D10 (memory snapshot 2026-05-26).
    graph tools from inside Explore"* verbatim (rule lifted from parent spec
    §6 risks row).
 3. Adoption gate: `sspower-graph metric --json` reports
-   `sessions_with_call / sessions_total ≥ 1.0` over the 50 most-recent
-   distinct sessions captured in
+   `sessions_with_call == eligible_sessions_total` (i.e. ratio 1.0) over
+   the 50 most-recent **eligible** sessions captured in
    `~/.claude/state/sspower/graph-mcp/sessions.json`.
+   `sessions_total` (all sessions including ineligible) is reported as a
+   diagnostic field only — not part of the gate.
 4. MCP CallToolRequest p95 latency ≤ 300ms on the fixture DB (perf check;
    not a hard gate — instrumented for tuning).
 
@@ -154,28 +156,49 @@ Code spawns the MCP server from its own parent env, and a hook subshell
 cannot mutate the parent. The `.mcp.json` `env:` block accepts only
 static values, not per-session vars.
 
-The MCP server reads the current session id from a **session-state
-file** written by `hooks/session-start`:
+The MCP server reads the current session id from a **per-project
+session-state file** written by `hooks/session-start`:
 
 ```
-~/.claude/state/sspower/current-session
+~/.claude/state/sspower/sessions/<project_hash>.json
 ```
 
-Format (single line, atomic write via tempfile + rename):
+where `project_hash = sha8(realpath(cwd))`. Per-project keying (not a
+single global file) prevents the misattribution race: two Claude Code
+sessions in two different projects each own their own state file and
+do not overwrite each other.
 
+File format (atomic write via tempfile + rename):
+
+```json
+{
+  "session_id": "01HXY…",
+  "cwd": "/Users/sskys/proj-foo",
+  "started_ts": "2026-05-27T14:18:02Z",
+  "hook_event_name": "SessionStart",
+  "source": "startup"
+}
 ```
-<session_id>\t<cwd>\t<started_ts>
-```
 
-`hooks/session-start` receives the session id from stdin JSON
-(`{"session_id":"...","cwd":"..."}`) — Claude Code's documented hook
-payload. The hook writes this file before returning. Permissions `0600`.
+`hooks/session-start` parses Claude Code's documented stdin JSON
+payload (common fields: `session_id`, `cwd`, `hook_event_name`,
+`transcript_path`; SessionStart adds `source`, `model`). The hook
+canonicalizes `cwd` with `realpath`, computes `project_hash`, and
+writes the state file before returning. Permissions `0600` on file,
+`0700` on `~/.claude/state/sspower/sessions/`.
 
-The MCP server reads this file at the start of each `CallToolRequest`
-(cheap: single `read` of <100 bytes). The file mtime → session bound is
-exact for the current session; if the file is missing or older than
-24 h, the server falls back to `sha8(pid + boottime + cwd)` and flags
-`degraded_session_id_count` in the metric.
+The MCP server resolves the session id at the start of each
+`CallToolRequest`:
+
+1. Compute `project_hash = sha8(realpath(process.cwd()))` (or the
+   tool's `cwd` argument if supplied).
+2. Read `~/.claude/state/sspower/sessions/<project_hash>.json`.
+3. Validate `record.cwd` equals the MCP cwd (canonicalized). If
+   mismatch, treat as missing and fall through to degraded.
+4. If file missing/stale (mtime > 24h) or cwd mismatch, fall back to
+   `sha8(pid + boottime + cwd)` and flag `degraded_session_id_count`
+   in the metric. The degraded id is stable within a single MCP
+   server process, so events still group correctly per-process.
 
 Date-based fallback is dropped: it had a non-trivial midnight boundary
 bug AND blurred the denominator (two distinct Claude sessions on the
@@ -191,11 +214,20 @@ same day in the same project would collapse into one).
 
 Each MCP server process gets its own jsonl. Even if multiple Claude Code
 clients share a session id (unusual but possible with `--continue`), the
-pid suffix guarantees no two writers contend on the same file. Append
-inside one process is serialized by Node's single-threaded event loop;
-each line is a single `fs.appendFile` call with the full record (under
-4KB, well below `PIPE_BUF` 512 atomic-write guarantee — no torn writes
-under POSIX `O_APPEND` semantics).
+pid suffix guarantees no two **processes** contend on the same file.
+Intra-process: async `fs.appendFile` calls **can** interleave under
+libuv when MCP requests are handled concurrently — Node's single-thread
+event loop does NOT serialize libuv worker writes, and `PIPE_BUF`
+atomicity is a pipe/FIFO guarantee, not a regular-file guarantee.
+
+**Mitigation**: metric writes use `fs.appendFileSync` (blocking write
+on the event-loop thread) inside the `recordEvent` helper. Each
+appendFileSync issues a single `write(2)` against an `O_APPEND` fd,
+which IS atomic on regular files for writes up to a single block on
+Linux/macOS (the kernel holds the inode lock for the duration of the
+write). Record size is hard-capped at 4KB by `recordEvent` to stay
+well inside that envelope. Trade-off: blocking write adds ~50µs to
+each MCP response; acceptable given query latency budgets are ms-scale.
 
 Record format:
 
@@ -222,19 +254,45 @@ pattern from the Codex registry (`scripts/codex-registry.mjs`).
 ### 4.3 SessionEnd reconciler
 
 New hook script: `hooks/graph-metric-reconcile.sh` (SessionEnd matcher).
-Receives `session_id` from stdin JSON payload (the same channel
-`hooks/session-start` uses).
+Receives full stdin JSON payload (Claude Code documented fields:
+`session_id`, `cwd`, `hook_event_name`, `transcript_path`, plus
+SessionEnd-specific `reason`). The hook **MUST** parse `.cwd` from the
+payload — the hook process cwd is plugin dir or `$HOME`, not project
+cwd (verified empirically in `hooks/wiki-archive.py:776-779`).
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 PAYLOAD="$(cat)"
 SID="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')"
-[ -z "$SID" ] && exit 0
+CWD="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty')"
+[ -z "$SID" ] || [ -z "$CWD" ] && exit 0
 node "$CLAUDE_PLUGIN_ROOT/scripts/graph/mcp-tools/metric.mjs" \
-  reconcile --session "$SID" --cwd "$PWD" || true
+  reconcile --session "$SID" --cwd "$CWD" || true
 exit 0
 ```
+
+**Hook registration** (REQUIRED — measurability gate depends on it):
+`hooks/hooks.json` gains a `SessionEnd` entry alongside the existing
+`wiki-archive.sh`:
+
+```json
+"SessionEnd": [
+  { "matcher": ".*",
+    "hooks": [
+      { "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/wiki-archive.sh" },
+      { "type": "command",
+        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/graph-metric-reconcile.sh" }
+    ]
+  }
+]
+```
+
+T1 deliverable includes the hooks.json edit + an integration test that
+asserts SessionEnd in a fixture project produces a row in
+`sessions.json` even when no MCP calls occurred (zero-call eligible
+session).
 
 **Always-write contract (resolves denominator gap)**: the reconciler
 appends a row to `sessions.json` whether or not `<session-id>.*.jsonl`
@@ -441,7 +499,9 @@ never invoke graph tools from inside Explore.
 | Unit | per-tool handler with fixture DB returns CLI-equivalent JSON | `tests/graph/test-mcp-tools-unit.mjs` (new) | green |
 | Integration | MCP smoke harness extended: listTools = 7 entries; callTool on each returns parseable payload | `tests/graph/test-mcp-stub.mjs` (extend existing) | green |
 | P2 regression | each P2 CLI verb (`status`, `callers`, `callees`, `trace`, `impact`, `context`, `node`, `build`, `refresh`, `session-refresh`) — assert exit code, stderr, argv parsing, and `--json` output byte-identical to a pre-P3 golden | `tests/graph/test-p2-cli-back-compat.mjs` (new); golden output captured from `bd782c3` against each fixture pack | byte-identical match required |
-| Metric concurrency | 50 parallel `CallToolRequest` calls in one session → reconciler produces 1 row with correct `tool_calls:50`; no jsonl corruption | `tests/graph/test-mcp-metric-concurrency.mjs` (new) | row count + tool_calls exact |
+| Session-state contract | SessionStart hook in fixture project writes `~/.claude/state/sspower/sessions/<project_hash>.json` with valid `session_id`+`cwd`; MCP server in same project reads it back and cwd-equality check passes; two parallel fixture projects each get own state file (no overwrite) | `tests/graph/test-session-state-contract.mjs` (new) | green; gate for T2 |
+| Zero-call eligible session | Fixture project with `.claude/graph/` index runs a complete Claude Code session with ZERO MCP calls; SessionEnd reconciler still produces `{eligible:true, tool_calls:0, zero_call_reason:"no_mcp_invocations"}` row | `tests/graph/test-mcp-metric-zerocall.mjs` (new) | row present with correct fields |
+| Metric concurrency | 50 parallel `CallToolRequest` calls in one session → reconciler produces 1 row with correct `tool_calls:50`; no jsonl corruption (uses `fs.appendFileSync` path) | `tests/graph/test-mcp-metric-concurrency.mjs` (new) | row count + tool_calls exact |
 | Metric | synthesized event jsonl → reconciler → aggregator gate output (incl. zero-call sessions, ineligible projects, degraded fallback) | `tests/graph/test-mcp-metric.mjs` (new) | gate logic correct on synthetic 50-session input |
 | Agent | manual: invoke each agent in a fixture project (graph index present); transcript shows ≥1 graph_* call before any Explore delegation | manual smoke (recorded in plan execution log) | each agent calls ≥1 graph tool |
 | Perf | per-tool p95 latency over 100 invocations on 10k-file fixture | `tests/graph/perf-mcp.mjs` (new, opt-in via `SSPOWER_GRAPH_PERF=1`) | p95 ≤ 300ms (advisory) |
@@ -463,7 +523,7 @@ without modification — the MCP layer doesn't touch the index schema.
 
 | Risk | Mitigation |
 |---|---|
-| `CLAUDE_SESSION_ID` env not propagated to MCP child process | Probe early in P3 implementation: if Claude Code session-start hook cannot export env to the MCP-spawned process, fall through to date-based session-id and flag `degraded_session_id_count`. Worst case: aggregation slightly lossy at midnight boundary but adoption signal intact. |
+| Per-project session-state file (§4.1) missing / stale / cwd mismatch / concurrent overwrite | T1 smoke test: real SessionStart hook in fixture project writes the state file with correct `session_id`+`cwd`; MCP server in the same project reads it back and the cwd-equality check passes. Concurrent test: two fixture projects in parallel each get their own per-project file (`<sha8(cwd)>.json`); neither overwrites the other. Stale (>24h) and cwd-mismatch paths fall through to `degraded` and increment `degraded_session_id_count` in metric output. |
 | MCP cold-start latency discourages adoption | `metric.mjs` records `duration_ms` per call. After 1 week of telemetry, if p95 > 300ms for any tool, profile and reduce — likely culprit is dynamic SDK import. Move imports to module top-level. |
 | Agent prose regresses agent quality | Two-week observation window before declaring adoption met. If any agent's review-quality score drops, roll back that agent's section and iterate. |
 | Spec §4 reads ≥1 call per session × 50 sessions ambiguously | Implementation locks the strict reading (every one of the most-recent 50 = ≥1 call). Documented in §4.4 of this spec. If user prefers looser reading (≥50% of last 50), parameterize via `--threshold 0.5`. |
@@ -476,10 +536,18 @@ without modification — the MCP layer doesn't touch the index schema.
 
 Estimate: 5 task-days.
 
-- T1: scaffolding refactor + 7 handlers + listTools wiring.
-- T2: metric.mjs (writer + reconcile + aggregator) + tests.
-- T3: 3 agent .md updates + manual agent smoke.
-- T4: integration + perf tests + perf gate verification.
+- T1: scaffolding refactor + 7 handlers + listTools wiring; **plus
+  session-state contract smoke (SessionStart→file→MCP-read→cwd-match)
+  in fixture project — gate before T2 starts**; `hooks/session-start`
+  edit to write the per-project state file; `hooks/hooks.json`
+  registration for new `SessionEnd` reconciler hook.
+- T2: metric.mjs (writer + reconcile + aggregator) +
+  `hooks/graph-metric-reconcile.sh` + zero-call session integration
+  test + concurrency test.
+- T3: 3 agent .md updates + manual agent smoke (each agent invokes
+  ≥1 graph tool in fixture project).
+- T4: P2 CLI back-compat regression tests + perf tests + perf gate
+  verification.
 - T5: plan-review + ship + tag + handoff.
 
 **Trigger** (any one fires the anti-goal — `codegraph install`
@@ -487,10 +555,14 @@ companion script instead):
 
 1. **Hard time gate**: 10 task-days elapsed from worktree creation
    without merged PR.
-2. **Session-id contract failure**: end of T2 (metric harness landed)
-   with `CLAUDE_SESSION_ID` propagation still unverified — i.e. the
-   `~/.claude/state/sspower/current-session` file is empty or absent
-   after a real Claude Code session-start hook fires in a test repo.
+2. **Session-state hook contract failure**: end of T1 (BEFORE metric
+   harness lands) with the per-project state file contract
+   (§4.1 P3-D4) unverified — i.e. a real SessionStart hook in a fixture
+   project fails to atomically write
+   `~/.claude/state/sspower/sessions/<project_hash>.json` with valid
+   `session_id`+`cwd`, OR the MCP server's cwd-equality check fails on
+   that file. Triggered EARLIER than T2 because the metric harness
+   design depends on this contract — find out fast.
 3. **Concurrency gate failure**: `test-mcp-metric-concurrency.mjs`
    cannot pass after one fix attempt — implies the metric design
    itself is wrong, not a tactical bug.
@@ -522,10 +594,13 @@ spec uses prefix `P3-D*` to avoid collision)
   tool call. Eligibility = project has `.claude/graph/` index. Looser
   thresholds are CLI flags, not the default.
 - **P3-D4**: Session id is read from
-  `~/.claude/state/sspower/current-session` (written by
-  `hooks/session-start` from its stdin payload). No env propagation
-  required. Fallback `sha8(pid+boottime+cwd)` only when the state file
-  is missing or stale (>24h); flagged as `degraded` in metric output.
+  `~/.claude/state/sspower/sessions/<project_hash>.json` (per-project
+  keyed by `sha8(realpath(cwd))`, written by `hooks/session-start`
+  from its stdin payload). The MCP server validates `record.cwd`
+  equals MCP cwd before trusting the id. No env propagation required.
+  Fallback `sha8(pid+boottime+cwd)` only when the state file is
+  missing/stale (>24h)/cwd-mismatch; flagged as `degraded` in metric
+  output.
 - **P3-D5**: Per-tool handlers live under
   `scripts/graph/mcp-tools/<tool>.mjs`, not inlined in
   `bin/sspower-graph.mjs`. The bin file orchestrates only. Shared db
