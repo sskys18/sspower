@@ -49,7 +49,7 @@
 | ✂️ **Command rewrite** | Three chained `PreToolUse:Bash` hooks rewrite shell commands for token savings. |
 | 🛡️ **Auto-review gate** | Codex reviews the branch diff at `git push` / PR and blocks on a non-`approve` verdict. |
 | 🚧 **Skill HARD-GATEs** | `writing-plans`, SDD, and branch-finish run Codex review at earlier checkpoints. |
-| 🕸️ **sspower-graph (P0 stub)** | Per-project symbol graph via MCP. P0 ships intent class + lock helpers + MCP stub. P1 adds the TS/JS extractor. Spec: `docs/specs/2026-05-26-codegraph-style-graph-design.md`. |
+| 🕸️ **sspower-graph (P3 shipped at 1.4.0)** | Per-project symbol graph via MCP: 7 query tools (`graph_status/callers/callees/trace/impact/node/context`) + adoption metric harness + reviewer-agent guidance. Spec: `docs/specs/2026-05-27-codegraph-graph-P3-design.md`. |
 
 <details>
 <summary><b>Full detail</b></summary>
@@ -61,7 +61,7 @@
 - **Command rewrite hooks** — three `PreToolUse:Bash` hooks chain in order: (1) `hooks/semble-rewrite.sh` opportunistically rewrites `ls -R [path]` and `grep -R <BARE_IDENT> [path]` to `semble_rs tree` / `semble_rs search --compact` (gitignore-aware; explicit `ask` permission; fail-open noop on unquoted globs/vars or missing binary). (2) `hooks/cmd-rewrite.sh` routes remaining shell commands through an external rewriter for token-saving substitutions — default [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`; needs binary (>= 0.23.0) + `jq` on PATH or no-ops. (3) `hooks/auto-review.sh` (see next bullet). Bypass semble layer with `SSPOWER_SEMBLE_REWRITE=0`.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
-- **sspower-graph (P0 stub)** — per-project symbol graph subsystem inspired by [codegraph (MIT)](https://github.com/colbymchenry/codegraph). P0 ships the foundation: `architecture` intent class in `hooks/_intent.sh`, Python lock helpers (`scripts/graph-append-dirty.py` + `graph-with-lock.py` reusing `sspower_mem.lock.acquire_lock`), MCP stdio server stub (`bin/sspower-graph.mjs` exposing `graph_status` via `@modelcontextprotocol/sdk`), bootstrap wrapper (`bin/sspower-graph-bootstrap.sh` — bun-managed lazy install, Node ≥22 gated), `.mcp.json` plugin-root registration, and a vitest fixture-suite harness under `__tests__/graph-fixtures/`. Hard deps: ast-grep ≥0.43, Node ≥22, bun (lockfile committed). P1 adds the TS/JS extractor; P2 multi-language + refresh; P3 full MCP toolset for sub-agents (code-reviewer / sanity-reviewer / security-reviewer); P4 hooks orchestration + auto-review enrichment; P5+ framework routes. Anti-goal circuit-breaker: if P3 effort > 2 weeks, ship `codegraph install` companion instead. Full spec at `docs/specs/2026-05-26-codegraph-style-graph-design.md` (5 codex review passes to approve-with-followups).
+- **sspower-graph (P3 shipped at 1.4.0)** — per-project symbol graph subsystem inspired by [codegraph (MIT)](https://github.com/colbymchenry/codegraph). P3 ships 7 MCP query tools (`graph_status/callers/callees/trace/impact/node/context`) over a shared pure-data query layer (`scripts/graph/queries.mjs`), per-project session-state lookup at `~/.claude/state/sspower/sessions/<sha8(realpath(cwd))>.json` with cwd-equality validation, adoption-metric harness (per-process JSONL spool → SessionEnd reconciler → `sspower-graph metric` aggregator with strict gate over 50 most-recent eligible sessions), bootstrap server-key collision preflight (exit 78 on foreign owner), and `## Graph tool guidance` sections appended to `code-reviewer.md` / `sanity-reviewer.md` / `security-reviewer.md` with the hard rule "call graph tools BEFORE delegating to Explore, never inside Explore." Earlier phases: P0 foundation (intent class + lock helpers + MCP stub), P1 TS/JS extractor, P2 multi-language + refresh + trace/impact/context CLI. Hard deps: ast-grep ≥0.43, Node ≥22.5 (node:sqlite stable), bun (lockfile committed). P4 next: hooks orchestration + auto-review enrichment. P5+ framework routes. Full spec at `docs/specs/2026-05-27-codegraph-graph-P3-design.md` (5 codex review passes to approve).
 
 </details>
 
@@ -80,7 +80,7 @@ sspower-graph impact <file> [--json]                       # P2
 sspower-graph context <task> [--json]                      # P2
 sspower-graph node <name> [--json]
 sspower-graph status [--json]
-sspower-graph serve --mcp                # P0 stub MCP server
+sspower-graph serve --mcp                # P3 MCP server (7 graph tools)
 ```
 
 `build` indexes the current working directory (or `--cwd`) into
@@ -100,10 +100,20 @@ top-N lookup with caller/callee neighborhoods (capped at 4KB for the
 P4 graph-orchestrator budget).
 
 If you already have an MCP server registered under the key
-`sspower-graph` from another plugin or your own config, set
-`SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2` (or any unique key) in the
-foreign config's command environment to disambiguate. The sspower
-bootstrap detects collisions at startup and exits 78 if found.
+`sspower-graph` from another plugin or your own config, the sspower
+bootstrap detects the collision at startup and exits 78 with a clear
+stderr message. To coexist:
+
+1. Edit `<plugin-root>/.mcp.json` and rename `mcpServers.sspower-graph`
+   to a unique key (e.g. `sspower-graph-v2`). This is the canonical
+   way to disambiguate.
+2. Export `SSPOWER_GRAPH_MCP_KEY=<your-new-key>` so the bootstrap
+   preflight looks for collisions against the renamed key instead of
+   the default `sspower-graph`.
+
+Setting `SSPOWER_GRAPH_MCP_KEY` alone does NOT rename the registered
+server — both steps are required for full coexistence. The env var
+only changes which key the preflight scans for.
 
 `callers <name>` returns the call-sites that target `<name>`. If
 multiple symbols match by name, pass `--disambiguate` (or query with
