@@ -100,7 +100,58 @@ function resolveModuleGo(importerAbs, moduleSpec) {
   if (files.length === 0) return null;
   return path.join(dirCandidate, files[0]);
 }
-function resolveModuleRs(_importerAbs, _moduleSpec) { return null; }
+function resolveModuleRs(importerAbs, moduleSpec) {
+  // Find Cargo.toml ancestor.
+  let dir = path.dirname(importerAbs);
+  let crateRoot = null;
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, 'Cargo.toml'))) { crateRoot = dir; break; }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!crateRoot) return null;
+
+  // Normalize moduleSpec into segments, resolving crate::/self::/super::.
+  let segments;
+  if (moduleSpec.startsWith('crate::')) {
+    segments = moduleSpec.slice('crate::'.length).split('::');
+    dir = path.join(crateRoot, 'src');
+  } else if (moduleSpec.startsWith('self::')) {
+    segments = moduleSpec.slice('self::'.length).split('::');
+    dir = path.dirname(importerAbs);
+  } else if (moduleSpec.startsWith('super::')) {
+    let rest = moduleSpec;
+    dir = path.dirname(importerAbs);
+    while (rest.startsWith('super::')) { dir = path.dirname(dir); rest = rest.slice('super::'.length); }
+    segments = rest.split('::');
+  } else {
+    // Rust 2018 `use util::x` from a crate file can target a local crate module.
+    segments = moduleSpec.split('::');
+    dir = path.join(crateRoot, 'src');
+  }
+
+  // Walk down segments; each may be a file <seg>.rs OR dir <seg>/mod.rs.
+  let cur = dir;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg) continue;
+    const asFile = path.join(cur, seg + '.rs');
+    const asMod  = path.join(cur, seg, 'mod.rs');
+    const last = i === segments.length - 1;
+    if (last) {
+      if (fs.existsSync(asFile) && fs.statSync(asFile).isFile()) return asFile;
+      if (fs.existsSync(asMod)  && fs.statSync(asMod).isFile())  return asMod;
+      return null;
+    }
+    if (fs.existsSync(path.join(cur, seg)) && fs.statSync(path.join(cur, seg)).isDirectory()) {
+      cur = path.join(cur, seg);
+    } else {
+      return null;
+    }
+  }
+  return null;
+}
 
 export function resolveEdges({ nodes, callSites }) {
   const byQualified = new Map();

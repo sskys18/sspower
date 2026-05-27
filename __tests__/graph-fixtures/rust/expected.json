@@ -1,0 +1,14 @@
+{
+  "language": "rust",
+  "nodes": [
+    { "name": "main", "qualifiedName": "main", "kind": "function", "file": "src/main.rs", "start_line": 5, "end_line": 8 },
+    { "name": "caller", "qualifiedName": "caller", "kind": "function", "file": "src/main.rs", "start_line": 10, "end_line": 12 },
+    { "name": "run", "qualifiedName": "Worker.run", "kind": "method", "file": "src/main.rs", "start_line": 17, "end_line": 19 },
+    { "name": "calc", "qualifiedName": "calc", "kind": "function", "file": "src/util.rs", "start_line": 1, "end_line": 3 }
+  ],
+  "edges": [
+    { "source": "main", "target": "caller", "kind": "calls", "confidence": 1 },
+    { "source": "caller", "target": "calc", "kind": "calls", "confidence": 2 },
+    { "source": "Worker.run", "target": "calc", "kind": "calls", "confidence": 2 }
+  ]
+}

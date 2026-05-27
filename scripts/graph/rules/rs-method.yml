@@ -1,0 +1,7 @@
+id: rs-method
+language: rust
+rule:
+  kind: function_item
+  inside:
+    kind: impl_item
+    stopBy: end

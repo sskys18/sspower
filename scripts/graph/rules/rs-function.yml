@@ -1,0 +1,4 @@
+id: rs-function
+language: rust
+rule:
+  kind: function_item

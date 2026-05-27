@@ -1,0 +1,4 @@
+id: rs-use
+language: rust
+rule:
+  kind: use_declaration
