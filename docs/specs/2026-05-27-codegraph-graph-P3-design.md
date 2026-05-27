@@ -76,9 +76,21 @@ SDK translates to `{isError:true, content:[{type:'text',text:<msg>}]}`.
 | `graph_node` | `node <name>` | `name:string` | `cwd?:string` | `runNode()` |
 | `graph_context` | `context <task>` | `task:string` | `cwd?:string` | `runContext()` |
 
-`cwd` defaults to `process.cwd()` of the server process (the workspace
-the MCP client invoked it from). `MAX_RESULTS=50` cap from §5 of parent
-spec is preserved per tool (limit clamped at 200 hard ceiling).
+`cwd` defaults to `process.cwd()` of the server process. **CRITICAL
+(P3-D8 below)**: the shipped `bin/sspower-graph-bootstrap.sh` currently
+does `cd "$ROOT"` before `exec node ...`, which makes `process.cwd()`
+the plugin root — NOT the project workspace. P3 must amend the
+bootstrap to PRESERVE the client/project cwd through to the MCP
+server. Concretely: remove the `cd "$ROOT"` line; run the lazy npm
+install with root-qualified args (`npm --prefix "$ROOT" install ...`)
+so the install lands in the right place without changing process cwd;
+`exec node "$ROOT/bin/sspower-graph.mjs" "$@"` from the original cwd.
+Without this fix, per-project session-state lookup (§4.1) collapses
+to a single global state file at the plugin root → re-introduces
+HIGH-2.
+
+`MAX_RESULTS=50` cap from §5 of parent spec is preserved per tool
+(limit clamped at 200 hard ceiling).
 
 ### inputSchema example (graph_callers)
 
@@ -221,13 +233,24 @@ event loop does NOT serialize libuv worker writes, and `PIPE_BUF`
 atomicity is a pipe/FIFO guarantee, not a regular-file guarantee.
 
 **Mitigation**: metric writes use `fs.appendFileSync` (blocking write
-on the event-loop thread) inside the `recordEvent` helper. Each
-appendFileSync issues a single `write(2)` against an `O_APPEND` fd,
-which IS atomic on regular files for writes up to a single block on
-Linux/macOS (the kernel holds the inode lock for the duration of the
-write). Record size is hard-capped at 4KB by `recordEvent` to stay
-well inside that envelope. Trade-off: blocking write adds ~50µs to
-each MCP response; acceptable given query latency budgets are ms-scale.
+on the event-loop thread) inside the `recordEvent` helper. The
+guarantee chain:
+
+1. Per-process spool jsonl (pid-suffixed file path) eliminates
+   cross-process write contention. No two processes ever touch the
+   same file.
+2. `appendFileSync` inside the single-threaded Node MCP server
+   serializes intra-process writes — by blocking the event loop, no
+   second `recordEvent` can interleave with an in-flight one. This
+   is the actual atomicity contract; do NOT rely on `write(2)` being
+   a single syscall (Node's `appendFileSync` ultimately delegates to
+   `writeFileSync` which may loop `writeSync` for non-string buffers).
+3. 4KB record cap is defensive — keeps individual records small
+   enough that any partial-write recovery (kernel-level crash mid-
+   write) drops at most one line, never corrupts neighboring lines.
+
+Trade-off: blocking sync write adds ~50µs to each MCP response;
+acceptable given query latency budgets are ms-scale.
 
 Record format:
 
@@ -273,21 +296,41 @@ exit 0
 ```
 
 **Hook registration** (REQUIRED — measurability gate depends on it):
-`hooks/hooks.json` gains a `SessionEnd` entry alongside the existing
-`wiki-archive.sh`:
+`hooks/hooks.json` already has a `SessionEnd` array with one entry
+(`wiki-archive.sh`, matcher `*`, quoted command, `async:true`). P3
+**appends** a second hook to the same array, preserving the existing
+entry verbatim and matching the file's prevailing format
+(matcher `*` — Claude Code's documented hook-match glob, NOT regex;
+double-quoted `${CLAUDE_PLUGIN_ROOT}` substitution; explicit `async`):
 
 ```json
 "SessionEnd": [
-  { "matcher": ".*",
+  {
+    "matcher": "*",
     "hooks": [
-      { "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/wiki-archive.sh" },
-      { "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/graph-metric-reconcile.sh" }
+      {
+        "type": "command",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/wiki-archive.sh\"",
+        "async": true
+      },
+      {
+        "type": "command",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/graph-metric-reconcile.sh\"",
+        "async": false,
+        "timeout": 5
+      }
     ]
   }
 ]
 ```
+
+`async:false` for the reconciler — the metric write must complete
+before the session ends, else jsonl files can be orphaned in
+`~/.claude/state/sspower/graph-mcp/` until the next reconcile fires.
+5s timeout because the work is bounded (parse <N spool files, merge,
+lock+write `sessions.json`); if it ever blows the budget, the hook
+exits non-zero and the next SessionEnd will pick up the orphan jsonl
+files (jsonl is append-only and time-stamped — replays are idempotent).
 
 T1 deliverable includes the hooks.json edit + an integration test that
 asserts SessionEnd in a fixture project produces a row in
@@ -499,7 +542,7 @@ never invoke graph tools from inside Explore.
 | Unit | per-tool handler with fixture DB returns CLI-equivalent JSON | `tests/graph/test-mcp-tools-unit.mjs` (new) | green |
 | Integration | MCP smoke harness extended: listTools = 7 entries; callTool on each returns parseable payload | `tests/graph/test-mcp-stub.mjs` (extend existing) | green |
 | P2 regression | each P2 CLI verb (`status`, `callers`, `callees`, `trace`, `impact`, `context`, `node`, `build`, `refresh`, `session-refresh`) — assert exit code, stderr, argv parsing, and `--json` output byte-identical to a pre-P3 golden | `tests/graph/test-p2-cli-back-compat.mjs` (new); golden output captured from `bd782c3` against each fixture pack | byte-identical match required |
-| Session-state contract | SessionStart hook in fixture project writes `~/.claude/state/sspower/sessions/<project_hash>.json` with valid `session_id`+`cwd`; MCP server in same project reads it back and cwd-equality check passes; two parallel fixture projects each get own state file (no overwrite) | `tests/graph/test-session-state-contract.mjs` (new) | green; gate for T2 |
+| Session-state contract | SessionStart hook in fixture project writes `~/.claude/state/sspower/sessions/<project_hash>.json` with valid `session_id`+`cwd`; MCP server **spawned via `bin/sspower-graph-bootstrap.sh` from the fixture project cwd** reads it back and cwd-equality check passes; two parallel fixture projects each get own state file (no overwrite). Exercises the P3-D8 bootstrap fix end-to-end. | `tests/graph/test-session-state-contract.mjs` (new) | green; gate for T2 |
 | Zero-call eligible session | Fixture project with `.claude/graph/` index runs a complete Claude Code session with ZERO MCP calls; SessionEnd reconciler still produces `{eligible:true, tool_calls:0, zero_call_reason:"no_mcp_invocations"}` row | `tests/graph/test-mcp-metric-zerocall.mjs` (new) | row present with correct fields |
 | Metric concurrency | 50 parallel `CallToolRequest` calls in one session → reconciler produces 1 row with correct `tool_calls:50`; no jsonl corruption (uses `fs.appendFileSync` path) | `tests/graph/test-mcp-metric-concurrency.mjs` (new) | row count + tool_calls exact |
 | Metric | synthesized event jsonl → reconciler → aggregator gate output (incl. zero-call sessions, ineligible projects, degraded fallback) | `tests/graph/test-mcp-metric.mjs` (new) | gate logic correct on synthetic 50-session input |
@@ -527,7 +570,7 @@ without modification — the MCP layer doesn't touch the index schema.
 | MCP cold-start latency discourages adoption | `metric.mjs` records `duration_ms` per call. After 1 week of telemetry, if p95 > 300ms for any tool, profile and reduce — likely culprit is dynamic SDK import. Move imports to module top-level. |
 | Agent prose regresses agent quality | Two-week observation window before declaring adoption met. If any agent's review-quality score drops, roll back that agent's section and iterate. |
 | Spec §4 reads ≥1 call per session × 50 sessions ambiguously | Implementation locks the strict reading (every one of the most-recent 50 = ≥1 call). Documented in §4.4 of this spec. If user prefers looser reading (≥50% of last 50), parameterize via `--threshold 0.5`. |
-| Metric harness sandbags MCP latency | `recordEvent` writes async, never blocks the MCP response. Failure logged to stderr, never thrown. Verified by injecting a write failure in tests. |
+| Metric harness sandbags MCP latency | `recordEvent` does a single blocking `appendFileSync` (per §4.2 atomicity contract) — measured at ~50µs on local APFS. Failure logged to stderr, never thrown back to the MCP request handler. Verified by injecting a write failure in tests. If profiling ever shows the sync write becomes a hot path (e.g. >5% of p95), switch to a buffered per-process write queue that flushes on idle; preserves atomicity ordering since one process owns the file. |
 | Tool name collision with future codegraph install | All 7 tools prefixed `graph_`; codegraph upstream uses `codegraph_*`. No collision today; document the convention. |
 | MCP server-key collision (`.mcp.json` `sspower-graph` key already used in a user's config) | Bootstrap script `bin/sspower-graph-bootstrap.sh` adds a preflight: if `~/.claude.json` or `<cwd>/.mcp.json` defines `mcpServers.sspower-graph` with a `command` that doesn't match `${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh`, log a clear stderr error and exit non-zero. Document the namespaced override path (`SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2`) in README. Coexistence with upstream `codegraph install`: documented as supported (distinct server keys + distinct tool prefixes). |
 | P2 CLI back-compat regression from §3 scaffolding refactor | The "P2 regression" test gate (§6) gates merge: any byte-diff in `--json` output, exit code, or argv parsing fails CI. Pre-P3 golden output captured from commit `bd782c3` against all 5 P2 fixture packs. |
@@ -616,6 +659,14 @@ spec uses prefix `P3-D*` to avoid collision)
   tools. Verified at P3-implementation time via smoke test; if
   semantics change, amendment adds explicit `tools: mcp__sspower-graph__*`
   wildcard.
+- **P3-D8**: `bin/sspower-graph-bootstrap.sh` MUST NOT `cd` away from
+  the caller's cwd. The current `cd "$ROOT"` line is removed in P3;
+  npm install uses `npm --prefix "$ROOT" install …`; `exec node
+  "$ROOT/bin/sspower-graph.mjs" "$@"` runs from the original cwd.
+  This is load-bearing for per-project session-state lookup (§4.1) —
+  without it the MCP server always sees the plugin root as cwd and
+  P3-D4 collapses to a global state file. Bootstrap diff is a required
+  T1 deliverable.
 
 ## 11. Open questions (to resolve in plan, not blocking spec)
 
