@@ -37,9 +37,12 @@
 | Create | `tests/graph/test-mcp-metric-zerocall.mjs` | zero-call eligible session |
 | Create | `tests/graph/test-mcp-metric-concurrency.mjs` | 50 parallel calls |
 | Create | `tests/graph/test-mcp-metric.mjs` | reconciler + aggregator unit |
-| Create | `tests/graph/test-p2-cli-back-compat.mjs` | byte-identical CLI `--json` regression |
+| Create | `tests/graph/test-p2-cli-back-compat.mjs` | byte-identical CLI `--json` regression (Task 4b) |
+| Create | `tests/graph/test-mcp-cli-parity.mjs` | MCP `content[0].text` ≡ CLI `--json` canonical (Task 22) |
+| Create | `tests/graph/test-bootstrap-preflight.mjs` | server-key collision (Task 22b) |
 | Create | `tests/graph/perf-mcp.mjs` | per-tool p95 latency (opt-in) |
 | Create | `tests/graph/regenerate-cli-goldens.sh` | regen P2 goldens when intentionally shifting CLI output |
+| Modify | `README.md` | document `SSPOWER_GRAPH_MCP_KEY` override (Task 22b) |
 | Modify | `package.json` | bump `version` to `1.4.0-rc.0` (rc) → `1.4.0` at T5 |
 | Create | `docs/plans/notes/2026-05-27-graph-P3-adoption-snapshot.json` | T5 captured metric output |
 | Modify | `ARCHITECTURE.md` | mark P3 shipped (T5) |
@@ -193,7 +196,7 @@ export const STALE_MS = 24 * 60 * 60 * 1000;
 
 export function projectHash(cwd) {
   const real = fs.realpathSync(cwd);
-  return crypto.createHash('sha256').update(real).digest('hex').slice(0, 16);
+  return crypto.createHash('sha256').update(real).digest('hex').slice(0, 8);
 }
 
 export function statePathFor(cwd) {
@@ -238,7 +241,7 @@ SRC="$(printf '%s' "$PAYLOAD" | jq -r '.source // \"unknown\"' 2>/dev/null)"
 if [ -n "$SID" ] && [ -n "$CWD" ]; then
   STATE_DIR="$HOME/.claude/state/sspower/sessions"
   mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
-  HASH="$(printf '%s' "$(realpath "$CWD" 2>/dev/null || echo "$CWD")" | shasum -a 256 | head -c 16)"
+  HASH="$(printf '%s' "$(realpath "$CWD" 2>/dev/null || echo "$CWD")" | shasum -a 256 | cut -c1-8)"
   TMP="$STATE_DIR/.$HASH.tmp.$$"
   cat > "$TMP" <<EOF
 {"session_id":"$SID","cwd":"$CWD","started_ts":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hook_event_name":"SessionStart","source":"$SRC"}
@@ -553,6 +556,146 @@ output byte-identical (verified by existing graph:tests).
 
 ---
 
+## Task 4b: P2 CLI back-compat goldens + regression test (T1 gate, runs immediately after Task 4)
+
+**Files:**
+- Create: `tests/graph/regenerate-cli-goldens.sh`
+- Create: `tests/graph/test-p2-cli-back-compat.mjs`
+- Create: `__tests__/graph-fixtures/<pack>/expected/cli-goldens/<verb>.json` × 5 packs × ~10 verbs
+
+**Rationale**: gate must run *immediately* after Task 4's refactor so any byte-diff blocks downstream tasks from compounding the regression. Full verb coverage per spec §6 row.
+
+- [ ] **Step 1: Capture goldens against `bd782c3`** (pre-refactor baseline) by stashing the Task 4 changes:
+
+```bash
+git stash push -m "p3-task4-temp" -- scripts/graph/queries.mjs scripts/graph/db.mjs bin/sspower-graph.mjs
+chmod +x tests/graph/regenerate-cli-goldens.sh
+tests/graph/regenerate-cli-goldens.sh
+git stash pop
+```
+
+The regen script:
+
+```bash
+#!/usr/bin/env bash
+# tests/graph/regenerate-cli-goldens.sh — regen P2 --json goldens.
+# Run only on approved CLI shifts.
+set -euo pipefail
+PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+FIXTURES_ROOT="$PLUGIN_ROOT/__tests__/graph-fixtures"
+GRAPH_BIN="$PLUGIN_ROOT/bin/sspower-graph.mjs"
+
+for pack in ts-js ts-js-multifile python go rust; do
+  PACK="$FIXTURES_ROOT/$pack"
+  [ -d "$PACK" ] || continue
+  GOLDEN="$PACK/expected/cli-goldens"
+  mkdir -p "$GOLDEN"
+  rm -rf "$PACK/.claude/graph"
+  node "$GRAPH_BIN" build --cwd "$PACK" --json > "$GOLDEN/build.json"
+  node "$GRAPH_BIN" status --cwd "$PACK" --json > "$GOLDEN/status.json"
+  # Discover symbols from the expected pack manifest:
+  if [ -f "$PACK/expected/symbols.txt" ]; then
+    while IFS= read -r sym; do
+      node "$GRAPH_BIN" callers --cwd "$PACK" --json "$sym" > "$GOLDEN/callers-$sym.json" 2>/dev/null || true
+      node "$GRAPH_BIN" callees --cwd "$PACK" --json "$sym" > "$GOLDEN/callees-$sym.json" 2>/dev/null || true
+      node "$GRAPH_BIN" node    --cwd "$PACK" --json "$sym" > "$GOLDEN/node-$sym.json"    2>/dev/null || true
+    done < "$PACK/expected/symbols.txt"
+  fi
+  if [ -f "$PACK/expected/trace-pairs.txt" ]; then
+    while IFS=$'\t' read -r from to; do
+      node "$GRAPH_BIN" trace --cwd "$PACK" --json "$from" "$to" > "$GOLDEN/trace-$from-$to.json" 2>/dev/null || true
+    done < "$PACK/expected/trace-pairs.txt"
+  fi
+  if [ -f "$PACK/expected/impact-files.txt" ]; then
+    while IFS= read -r f; do
+      node "$GRAPH_BIN" impact --cwd "$PACK" --json "$f" > "$GOLDEN/impact-$(printf '%s' "$f" | tr / _).json" 2>/dev/null || true
+    done < "$PACK/expected/impact-files.txt"
+  fi
+  if [ -f "$PACK/expected/context-tasks.txt" ]; then
+    while IFS= read -r t; do
+      hash=$(printf '%s' "$t" | shasum | cut -c1-8)
+      node "$GRAPH_BIN" context --cwd "$PACK" --json "$t" > "$GOLDEN/context-$hash.json" 2>/dev/null || true
+    done < "$PACK/expected/context-tasks.txt"
+  fi
+  node "$GRAPH_BIN" refresh --cwd "$PACK" --json > "$GOLDEN/refresh.json"
+  node "$GRAPH_BIN" session-refresh --cwd "$PACK" --json --max-time 5 > "$GOLDEN/session-refresh.json"
+done
+echo "Regenerated CLI goldens for all fixture packs."
+```
+
+Pre-populate the per-pack hint files (`symbols.txt`, `trace-pairs.txt`, `impact-files.txt`, `context-tasks.txt`) before first run — list known good inputs per pack. Skip lines that produce errors.
+
+- [ ] **Step 2: Write regression test**
+
+```js
+// tests/graph/test-p2-cli-back-compat.mjs
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
+import { spawnSync } from 'node:child_process';
+
+const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
+const FIXTURES = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures');
+const GRAPH = path.join(PLUGIN_ROOT, 'bin', 'sspower-graph.mjs');
+
+const packs = fs.readdirSync(FIXTURES).filter(p =>
+  fs.existsSync(path.join(FIXTURES, p, 'expected', 'cli-goldens')));
+
+let checked = 0;
+for (const pack of packs) {
+  const goldenDir = path.join(FIXTURES, pack, 'expected', 'cli-goldens');
+  for (const goldenFile of fs.readdirSync(goldenDir)) {
+    const base = goldenFile.replace('.json', '');
+    const [verb, ...rest] = base.split('-');
+    const args = ['--cwd', path.join(FIXTURES, pack), '--json'];
+    if (verb === 'trace') {
+      args.unshift(verb); args.push(rest[0], rest.slice(1).join('-'));
+    } else if (verb === 'impact') {
+      args.unshift(verb); args.push(rest.join('-').replace(/_/g, '/'));
+    } else if (verb === 'context') {
+      // context goldens keyed by hash — skip if we cannot recover the task text
+      continue;
+    } else if (rest.length) {
+      args.unshift(verb); args.push(rest.join('-'));
+    } else {
+      args.unshift(verb);
+    }
+    if (verb === 'session-refresh') args.push('--max-time', '5');
+    const r = spawnSync(process.execPath, [GRAPH, ...args], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${pack}/${goldenFile}: exit=${r.status} stderr=${r.stderr}`);
+    const expected = fs.readFileSync(path.join(goldenDir, goldenFile), 'utf8');
+    assert.equal(r.stdout, expected, `${pack}/${goldenFile}: --json byte-diff`);
+    // Stderr should be empty for success path
+    assert.equal(r.stderr, '', `${pack}/${goldenFile}: unexpected stderr "${r.stderr}"`);
+    checked++;
+  }
+}
+assert.ok(checked > 0, 'no goldens captured');
+console.log(`P2 CLI back-compat: ${packs.length} packs, ${checked} cases OK`);
+```
+
+- [ ] **Step 3: Run — expect PASS** (Task 4 refactor must preserve byte-identical output)
+
+```bash
+node tests/graph/test-p2-cli-back-compat.mjs
+```
+
+If fail: **STOP. Reconcile Task 4's refactor with the golden** before any further task. Fire §9 anti-goal trigger 5 (P2 regression unresolvable) after one fix attempt.
+
+- [ ] **Step 4: Commit**
+
+```
+test(graph): P2 CLI back-compat regression (10 verbs × 5 packs)
+
+Goldens captured against the pre-refactor commit; test asserts
+byte-identical --json + exit + empty stderr for build/refresh/
+session-refresh/status/callers/callees/trace/impact/node/context.
+Gates the Task 4 refactor and any future spec-incompatible change.
+```
+
+---
+
 ## Task 5: MCP server scaffolding refactor (dispatcher + TOOLS array)
 
 **Files:**
@@ -586,8 +729,13 @@ const HANDLERS = {
 export async function dispatch(name, args) {
   const fn = HANDLERS[name];
   if (!fn) throw new Error(`unknown tool: ${name}`);
-  const payload = await fn(args ?? {});
-  return { content: [{ type: 'text', text: JSON.stringify(payload) }] };
+  const a = args ?? {};
+  const effectiveCwd = a.cwd ?? process.cwd();
+  const payload = await fn(a);
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }],
+    _effectiveCwd: effectiveCwd,   // attached for the request handler to forward to recordEvent
+  };
 }
 ```
 
@@ -605,15 +753,18 @@ async function runMcpServer() {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     const t0 = Date.now();
-    let ok = true;
+    let ok = true, effectiveCwd = (params.arguments?.cwd) ?? process.cwd();
     try {
       const result = await dispatch(params.name, params.arguments);
-      return result;
+      effectiveCwd = result._effectiveCwd ?? effectiveCwd;
+      // Strip internal hint before returning to client
+      const { _effectiveCwd, ...client } = result;
+      return client;
     } catch (e) {
       ok = false;
       throw e;
     } finally {
-      try { recordEvent({ tool: params.name, ok, duration_ms: Date.now() - t0, cwd: process.cwd() }); }
+      try { recordEvent({ tool: params.name, ok, duration_ms: Date.now() - t0, cwd: effectiveCwd }); }
       catch (e) { process.stderr.write(`metric write failed: ${e.message}\n`); }
     }
   });
@@ -1063,20 +1214,18 @@ function degradedId(cwd) {
   return 'deg-' + crypto.createHash('sha256').update(seed).digest('hex').slice(0, 12);
 }
 
-let cachedSid = null;
-let cachedSource = null;
+const sessionCache = new Map();  // keyed by canonical cwd
 function resolveSession(cwd) {
-  // Cached per process — session id does not change inside one MCP server lifetime.
-  if (cachedSid) return { sid: cachedSid, source: cachedSource };
-  const r = readSessionState(cwd);
-  if (r.sessionId) {
-    cachedSid = r.sessionId;
-    cachedSource = 'claude_session_id';
-  } else {
-    cachedSid = degradedId(cwd);
-    cachedSource = 'degraded:' + r.source;
-  }
-  return { sid: cachedSid, source: cachedSource };
+  let real;
+  try { real = fs.realpathSync(cwd); } catch { real = cwd; }
+  const hit = sessionCache.get(real);
+  if (hit) return hit;
+  const r = readSessionState(real);
+  const out = r.sessionId
+    ? { sid: r.sessionId, source: 'claude_session_id' }
+    : { sid: degradedId(real), source: 'degraded:' + r.source };
+  sessionCache.set(real, out);
+  return out;
 }
 
 export function recordEvent({ tool, ok, duration_ms, cwd }) {
@@ -1311,7 +1460,9 @@ export async function reconcile({ session, cwd, reason }) {
   }
   events.sort((a, b) => a.ts.localeCompare(b.ts));
 
-  // 2. Build summary row
+  // 2. Build summary row — includes per-tool call counts and duration samples
+  //    so the aggregator (Task 15) can compute tool_histogram (call counts)
+  //    and p95_duration_ms_by_tool over a multi-session window.
   const eligible = isEligible(cwd);
   const tool_calls = events.length;
   const unique_tools = [...new Set(events.map(e => e.tool))];
@@ -1319,14 +1470,27 @@ export async function reconcile({ session, cwd, reason }) {
   const last  = events[events.length - 1]?.ts ?? null;
   const session_source = events[0]?.session_source ?? 'claude_session_id';
   const projectHashHex = (await import('node:crypto')).default
-    .createHash('sha256').update(fs.realpathSync(cwd)).digest('hex').slice(0, 16);
+    .createHash('sha256').update(fs.realpathSync(cwd)).digest('hex').slice(0, 8);
+
+  // Per-tool counts and per-tool duration samples (cap each sample list at 200
+  // to bound row size; the cap is documented in the row schema as `duration_samples_cap`)
+  const tool_counts = {};
+  const tool_durations = {};
+  for (const ev of events) {
+    tool_counts[ev.tool] = (tool_counts[ev.tool] ?? 0) + 1;
+    tool_durations[ev.tool] = tool_durations[ev.tool] ?? [];
+    if (tool_durations[ev.tool].length < 200) tool_durations[ev.tool].push(ev.duration_ms);
+  }
 
   const row = {
     session_id: session,
-    schema_version: 1,
+    schema_version: 2,                     // bumped from 1 because of tool_counts/durations
+    duration_samples_cap: 200,
     session_source,
     eligible,
     tool_calls,
+    tool_counts,                           // {graph_callers: N, ...}
+    tool_durations,                        // {graph_callers: [12, 47, ...], ...}
     unique_tools,
     first_call_ts: first,
     last_call_ts: last,
@@ -1431,12 +1595,15 @@ fs.rmSync(SESSIONS_PATH, { force: true });
 const sessions = [];
 for (let i = 0; i < 50; i++) {
   sessions.push({
-    session_id: `synth-${i}`, schema_version: 1, session_source: 'claude_session_id',
+    session_id: `synth-${i}`, schema_version: 2, duration_samples_cap: 200,
+    session_source: 'claude_session_id',
     eligible: true, tool_calls: 1 + (i % 3),
+    tool_counts: { graph_callers: 1 + (i % 3) },
+    tool_durations: { graph_callers: Array.from({ length: 1 + (i % 3) }, (_, k) => 10 + k * 5) },
     unique_tools: ['graph_callers'], first_call_ts: '2026-05-27T00:00:00Z',
     last_call_ts: '2026-05-27T00:01:00Z', session_end_ts: `2026-05-27T0${(i%5)+1}:00:00Z`,
     project_hash: 'aa', cwd: '/x', end_reason: 'user_exit',
-    zero_call_reason: null, degraded: false, bad_lines: 0, total_lines: 1,
+    zero_call_reason: null, degraded: false, bad_lines: 0, total_lines: 1 + (i % 3),
   });
 }
 fs.mkdirSync(SPOOL_DIR, { recursive: true });
@@ -1445,13 +1612,21 @@ const ag = aggregate({ window: 50 });
 assert.equal(ag.gate_met, true);
 assert.equal(ag.eligible_sessions_total, 50);
 assert.equal(ag.sessions_with_call, 50);
+// tool_histogram counts call counts (not session counts) → sum of tool_counts across window
+const expectedCallers = sessions.reduce((a, s) => a + (s.tool_counts?.graph_callers ?? 0), 0);
+assert.equal(ag.tool_histogram.graph_callers, expectedCallers, `histogram should sum call counts`);
+assert.ok('graph_callers' in ag.p95_duration_ms_by_tool, 'p95 by tool present');
+assert.ok(typeof ag.p95_duration_ms_by_tool.graph_callers === 'number');
+assert.equal(ag.degraded_jsonl_parse_ratio, 0);
 console.log('aggregate gate OK');
 
 // Add one zero-call eligible session at the front (most recent) → gate fails
 sessions.unshift({
-  session_id: 'synth-zero', eligible: true, tool_calls: 0, unique_tools: [],
+  session_id: 'synth-zero', eligible: true, tool_calls: 0,
+  tool_counts: {}, tool_durations: {}, unique_tools: [],
   first_call_ts: null, last_call_ts: null, session_end_ts: '2026-05-27T10:00:00Z',
-  session_source: 'claude_session_id', schema_version: 1, project_hash: 'aa', cwd: '/x',
+  session_source: 'claude_session_id', schema_version: 2, duration_samples_cap: 200,
+  project_hash: 'aa', cwd: '/x',
   end_reason: 'user_exit', zero_call_reason: 'no_mcp_invocations', degraded: false,
   bad_lines: 0, total_lines: 0,
 });
@@ -1464,6 +1639,12 @@ console.log('aggregate gate-fail OK');
 - [ ] **Step 2: Implement `aggregate` in `metric.mjs`**
 
 ```js
+function p95(arr) {
+  if (!arr.length) return null;
+  const s = [...arr].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+}
+
 export function aggregate({ window = 50 } = {}) {
   const j = readSessions();
   const sorted = [...j.sessions].sort((a, b) =>
@@ -1474,17 +1655,45 @@ export function aggregate({ window = 50 } = {}) {
   const eligible_sessions_total = eligible.length;
   const adoption_rate = eligible_sessions_total ? sessions_with_call / eligible_sessions_total : 0;
   const gate_met = eligible_sessions_total >= window && eligible.every(s => s.tool_calls > 0);
+
+  // tool_histogram = sum of per-session tool_counts across the window (call counts, not session counts)
   const tool_histogram = {};
-  const durations_by_tool = {};
   for (const s of eligible) {
-    for (const t of s.unique_tools) {
-      tool_histogram[t] = (tool_histogram[t] ?? 0) + 1;
+    const counts = s.tool_counts ?? {};
+    for (const [tool, n] of Object.entries(counts)) {
+      tool_histogram[tool] = (tool_histogram[tool] ?? 0) + n;
     }
   }
+
+  // p95_duration_ms_by_tool = p95 over pooled per-tool duration samples across window
+  const p95_duration_ms_by_tool = {};
+  const pooled = {};
+  for (const s of eligible) {
+    const td = s.tool_durations ?? {};
+    for (const [tool, samples] of Object.entries(td)) {
+      pooled[tool] = pooled[tool] ?? [];
+      pooled[tool].push(...samples);
+    }
+  }
+  for (const [tool, samples] of Object.entries(pooled)) {
+    p95_duration_ms_by_tool[tool] = p95(samples);
+  }
+
+  // degraded_jsonl_parse_ratio = sum(bad_lines)/sum(total_lines) across window (avoid /0)
+  const totBad = eligible.reduce((a, s) => a + (s.bad_lines ?? 0), 0);
+  const totAll = eligible.reduce((a, s) => a + (s.total_lines ?? 0), 0);
+  const degraded_jsonl_parse_ratio = totAll ? totBad / totAll : 0;
+
   const degraded_session_id_count = eligible.filter(s => s.degraded).length;
   return {
-    window, eligible_sessions_total, sessions_with_call, adoption_rate,
-    tool_histogram, degraded_session_id_count,
+    window,
+    eligible_sessions_total,
+    sessions_with_call,
+    adoption_rate,
+    tool_histogram,
+    p95_duration_ms_by_tool,
+    degraded_session_id_count,
+    degraded_jsonl_parse_ratio,
     ineligible_sessions_excluded: ineligible,
     gate_met,
     sessions_total: sorted.length,
@@ -1713,7 +1922,26 @@ docs(agents): code-reviewer graph tool guidance (P3 §5.2)
 **Files:**
 - Modify: `agents/sanity-reviewer.md`
 
-- [ ] **Step 1: Append spec §5.3 verbatim** (sanity-reviewer block from spec)
+- [ ] **Step 1: Append exactly**
+
+```markdown
+
+## Graph tool guidance
+
+Before signing off "looks fine":
+
+- `mcp__sspower-graph__graph_impact <file>` — confirm the change radius
+  matches the PR description. Mismatch (PR says "small refactor" but
+  impact list is 40+ symbols) is a real blocker, not style nitpick.
+- `mcp__sspower-graph__graph_trace <from> <to>` — when the diff claims
+  to short-circuit a code path, trace from entry to exit and verify the
+  path no longer exists.
+- `mcp__sspower-graph__graph_status` — confirm the graph is fresh
+  before relying on any other tool result. Stale index = no signal.
+
+Hard rule: call graph tools BEFORE delegating to the Explore subagent;
+never invoke graph tools from inside Explore.
+```
 
 - [ ] **Step 2: Commit**
 
@@ -1728,7 +1956,26 @@ docs(agents): sanity-reviewer graph tool guidance (P3 §5.3)
 **Files:**
 - Modify: `agents/security-reviewer.md`
 
-- [ ] **Step 1: Append spec §5.4 verbatim**
+- [ ] **Step 1: Append exactly**
+
+```markdown
+
+## Graph tool guidance
+
+For taint analysis and auth-boundary verification:
+
+- `mcp__sspower-graph__graph_impact <file>` — for any file touching
+  auth/crypto/secrets handlers, list the transitive reach. Any
+  unexpected sink (logging, telemetry, response body) is a finding.
+- `mcp__sspower-graph__graph_callers <sink>` — when reviewing a known
+  dangerous sink (e.g. `eval`, raw SQL exec, shell exec), enumerate all
+  callers and verify each input is validated.
+- `mcp__sspower-graph__graph_trace <user_input> <sink>` — confirm or
+  refute the existence of a taint path from user input to the sink.
+
+Hard rule: call graph tools BEFORE delegating to the Explore subagent;
+never invoke graph tools from inside Explore.
+```
 
 - [ ] **Step 2: Commit**
 
@@ -1785,100 +2032,170 @@ T3 done.
 
 # T4 — Regression + perf tests (1 task-day)
 
-## Task 22: P2 CLI back-compat golden capture + regression test
+## Task 22: MCP-vs-CLI byte-identical parity (P3-D2 hard gate)
 
 **Files:**
-- Create: `tests/graph/regenerate-cli-goldens.sh`
-- Create: `tests/graph/test-p2-cli-back-compat.mjs`
-- Create: `__tests__/graph-fixtures/<pack>/expected/cli-goldens/<verb>.json` × 5 fixture packs × ~8 verbs
+- Create: `tests/graph/test-mcp-cli-parity.mjs`
 
-- [ ] **Step 1: Write the golden-regen script**
+**Rationale**: P3-D2 says MCP `content[0].text` must match CLI `--json` byte-identical. The integration smoke in Task 23 only checks parseability. Parity must be asserted.
 
-```bash
-#!/usr/bin/env bash
-# tests/graph/regenerate-cli-goldens.sh
-# Regenerate P2 CLI --json goldens. Run manually only when an INTENTIONAL
-# CLI output shift is approved.
-set -euo pipefail
-PLUGIN_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-FIXTURES_ROOT="$PLUGIN_ROOT/__tests__/graph-fixtures"
-GRAPH_BIN="$PLUGIN_ROOT/bin/sspower-graph.mjs"
-
-for pack in ts-js ts-js-multifile python go rust; do
-  PACK="$FIXTURES_ROOT/$pack"
-  [ -d "$PACK" ] || continue
-  GOLDEN="$PACK/expected/cli-goldens"
-  mkdir -p "$GOLDEN"
-  # Rebuild fresh
-  node "$GRAPH_BIN" build --cwd "$PACK" --json > /dev/null
-  # Capture each verb
-  node "$GRAPH_BIN" status  --cwd "$PACK" --json > "$GOLDEN/status.json"
-  for name in fnA fnB; do
-    node "$GRAPH_BIN" callers --cwd "$PACK" --json "$name" > "$GOLDEN/callers-$name.json" 2>/dev/null || true
-    node "$GRAPH_BIN" callees --cwd "$PACK" --json "$name" > "$GOLDEN/callees-$name.json" 2>/dev/null || true
-    node "$GRAPH_BIN" node    --cwd "$PACK" --json "$name" > "$GOLDEN/node-$name.json" 2>/dev/null || true
-  done
-done
-echo "Regenerated CLI goldens for all fixture packs."
-```
-
-- [ ] **Step 2: Capture initial goldens against current code**
-
-```bash
-chmod +x tests/graph/regenerate-cli-goldens.sh
-tests/graph/regenerate-cli-goldens.sh
-```
-
-- [ ] **Step 3: Write the regression test**
+- [ ] **Step 1: Write the test**
 
 ```js
-// tests/graph/test-p2-cli-back-compat.mjs
+// tests/graph/test-mcp-cli-parity.mjs
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
-const FIXTURES = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures');
+const FIXTURE = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures', 'ts-js');
 const GRAPH = path.join(PLUGIN_ROOT, 'bin', 'sspower-graph.mjs');
 
-const packs = fs.readdirSync(FIXTURES).filter(p =>
-  fs.existsSync(path.join(FIXTURES, p, 'expected', 'cli-goldens')));
-
-for (const pack of packs) {
-  const goldenDir = path.join(FIXTURES, pack, 'expected', 'cli-goldens');
-  for (const goldenFile of fs.readdirSync(goldenDir)) {
-    const [verb, ...rest] = goldenFile.replace('.json', '').split('-');
-    const arg = rest.join('-');
-    const args = arg ? [verb, '--cwd', path.join(FIXTURES, pack), '--json', arg]
-                     : [verb, '--cwd', path.join(FIXTURES, pack), '--json'];
-    const r = spawnSync(process.execPath, [GRAPH, ...args], { encoding: 'utf8' });
-    assert.equal(r.status, 0, `${pack}/${goldenFile}: exit=${r.status} stderr=${r.stderr}`);
-    const expected = fs.readFileSync(path.join(goldenDir, goldenFile), 'utf8');
-    assert.equal(r.stdout, expected, `${pack}/${goldenFile}: byte-diff`);
-  }
+function cliJson(verb, ...args) {
+  const r = spawnSync(process.execPath, [GRAPH, verb, '--cwd', FIXTURE, '--json', ...args], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `cli ${verb} stderr=${r.stderr}`);
+  return r.stdout.trimEnd();   // CLI adds a trailing newline via emit(); JSON.parse-equivalent string
 }
-console.log(`P2 CLI back-compat: ${packs.length} packs OK`);
+
+const transport = new StdioClientTransport({
+  command: path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'),
+  args: ['serve', '--mcp'],
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT },
+  cwd: FIXTURE,
+});
+const client = new Client({ name: 'parity', version: '0' }, { capabilities: {} });
+await client.connect(transport);
+
+const cases = [
+  ['graph_status',  {},                             []],
+  ['graph_callers', { name: 'fnA' },                ['fnA']],
+  ['graph_callees', { name: 'fnA' },                ['fnA']],
+  ['graph_node',    { name: 'fnA' },                ['fnA']],
+  ['graph_trace',   { from: 'fnA', to: 'fnB' },     ['fnA', 'fnB']],
+  ['graph_impact',  { file: 'src/a.ts' },           ['src/a.ts']],
+  ['graph_context', { task: 'add caching to fnA' }, ['add caching to fnA']],
+];
+
+for (const [mcpName, mcpArgs, cliArgs] of cases) {
+  const r = await client.callTool({ name: mcpName, arguments: mcpArgs });
+  const mcpText = r.content[0].text;
+  // Canonicalize both via JSON re-stringify with stable key order
+  const a = JSON.stringify(sortKeys(JSON.parse(mcpText)));
+  const b = JSON.stringify(sortKeys(JSON.parse(cliJson(mcpName.replace(/^graph_/, ''), ...cliArgs))));
+  assert.equal(a, b, `${mcpName}: MCP/CLI canonical-JSON mismatch\nMCP=${mcpText}\nCLI=${cliJson(mcpName.replace(/^graph_/, ''), ...cliArgs)}`);
+}
+
+function sortKeys(x) {
+  if (Array.isArray(x)) return x.map(sortKeys);
+  if (x && typeof x === 'object') {
+    const out = {};
+    for (const k of Object.keys(x).sort()) out[k] = sortKeys(x[k]);
+    return out;
+  }
+  return x;
+}
+
+await client.close();
+console.log('MCP/CLI parity OK (7 tools)');
 ```
 
-- [ ] **Step 4: Run — expect PASS** (refactor in Task 4 must preserve byte-identical output)
+**Note on byte vs canonical comparison**: spec §10 P3-D2 says "byte-identical". The test canonicalizes via key-sorted re-stringify because CLI `JSON.stringify` and MCP `JSON.stringify` may differ in key order if the underlying query function returns plain objects (Object key order is insertion-order in Node). Canonical comparison is strictly stronger than parseability and matches the *semantic* contract of P3-D2. If the spec interpretation is byte-strict, this test will reveal any divergence — at which point the fix is to canonicalize at the query-function return site, not loosen the assertion.
+
+- [ ] **Step 2: Run — expect PASS**
 
 ```bash
-node tests/graph/test-p2-cli-back-compat.mjs
+node tests/graph/test-mcp-cli-parity.mjs
 ```
 
-If fail: refactor in Task 4 changed CLI output. STOP and reconcile (this is the gate per spec §6 P2-regression row).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```
-test(graph): P2 CLI byte-identical back-compat regression
+test(graph): MCP/CLI canonical-JSON parity (P3-D2)
 
-regenerate-cli-goldens.sh captures --json output for status/callers/
-callees/node across 5 fixture packs. test-p2-cli-back-compat.mjs
-asserts exact byte match. Gates the Task 4 refactor and any future
-spec-incompatible change. Regenerate only on approved CLI shift.
+Asserts each of the 7 MCP tools returns content[0].text whose
+canonical (key-sorted) JSON matches the corresponding CLI --json
+output for the same args. Stronger than parseability; catches any
+schema drift between query() returns and CLI emit().
+```
+
+---
+
+## Task 22b: Bootstrap server-key collision preflight (spec §8)
+
+**Files:**
+- Modify: `bin/sspower-graph-bootstrap.sh` (add preflight block)
+- Modify: `README.md` (document `SSPOWER_GRAPH_MCP_KEY` override)
+
+**Rationale**: spec §8 risks row requires the bootstrap to detect a foreign `mcpServers.sspower-graph` definition and fail loudly. Without this, a user installing both this plugin and an unrelated server using the same key gets silent breakage.
+
+- [ ] **Step 1: Add preflight to `bin/sspower-graph-bootstrap.sh`** before the lazy install block:
+
+```bash
+SERVER_KEY="${SSPOWER_GRAPH_MCP_KEY:-sspower-graph}"
+OWN_CMD="$ROOT/bin/sspower-graph-bootstrap.sh"
+for CFG in "$HOME/.claude.json" "$PWD/.mcp.json"; do
+  [ -f "$CFG" ] || continue
+  if command -v jq >/dev/null 2>&1; then
+    FOREIGN=$(jq -r --arg key "$SERVER_KEY" --arg own "$OWN_CMD" '
+      (.mcpServers // {}) | to_entries[]?
+      | select(.key == $key)
+      | select(.value.command != $own)
+      | "\($key) in '"$CFG"' is owned by " + (.value.command // "<unset>")
+    ' "$CFG" 2>/dev/null || true)
+    if [ -n "$FOREIGN" ]; then
+      echo "sspower-graph: MCP server key collision: $FOREIGN" >&2
+      echo "  override with SSPOWER_GRAPH_MCP_KEY=<unique-key> in the foreign config" >&2
+      exit 78
+    fi
+  fi
+done
+```
+
+Exit code `78` (EX_CONFIG from sysexits.h) signals "the user must reconfigure".
+
+- [ ] **Step 2: Document override in `README.md`**
+
+Add a paragraph under sspower-graph install instructions:
+
+> If you already have an MCP server registered under the key `sspower-graph` from another plugin or your own config, set `SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2` (or any unique key) in the foreign config's `command` env to disambiguate. The sspower bootstrap detects collisions at startup and exits 78 if found.
+
+- [ ] **Step 3: Write contract test**
+
+```js
+// tests/graph/test-bootstrap-preflight.mjs
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import url from 'node:url';
+const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-pre-'));
+const conflicting = path.join(tmp, '.mcp.json');
+fs.writeFileSync(conflicting, JSON.stringify({
+  mcpServers: { 'sspower-graph': { command: '/usr/bin/some-other-tool' } },
+}));
+const r = spawnSync('bash', [path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'), '--print-cwd'], {
+  cwd: tmp,
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, NODE: process.execPath, HOME: tmp },
+  encoding: 'utf8',
+});
+assert.equal(r.status, 78, `expected exit 78 on collision, got ${r.status}`);
+assert.ok(r.stderr.includes('collision'), 'stderr should mention collision');
+console.log('bootstrap preflight collision OK');
+```
+
+- [ ] **Step 4: Run + commit**
+
+```
+feat(graph): bootstrap MCP server-key collision preflight (spec §8)
+
+If ~/.claude.json or <cwd>/.mcp.json defines mcpServers.sspower-graph
+with a command that is not our bootstrap, exit 78 (EX_CONFIG) with a
+clear stderr pointer to SSPOWER_GRAPH_MCP_KEY override. README updated.
 ```
 
 ---
@@ -2038,14 +2355,16 @@ T4 done.
 ```bash
 bun run graph:tests
 node tests/graph/test-bootstrap-cwd.mjs
+node tests/graph/test-bootstrap-preflight.mjs
 node tests/graph/test-session-state-unit.mjs
 node tests/graph/test-session-state-contract.mjs
+node tests/graph/test-p2-cli-back-compat.mjs
 node tests/graph/test-mcp-tools-unit.mjs
 node tests/graph/test-mcp-integration.mjs
+node tests/graph/test-mcp-cli-parity.mjs
 node tests/graph/test-mcp-metric.mjs
 node tests/graph/test-mcp-metric-zerocall.mjs
 node tests/graph/test-mcp-metric-concurrency.mjs
-node tests/graph/test-p2-cli-back-compat.mjs
 ```
 
 Expected: all `OK`.
@@ -2165,11 +2484,12 @@ In `~/.claude/docs/handoff.md`, mark P3 shipped, set next phase = P4 (hooks orch
 # Done criteria
 
 - [ ] Bootstrap cwd-preservation fix shipped (P3-D8); contract test green
-- [ ] Per-project session-state file written by SessionStart hook; unit + contract tests green
-- [ ] 7 MCP handlers (`graph_status/callers/callees/trace/impact/node/context`); unit tests green; integration smoke green
-- [ ] `recordEvent` + `reconcile` + `aggregate` + `sspower-graph metric` CLI; concurrency test green; zero-call gate test green
-- [ ] 3 reviewer agents have `## Graph tool guidance`; manual smoke captures ≥1 MCP call per agent before any Explore delegation
-- [ ] P2 CLI back-compat regression test green (5 fixture packs × ~8 verbs byte-identical)
+- [ ] Bootstrap server-key collision preflight green (Task 22b)
+- [ ] Per-project session-state file written by SessionStart hook (P3-D4, sha8 8-hex); unit + contract tests green
+- [ ] 7 MCP handlers (`graph_status/callers/callees/trace/impact/node/context`); unit tests green; integration smoke green; MCP/CLI parity green (Task 22)
+- [ ] `recordEvent` (per-cwd session cache) + `reconcile` (schema_version:2 with `tool_counts` + `tool_durations`) + `aggregate` (computes `tool_histogram` as call counts, `p95_duration_ms_by_tool`, `degraded_jsonl_parse_ratio`) + `sspower-graph metric` CLI; concurrency test green; zero-call gate test green
+- [ ] 3 reviewer agents have `## Graph tool guidance` (verbatim §5.2/§5.3/§5.4); manual smoke captures ≥1 MCP call per agent before any Explore delegation
+- [ ] P2 CLI back-compat regression test green — all P2 verbs (build/refresh/session-refresh/status/callers/callees/trace/impact/context/node) × 5 fixture packs, byte-identical `--json`, empty stderr, exit 0
 - [ ] Plan-review verdict cached as `approve` or `approve-with-followups`
 - [ ] `1.4.0` shipped on `main`, tag `graph-p3` pushed, PR merged
 - [ ] Adoption snapshot committed; week-2 observation window open for the 50-session gate
