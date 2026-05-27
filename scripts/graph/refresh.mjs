@@ -182,6 +182,47 @@ export async function refresh({ rootDir, graphDir, log = () => {} }) {
     for (const e of edges) {
       insEdge.run(e.source, e.target, e.kind, e.line, e.confidence);
     }
+    // P4 Express route-handler edges (mirror build.mjs). Same resolution
+    // ladder: import → same-file top-level → cross-graph fallback.
+    const nodesByFileAndQname = new Map();
+    const nodesByName = new Map();
+    const pushM = (m, k, v) => { const a = m.get(k); if (a) a.push(v); else m.set(k, [v]); };
+    for (const n of allNodes) {
+      pushM(nodesByFileAndQname, `${n.filePath}::${n.qualifiedName}`, n);
+      pushM(nodesByName, n.name, n);
+    }
+    for (const f of perFile) {
+      const requests = f.extracted.routeHandlerRequests ?? [];
+      const importMap = importedNamesByFile.get(f.filePath) ?? {};
+      for (const req of requests) {
+        const routeId = nodeId(req.routeFile, req.routeQualifiedName, req.routeSpanSha8);
+        const entry = importMap[req.handlerName];
+        let placed = false;
+        if (entry) {
+          const lookupName = (entry.imported === '*' || entry.imported === 'default')
+            ? req.handlerName : entry.imported;
+          const imported = nodesByFileAndQname.get(`${entry.path}::${lookupName}`) ?? [];
+          if (imported.length > 0) {
+            for (const t of imported) insEdge.run(routeId, t.id, 'routes', req.line, 2);
+            placed = true;
+          }
+        }
+        if (!placed) {
+          const intra = nodesByFileAndQname.get(`${req.routeFile}::${req.handlerName}`) ?? [];
+          if (intra.length > 0) {
+            for (const t of intra) insEdge.run(routeId, t.id, 'routes', req.line, 1);
+            placed = true;
+          }
+        }
+        if (!placed) {
+          const amb = nodesByName.get(req.handlerName) ?? [];
+          for (const t of amb) {
+            if (t.id === routeId) continue;
+            insEdge.run(routeId, t.id, 'routes', req.line, 0);
+          }
+        }
+      }
+    }
     run('COMMIT');
   } catch (e) {
     run('ROLLBACK');

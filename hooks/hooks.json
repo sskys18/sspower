@@ -47,7 +47,7 @@
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-context.sh\"",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/graph-orchestrator.sh\"",
             "timeout": 8,
             "async": false
           }

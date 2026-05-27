@@ -5,8 +5,9 @@ import { TOOL as traceTool, handler as traceHandler } from './trace.mjs';
 import { TOOL as impactTool, handler as impactHandler } from './impact.mjs';
 import { TOOL as nodeTool, handler as nodeHandler } from './node.mjs';
 import { TOOL as ctxTool, handler as ctxHandler } from './context.mjs';
+import { TOOL as routesTool, handler as routesHandler } from './routes.mjs';
 
-export const TOOLS = [statusTool, callersTool, calleesTool, traceTool, impactTool, nodeTool, ctxTool];
+export const TOOLS = [statusTool, callersTool, calleesTool, traceTool, impactTool, nodeTool, ctxTool, routesTool];
 
 const HANDLERS = {
   graph_status: statusHandler,
@@ -16,6 +17,7 @@ const HANDLERS = {
   graph_impact: impactHandler,
   graph_node: nodeHandler,
   graph_context: ctxHandler,
+  graph_routes: routesHandler,
 };
 
 export async function dispatch(name, args) {

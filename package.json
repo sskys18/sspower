@@ -1,6 +1,6 @@
 {
   "name": "sspower",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "type": "module",
   "packageManager": "bun@1.3.11",
   "engines": {
@@ -13,7 +13,11 @@
     "graph:fixtures": "vitest run __tests__/graph-fixtures/",
     "graph:tests": "node tests/graph/test-db-schema.mjs && node tests/graph/test-astgrep.mjs && node tests/graph/test-walk.mjs && node tests/graph/test-extract-ts.mjs && node tests/graph/test-extract-py.mjs && node tests/graph/test-extract-py-toplevel.mjs && node tests/graph/test-extract-go.mjs && node tests/graph/test-extract-rs.mjs && node tests/graph/test-resolve.mjs && node tests/graph/test-build-query.mjs && node tests/graph/test-build-clears-dirty.mjs && node tests/graph/test-version-merge.mjs && node tests/graph/test-mcp-stub.mjs && node tests/graph/test-closure.mjs && node tests/graph/test-dirty.mjs && node tests/graph/test-refresh.mjs && node tests/graph/test-session-refresh.mjs && node tests/graph/test-trace.mjs && node tests/graph/test-impact.mjs && node tests/graph/test-context.mjs && bun run graph:p3-tests",
     "graph:p3-tests": "node tests/graph/test-bootstrap-cwd.mjs && node tests/graph/test-bootstrap-preflight.mjs && node tests/graph/test-session-state-unit.mjs && node tests/graph/test-session-state-contract.mjs && node tests/graph/test-mcp-tools-unit.mjs && node tests/graph/test-mcp-integration.mjs && node tests/graph/test-mcp-cli-parity.mjs && node tests/graph/test-p2-cli-back-compat.mjs && node tests/graph/test-mcp-metric.mjs && node tests/graph/test-mcp-metric-zerocall.mjs && node tests/graph/test-mcp-metric-concurrency.mjs",
-    "graph:perf": "SSPOWER_GRAPH_PERF=1 bash tests/graph/test-perf-10k.sh"
+    "graph:perf": "SSPOWER_GRAPH_PERF=1 bash tests/graph/test-perf-10k.sh",
+    "graph:p4-eval-baseline": "node tests/graph/p4-eval/run.mjs --mode baseline  --out docs/plans/notes/2026-05-27-graph-P4-eval-baseline.json",
+    "graph:p4-eval-candidate": "node tests/graph/p4-eval/run.mjs --mode candidate --out docs/plans/notes/2026-05-27-graph-P4-eval-candidate.json",
+    "graph:p4-eval-gate": "node tests/graph/p4-eval/gate.mjs --baseline docs/plans/notes/2026-05-27-graph-P4-eval-baseline.json --candidate docs/plans/notes/2026-05-27-graph-P4-eval-candidate.json --criteria tests/graph/p4-eval/criteria.json",
+    "graph:p4-tests": "node tests/graph/test-p4-orchestrator.mjs && node tests/graph/test-p4-express-extract.mjs && node tests/graph/test-p4-routes-cli.mjs && node tests/graph/test-p4-routes-mcp.mjs && node tests/graph/test-p4-auto-review-cachekey.mjs && node tests/graph/test-p4-auto-review-enrichment.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

@@ -251,6 +251,29 @@ HEAD_SHA=$(git_in_repo rev-parse HEAD 2>/dev/null || echo "")
 DIFF_SHA=$(sha256sum "$DIFF_FILE" 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_SHA" ] && DIFF_SHA=$(shasum -a 256 "$DIFF_FILE" 2>/dev/null | cut -d' ' -f1)
 HASH_INPUT=$(printf '%s|%s|%s|%s' "${REPO_ROOT:-}" "$HEAD_SHA" "$BRANCH" "$DIFF_SHA")
+# Graph cache-key terms (P4-D6, spec F9). Append-only — graph-absent leaves
+# HASH_INPUT byte-identical to the pre-P4 form so existing cache entries
+# survive. Graph-present adds GRAPH_VERSION (schema rev — bumps invalidate
+# on schema migration) AND GRAPH_HASH (content hash of index.sqlite — bumps
+# invalidate on every build/refresh that actually mutates the index, not
+# just on schema migration; round-1 review finding fix).
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/.claude/graph/version" ]; then
+  GRAPH_VERSION=$(head -1 "$REPO_ROOT/.claude/graph/version" 2>/dev/null | tr -d '\n')
+  # Hash the index.sqlite bytes directly so incremental refresh (which
+  # rewrites index.sqlite but may not touch version) invalidates cache.
+  GRAPH_HASH=""
+  if [ -f "$REPO_ROOT/.claude/graph/index.sqlite" ]; then
+    GRAPH_HASH=$(sha256sum "$REPO_ROOT/.claude/graph/index.sqlite" 2>/dev/null | cut -c1-16)
+    [ -z "$GRAPH_HASH" ] && GRAPH_HASH=$(shasum -a 256 "$REPO_ROOT/.claude/graph/index.sqlite" 2>/dev/null | cut -c1-16)
+  fi
+  # Fallback: if index missing (edge case — version file orphaned),
+  # hash version file so we still have *some* term.
+  if [ -z "$GRAPH_HASH" ]; then
+    GRAPH_HASH=$(sha256sum "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
+    [ -z "$GRAPH_HASH" ] && GRAPH_HASH=$(shasum -a 256 "$REPO_ROOT/.claude/graph/version" 2>/dev/null | cut -c1-16)
+  fi
+  HASH_INPUT="${HASH_INPUT}|${GRAPH_VERSION}|${GRAPH_HASH}"
+fi
 DIFF_HASH=$(printf '%s' "$HASH_INPUT" | sha256sum 2>/dev/null | cut -d' ' -f1)
 [ -z "$DIFF_HASH" ] && DIFF_HASH=$(printf '%s' "$HASH_INPUT" | shasum -a 256 | cut -d' ' -f1)
 CACHE_FILE="$CACHE_DIR/$DIFF_HASH.json"
@@ -341,6 +364,62 @@ Verdicts:
 Do NOT propose stylistic refactors or unrequested features beyond what's
 necessary to fix the diff.
 EOF
+
+  # ---------- Graph-impact enrichment (P4) --------------------------------
+  # Runs ONLY on cache miss (this code path), skips silently if graph
+  # unavailable or dirty queue non-empty (stale-data avoidance per P4-D4).
+  GRAPH_ENRICH=""
+  GRAPH_DIR_AR="$REPO_ROOT/.claude/graph"
+  if [ -n "$REPO_ROOT" ] && [ -d "$GRAPH_DIR_AR" ] && [ ! -s "$GRAPH_DIR_AR/dirty" ]; then
+    # Extract unique changed files from the diff (cap at 8).
+    CHANGED=$(awk '/^diff --git / { gsub(/^a\//,"",$3); print $3 }' "$DIFF_FILE" \
+                | sort -u | head -8)
+    if [ -n "$CHANGED" ]; then
+      ENRICH_TMP=$(mktemp -t sspower-autoreview-enrich-XXXXXX)
+      : > "$ENRICH_TMP"
+      PIDS=()
+      PER_FILE_TMP=()
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        tf=$(mktemp -t sspower-autoreview-impact-XXXXXX)
+        PER_FILE_TMP+=("$tf")
+        (
+          if command -v timeout >/dev/null 2>&1; then
+            timeout 3 node "$PLUGIN_ROOT/bin/sspower-graph.mjs" impact "$f" \
+              --json --cwd "$REPO_ROOT" >"$tf" 2>/dev/null || true
+          else
+            node "$PLUGIN_ROOT/bin/sspower-graph.mjs" impact "$f" \
+              --json --cwd "$REPO_ROOT" >"$tf" 2>/dev/null || true
+          fi
+        ) &
+        PIDS+=($!)
+      done <<< "$CHANGED"
+      for pid in "${PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done
+      # Assemble enrichment lines.
+      for tf in "${PER_FILE_TMP[@]}"; do
+        if [ -s "$tf" ]; then
+          SUMMARY_LINE=$(jq -r '
+            if .reason == "no-index" then empty
+            else "- " + (.target_file // "?") + ": direct=" + ((.direct_count // 0)|tostring) +
+                 " transitive=" + ((.transitive_count // 0)|tostring)
+            end
+          ' "$tf" 2>/dev/null)
+          [ -n "$SUMMARY_LINE" ] && printf '%s\n' "$SUMMARY_LINE" >> "$ENRICH_TMP"
+        fi
+        rm -f "$tf"
+      done
+      if [ -s "$ENRICH_TMP" ]; then
+        GRAPH_ENRICH=$(printf '\n# Graph impact (sspower-graph; cap 8 files, 3s each)\n%s\n' "$(cat "$ENRICH_TMP")")
+      fi
+      rm -f "$ENRICH_TMP"
+      log_event info hook.auto-review kind=graph_enrich files="$(printf '%s' "$CHANGED" | wc -l)" bytes="${#GRAPH_ENRICH}"
+    fi
+  elif [ -n "$REPO_ROOT" ] && [ -s "$GRAPH_DIR_AR/dirty" ]; then
+    log_event info hook.auto-review kind=graph_enrich_skip reason=dirty
+  fi
+
+  # Append enrichment to MAIN_PROMPT_FILE before bridge invocation.
+  [ -n "$GRAPH_ENRICH" ] && printf '%s' "$GRAPH_ENRICH" >> "$MAIN_PROMPT_FILE"
 
   MAIN_BRIDGE_ARGS=(review --prompt "@$MAIN_PROMPT_FILE" --profile "$ROUND_PROFILE")
   [ -n "$REPO_ROOT" ] && MAIN_BRIDGE_ARGS+=(--cd "$REPO_ROOT")

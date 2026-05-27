@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "modes": [
+    {
+      "name": "balanced",
+      "answerable_mean_delta_min": 0.0,
+      "bytes_mean_ratio_max": 1.5,
+      "wall_p95_ms_max": 6500
+    },
+    {
+      "name": "answerable-first",
+      "answerable_mean_delta_min": 0.15,
+      "bytes_mean_cap": 4096,
+      "wall_p95_ms_max": 6500
+    }
+  ],
+  "pass_if": "balanced OR answerable-first"
+}

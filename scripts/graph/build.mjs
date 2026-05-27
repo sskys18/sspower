@@ -151,6 +151,54 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
   }
   const edges = resolveEdges({ nodes: allNodes, callSites: enrichedCallSites });
 
+  // P4 Express route -> handler edges (kind='routes'). Resolution mirrors
+  // the call-edge resolver: import-first, then same-file top-level, then
+  // cross-graph same-name fallback (confidence 0). Route node id is
+  // reconstructed from (file, qname, span_sha8) -- same scheme as nodeId().
+  // Confidence ladder matches the call-edge resolver so downstream queries
+  // can treat the two edge kinds uniformly.
+  const nodesByFileAndQname = new Map();
+  const nodesByName = new Map();
+  for (const n of allNodes) {
+    pushMapLocal(nodesByFileAndQname, `${n.filePath}::${n.qualifiedName}`, n);
+    pushMapLocal(nodesByName, n.name, n);
+  }
+  for (const f of perFile) {
+    const requests = f.extracted.routeHandlerRequests ?? [];
+    const importMap = importedNamesByFile.get(f.filePath) ?? {};
+    for (const req of requests) {
+      const routeId = nodeId(req.routeFile, req.routeQualifiedName, req.routeSpanSha8);
+      // Step 1: imported binding wins.
+      const entry = importMap[req.handlerName];
+      if (entry) {
+        const lookupName = (entry.imported === '*' || entry.imported === 'default')
+          ? req.handlerName
+          : entry.imported;
+        const imported = nodesByFileAndQname.get(`${entry.path}::${lookupName}`) ?? [];
+        if (imported.length > 0) {
+          for (const target of imported) {
+            edges.push({ source: routeId, target: target.id, kind: 'routes', line: req.line, confidence: 2 });
+          }
+          continue;
+        }
+      }
+      // Step 2: same-file top-level (qname === name).
+      const intraAll = nodesByFileAndQname.get(`${req.routeFile}::${req.handlerName}`) ?? [];
+      if (intraAll.length > 0) {
+        for (const target of intraAll) {
+          edges.push({ source: routeId, target: target.id, kind: 'routes', line: req.line, confidence: 1 });
+        }
+        continue;
+      }
+      // Step 3: ambiguous same-name fallback.
+      const ambiguous = nodesByName.get(req.handlerName) ?? [];
+      for (const target of ambiguous) {
+        if (target.id === routeId) continue;
+        edges.push({ source: routeId, target: target.id, kind: 'routes', line: req.line, confidence: 0 });
+      }
+    }
+  }
+
   // Phase 3: SINGLE transaction -- destructive wipe + insert. On crash, DB
   // reverts to the previous full-build state. Without this, an interrupted
   // build leaves an empty index.
@@ -213,4 +261,10 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
 
   db.close();
   return { fileCount, nodeCount: allNodes.length, edgeCount: edges.length };
+}
+
+function pushMapLocal(map, key, value) {
+  const arr = map.get(key);
+  if (arr) arr.push(value);
+  else map.set(key, [value]);
 }

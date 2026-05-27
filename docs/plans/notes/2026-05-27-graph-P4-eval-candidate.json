@@ -1,0 +1,169 @@
+{
+  "mode": "candidate",
+  "n": 20,
+  "mean_bytes": 3106.65,
+  "mean_answerable": 0.4833333333333334,
+  "p95_wall_ms": 1169,
+  "results": [
+    {
+      "id": "p01",
+      "intent": "coding",
+      "wallMs": 1169,
+      "bytes": 3209,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p02",
+      "intent": "coding",
+      "wallMs": 391,
+      "bytes": 3200,
+      "answerable": 0,
+      "exit": 0
+    },
+    {
+      "id": "p03",
+      "intent": "coding",
+      "wallMs": 390,
+      "bytes": 3200,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p04",
+      "intent": "coding",
+      "wallMs": 397,
+      "bytes": 3202,
+      "answerable": 0,
+      "exit": 0
+    },
+    {
+      "id": "p05",
+      "intent": "coding",
+      "wallMs": 387,
+      "bytes": 2961,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p06",
+      "intent": "coding",
+      "wallMs": 388,
+      "bytes": 3200,
+      "answerable": 0,
+      "exit": 0
+    },
+    {
+      "id": "p07",
+      "intent": "coding",
+      "wallMs": 389,
+      "bytes": 3202,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p08",
+      "intent": "coding",
+      "wallMs": 392,
+      "bytes": 3177,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p09",
+      "intent": "coding",
+      "wallMs": 392,
+      "bytes": 3200,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p10",
+      "intent": "coding",
+      "wallMs": 389,
+      "bytes": 3200,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p11",
+      "intent": "coding",
+      "wallMs": 390,
+      "bytes": 2950,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p12",
+      "intent": "coding",
+      "wallMs": 388,
+      "bytes": 3200,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p13",
+      "intent": "architecture",
+      "wallMs": 391,
+      "bytes": 3200,
+      "answerable": 0.5,
+      "exit": 0
+    },
+    {
+      "id": "p14",
+      "intent": "architecture",
+      "wallMs": 388,
+      "bytes": 2424,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p15",
+      "intent": "architecture",
+      "wallMs": 388,
+      "bytes": 3200,
+      "answerable": 0,
+      "exit": 0
+    },
+    {
+      "id": "p16",
+      "intent": "architecture",
+      "wallMs": 390,
+      "bytes": 3200,
+      "answerable": 0.3333333333333333,
+      "exit": 0
+    },
+    {
+      "id": "p17",
+      "intent": "architecture",
+      "wallMs": 386,
+      "bytes": 3169,
+      "answerable": 0,
+      "exit": 0
+    },
+    {
+      "id": "p18",
+      "intent": "architecture",
+      "wallMs": 391,
+      "bytes": 3202,
+      "answerable": 1,
+      "exit": 0
+    },
+    {
+      "id": "p19",
+      "intent": "architecture",
+      "wallMs": 393,
+      "bytes": 2731,
+      "answerable": 0.3333333333333333,
+      "exit": 0
+    },
+    {
+      "id": "p20",
+      "intent": "architecture",
+      "wallMs": 394,
+      "bytes": 3106,
+      "answerable": 0,
+      "exit": 0
+    }
+  ]
+}

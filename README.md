@@ -49,7 +49,7 @@
 | ✂️ **Command rewrite** | Three chained `PreToolUse:Bash` hooks rewrite shell commands for token savings. |
 | 🛡️ **Auto-review gate** | Codex reviews the branch diff at `git push` / PR and blocks on a non-`approve` verdict. |
 | 🚧 **Skill HARD-GATEs** | `writing-plans`, SDD, and branch-finish run Codex review at earlier checkpoints. |
-| 🕸️ **sspower-graph (P3 shipped at 1.4.0)** | Per-project symbol graph via MCP: 7 query tools (`graph_status/callers/callees/trace/impact/node/context`) + adoption metric harness + reviewer-agent guidance. Spec: `docs/specs/2026-05-27-codegraph-graph-P3-design.md`. |
+| 🕸️ **sspower-graph (P4 shipped at 1.5.0)** | Per-project symbol graph via MCP: 8 query tools (`graph_status/callers/callees/trace/impact/node/context/routes`) + hooks orchestration (`graph-orchestrator.sh` concurrent semble+graph) + auto-review graph-impact enrichment + Express route extractor. Spec: `docs/specs/2026-05-26-codegraph-style-graph-design.md`. |
 
 <details>
 <summary><b>Full detail</b></summary>
@@ -61,13 +61,13 @@
 - **Command rewrite hooks** — three `PreToolUse:Bash` hooks chain in order: (1) `hooks/semble-rewrite.sh` opportunistically rewrites `ls -R [path]` and `grep -R <BARE_IDENT> [path]` to `semble_rs tree` / `semble_rs search --compact` (gitignore-aware; explicit `ask` permission; fail-open noop on unquoted globs/vars or missing binary). (2) `hooks/cmd-rewrite.sh` routes remaining shell commands through an external rewriter for token-saving substitutions — default [`rtk`](https://github.com/rtk-ai/rtk) Rust binary; override with `CMD_REWRITER=<bin>`; needs binary (>= 0.23.0) + `jq` on PATH or no-ops. (3) `hooks/auto-review.sh` (see next bullet). Bypass semble layer with `SSPOWER_SEMBLE_REWRITE=0`.
 - **Auto-review at merge surface** — `PreToolUse:Bash` hook (`hooks/auto-review.sh`) intercepts `git push`, `gh pr create`, and `gh pr ready`, runs Codex review on the branch diff vs upstream, and blocks the action when the verdict is not `approve` (issues surfaced to Claude). Iteration cost is zero (local commits aren't reviewed); review fires once per chokepoint. Bypass with `SSPOWER_AUTO_REVIEW=off` for emergencies.
 - **Codex HARD-GATEs in skills** — `writing-plans` runs `bridge spec-review` before handing off to execution; `subagent-driven-development` runs `bridge spec-review` + `bridge review` per task; `finishing-a-development-branch` runs `bridge review` on the full branch diff before merge/PR. Skill-level gate complements the hook-level gate above.
-- **sspower-graph (P3 shipped at 1.4.0)** — per-project symbol graph subsystem inspired by [codegraph (MIT)](https://github.com/colbymchenry/codegraph). P3 ships 7 MCP query tools (`graph_status/callers/callees/trace/impact/node/context`) over a shared pure-data query layer (`scripts/graph/queries.mjs`), per-project session-state lookup at `~/.claude/state/sspower/sessions/<sha8(realpath(cwd))>.json` with cwd-equality validation, adoption-metric harness (per-process JSONL spool → SessionEnd reconciler → `sspower-graph metric` aggregator with strict gate over 50 most-recent eligible sessions), bootstrap server-key collision preflight (exit 78 on foreign owner), and `## Graph tool guidance` sections appended to `code-reviewer.md` / `sanity-reviewer.md` / `security-reviewer.md` with the hard rule "call graph tools BEFORE delegating to Explore, never inside Explore." Earlier phases: P0 foundation (intent class + lock helpers + MCP stub), P1 TS/JS extractor, P2 multi-language + refresh + trace/impact/context CLI. Hard deps: ast-grep ≥0.43, Node ≥22.5 (node:sqlite stable), bun (lockfile committed). P4 next: hooks orchestration + auto-review enrichment. P5+ framework routes. Full spec at `docs/specs/2026-05-27-codegraph-graph-P3-design.md` (5 codex review passes to approve).
+- **sspower-graph (P4 shipped at 1.5.0)** — per-project symbol graph subsystem inspired by [codegraph (MIT)](https://github.com/colbymchenry/codegraph). P4 adds **hooks orchestration** (`hooks/graph-orchestrator.sh` replaces `semble-context.sh` in UserPromptSubmit; concurrent semble + graph children, 5s timeout each, 6s wall, 3KB semble + 2KB graph per-source merge; fail-open via `exec semble-context.sh` when graph absent OR dirty queue non-empty OR `SSPOWER_GRAPH_ORCHESTRATOR=off`), **auto-review enrichment** (cache key extended with `||GRAPH_VERSION||GRAPH_HASH` where GRAPH_HASH = sha8(index.sqlite); on cache miss, parallel `sspower-graph impact <file>` per changed file caps 8, 3s each, skip-if-dirty), **Express route extractor** (3 ast-grep rules `ts-express-{route,router,mount}.yml` with overlap dedupe, `kind=route` nodes), **CLI `routes [--framework F]` verb**, and the **8th MCP tool `graph_routes`**. Eval gate (20-prompt fixture, semble-only baseline vs candidate): balanced PASS with `answerable +0.10` (`0.38 → 0.48`), `bytes_ratio 1.40` (under 1.50 cap), `p95_wall 1169ms` (under 6500ms cap). Earlier phases: P0 foundation, P1 TS/JS extractor, P2 multi-language + refresh + trace/impact/context CLI, P3 7 MCP query tools + adoption metric + reviewer-agent graph guidance. Hard deps: ast-grep ≥0.43, Node ≥22.5, bun. P5+ adds FastAPI → Django → Rails → … framework routes (one per phase). Full spec at `docs/specs/2026-05-26-codegraph-style-graph-design.md`.
 
 </details>
 
 ## sspower-graph
 
-### CLI (P1 + P2)
+### CLI (P1 + P2 + P4)
 
 ```
 sspower-graph build [--cwd <dir>]
@@ -80,7 +80,8 @@ sspower-graph impact <file> [--json]                       # P2
 sspower-graph context <task> [--json]                      # P2
 sspower-graph node <name> [--json]
 sspower-graph status [--json]
-sspower-graph serve --mcp                # P3 MCP server (7 graph tools)
+sspower-graph routes [--framework F] [--limit N] [--json] # P4 (Express only; P5+ adds more)
+sspower-graph serve --mcp                # MCP server (P3 7 tools + P4 graph_routes = 8 total)
 ```
 
 `build` indexes the current working directory (or `--cwd`) into
@@ -140,6 +141,39 @@ resolved import, `0` = ambiguous same-name fallback.
 - **`.jsx`/`.tsx` JSX parsing is best-effort.** Component declarations
   and JSX handler call-sites are extracted, but exotic JSX-ts edge
   cases may miss. P5+ adds React-specific framework patterns.
+
+### Hooks orchestration (P4)
+
+`hooks/graph-orchestrator.sh` replaces `semble-context.sh` in the
+UserPromptSubmit chain. It forks `semble_rs plan` + `sspower-graph
+context` concurrently (5s timeout each, 6s wall budget) and emits one
+merged `additionalContext` block (3KB semble + 2KB graph per-source
+caps, independently truncated). Fail-open: graph absent OR dirty queue
+non-empty OR `SSPOWER_GRAPH_ORCHESTRATOR=off` → `exec semble-context.sh`
+fallback (no behavior change for graph-less repos).
+
+`hooks/auto-review.sh` extends its cache key with `||GRAPH_VERSION||
+GRAPH_HASH` (append-only; graph-absent keeps the pre-graph hash
+byte-identical). On cache miss, an enrichment block parses changed
+files from the diff and runs `sspower-graph impact <file> --json
+--timeout 3s` in parallel (cap 8 files) — appending a `# Graph impact`
+section to the Codex review prompt. Skips silently when the dirty
+queue is non-empty (stale-data avoidance).
+
+Environment variables (P4):
+
+- `SSPOWER_GRAPH_ORCHESTRATOR=on|off` — controls the orchestrator
+  swap. Default `on` after the v1.5.0 eval gate (balanced pass:
+  answerable +0.10, bytes ratio 1.40, p95 1169ms over 20 prompts).
+  Set to `off` to revert to pure semble injection.
+- `SSPOWER_SEMBLE=0` — disables the semble child only (graph still
+  injects).
+- `SSPOWER_GRAPH=0` — disables the graph child only (semble still
+  injects).
+
+Eval reproduction: `bun run graph:p4-eval-baseline` then
+`bun run graph:p4-eval-candidate` then `bun run graph:p4-eval-gate`.
+The gate exits 0/1 — binary verdict, no human judgment.
 
 ### Performance budgets (P2 acceptance gates, spec §4)
 

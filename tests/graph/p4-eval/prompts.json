@@ -1,0 +1,205 @@
+[
+  {
+    "id": "p01",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "fix the timeout handling in semble-context.sh — make the perl fallback respect the same env var",
+    "expected_evidence": [
+      "hooks/semble-context.sh",
+      "SSPOWER_SEMBLE_TIMEOUT"
+    ]
+  },
+  {
+    "id": "p02",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "add a new MCP tool `graph_orphans`",
+    "expected_evidence": [
+      "scripts/graph/mcp-tools/index.mjs",
+      "TOOLS"
+    ]
+  },
+  {
+    "id": "p03",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "refactor `extractFile` to support a new language",
+    "expected_evidence": [
+      "scripts/graph/extract-ts.mjs",
+      "extractFile"
+    ]
+  },
+  {
+    "id": "p04",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "wire a new ast-grep rule into the TS extractor",
+    "expected_evidence": [
+      "scripts/graph/extract-ts.mjs",
+      "RULE_FILES"
+    ]
+  },
+  {
+    "id": "p05",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "change the auto-review verdict cache TTL",
+    "expected_evidence": [
+      "hooks/auto-review.sh",
+      "SSPOWER_REVIEW_CACHE_TTL"
+    ]
+  },
+  {
+    "id": "p06",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "add a new `--limit` flag to `graph_callers`",
+    "expected_evidence": [
+      "scripts/graph/mcp-tools/callers.mjs",
+      "queryCallers"
+    ]
+  },
+  {
+    "id": "p07",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "move the diet activation hook to a different SessionStart slot",
+    "expected_evidence": [
+      "hooks/diet-activate.js",
+      "hooks/hooks.json"
+    ]
+  },
+  {
+    "id": "p08",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "rename `graph_status` → `graph_health`",
+    "expected_evidence": [
+      "scripts/graph/mcp-tools/status.mjs",
+      "graph_status"
+    ]
+  },
+  {
+    "id": "p09",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "add a new field `extension` to the `files` table",
+    "expected_evidence": [
+      "scripts/graph/db.mjs",
+      "files"
+    ]
+  },
+  {
+    "id": "p10",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "change the orchestrator wall budget from 6s to 8s",
+    "expected_evidence": [
+      "hooks/graph-orchestrator.sh",
+      "WALL_BUDGET"
+    ]
+  },
+  {
+    "id": "p11",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "add a parallel-cap tunable to auto-review enrichment",
+    "expected_evidence": [
+      "hooks/auto-review.sh",
+      "enrichment"
+    ]
+  },
+  {
+    "id": "p12",
+    "intent": "coding",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "fix the lock helper to ignore stale lockfiles",
+    "expected_evidence": [
+      "scripts/sspower_mem/sspower_mem/lock.py",
+      "acquire_lock"
+    ]
+  },
+  {
+    "id": "p13",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "what calls `extractFile`?",
+    "expected_evidence": [
+      "scripts/graph/refresh.mjs",
+      "extractFile"
+    ]
+  },
+  {
+    "id": "p14",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "trace the path from `semble-context.sh` to `semble_rs plan`",
+    "expected_evidence": [
+      "hooks/semble-context.sh",
+      "semble_rs plan"
+    ]
+  },
+  {
+    "id": "p15",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "what would changing `db.mjs` break?",
+    "expected_evidence": [
+      "scripts/graph/db.mjs",
+      "withDb",
+      "graphDirFor"
+    ]
+  },
+  {
+    "id": "p16",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "how does the MCP server reach `queryCallers`?",
+    "expected_evidence": [
+      "bin/sspower-graph.mjs",
+      "scripts/graph/queries.mjs",
+      "queryCallers"
+    ]
+  },
+  {
+    "id": "p17",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "where are graph events recorded?",
+    "expected_evidence": [
+      "scripts/graph/mcp-tools/metric.mjs",
+      "recordEvent"
+    ]
+  },
+  {
+    "id": "p18",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "what writes to `<cwd>/.claude/graph/dirty`?",
+    "expected_evidence": [
+      "hooks/graph-mark-dirty.sh",
+      "scripts/graph-append-dirty.py"
+    ]
+  },
+  {
+    "id": "p19",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "trace the auto-review chokepoint detection",
+    "expected_evidence": [
+      "hooks/auto-review.sh",
+      "_parse-git-cmd.py",
+      "chain_position"
+    ]
+  },
+  {
+    "id": "p20",
+    "intent": "architecture",
+    "cwd": "{{REPO_ROOT}}",
+    "prompt": "what reads the session-state file?",
+    "expected_evidence": [
+      "scripts/graph/session-state.mjs",
+      "readSessionState"
+    ]
+  }
+]

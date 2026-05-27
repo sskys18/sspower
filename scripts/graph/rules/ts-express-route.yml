@@ -1,0 +1,10 @@
+id: ts-express-route
+language: typescript
+rule:
+  any:
+    - pattern: $APP.get($PATH, $$$HANDLERS)
+    - pattern: $APP.post($PATH, $$$HANDLERS)
+    - pattern: $APP.put($PATH, $$$HANDLERS)
+    - pattern: $APP.delete($PATH, $$$HANDLERS)
+    - pattern: $APP.patch($PATH, $$$HANDLERS)
+    - pattern: $APP.all($PATH, $$$HANDLERS)

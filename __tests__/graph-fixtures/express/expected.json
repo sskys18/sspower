@@ -1,0 +1,20 @@
+{
+  "_comment": "P4 limitation: mount-path expansion is deferred to P5. The two mount-expanded entries (GET /api/v1/users, POST /api/v1/users) are kept in the reference list so recall is measured against the *intended* surface. Direct extraction yields 5 routes (3 from app.ts + 2 from router.ts) and the 4 named-handler edges. recall = 5/7 ≈ 0.714 satisfies the 0.70 floor; precision = 5/5 = 1.0 satisfies 0.85.",
+  "nodes": [
+    { "file": "app.ts",    "kind": "route", "name": "GET /health" },
+    { "file": "app.ts",    "kind": "route", "name": "POST /items" },
+    { "file": "app.ts",    "kind": "route", "name": "DELETE /items/:id" },
+    { "file": "router.ts", "kind": "route", "name": "GET /users" },
+    { "file": "router.ts", "kind": "route", "name": "POST /users" },
+    { "file": "mount.ts",  "kind": "route", "name": "GET /api/v1/users" },
+    { "file": "mount.ts",  "kind": "route", "name": "POST /api/v1/users" }
+  ],
+  "edges": [
+    { "kind": "routes", "src_name": "GET /health",       "tgt_name": "handleHealth" },
+    { "kind": "routes", "src_name": "DELETE /items/:id", "tgt_name": "handleDelete" },
+    { "kind": "routes", "src_name": "GET /users",        "tgt_name": "listUsers" },
+    { "kind": "routes", "src_name": "POST /users",       "tgt_name": "createUser" }
+  ],
+  "precision_min": 0.85,
+  "recall_min": 0.70
+}
