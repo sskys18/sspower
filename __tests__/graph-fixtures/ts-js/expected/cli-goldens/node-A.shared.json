@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#A.shared#3a39866b",
+    "kind": "method",
+    "name": "shared",
+    "qualified_name": "A.shared",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+    "language": "typescript",
+    "start_line": 14,
+    "end_line": 14,
+    "signature": "shared(): string { return 'a'; }",
+    "span_sha8": "3a39866b",
+    "updated_at": 1779860122
+  }
+]

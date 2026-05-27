@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#helper#2215fff9",
+    "kind": "function",
+    "name": "helper",
+    "qualified_name": "helper",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+    "language": "typescript",
+    "start_line": 5,
+    "end_line": 7,
+    "signature": "function helper(x: number): number {",
+    "span_sha8": "2215fff9",
+    "updated_at": 1779860122
+  }
+]

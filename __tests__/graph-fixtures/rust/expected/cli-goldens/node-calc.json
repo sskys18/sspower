@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs#calc#d6de4f48",
+    "kind": "function",
+    "name": "calc",
+    "qualified_name": "calc",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs",
+    "language": "rust",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "pub fn calc(a: i32, b: i32) -> i32 {",
+    "span_sha8": "d6de4f48",
+    "updated_at": 1779860127
+  }
+]

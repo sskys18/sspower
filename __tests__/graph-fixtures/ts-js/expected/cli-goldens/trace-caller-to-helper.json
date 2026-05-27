@@ -1,0 +1,18 @@
+{
+  "paths": [
+    {
+      "from": "caller",
+      "to": "helper",
+      "hops": 1,
+      "edges": [
+        {
+          "from": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#caller#9bab6714",
+          "to": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#helper#2215fff9",
+          "line": 10
+        }
+      ]
+    }
+  ],
+  "fromCount": 1,
+  "toCount": 1
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#B#18320b53",
+    "kind": "class",
+    "name": "B",
+    "qualified_name": "B",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+    "language": "typescript",
+    "start_line": 17,
+    "end_line": 19,
+    "signature": "class B {",
+    "span_sha8": "18320b53",
+    "updated_at": 1779860122
+  }
+]

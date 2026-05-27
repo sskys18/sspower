@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#Worker#4e1a6fa8",
+    "kind": "class",
+    "name": "Worker",
+    "qualified_name": "Worker",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+    "language": "python",
+    "start_line": 7,
+    "end_line": 9,
+    "signature": "class Worker:",
+    "span_sha8": "4e1a6fa8",
+    "updated_at": 1779860125
+  }
+]

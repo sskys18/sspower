@@ -1,0 +1,128 @@
+[
+  {
+    "file": "build.json",
+    "args": [
+      "build"
+    ]
+  },
+  {
+    "file": "status.json",
+    "args": [
+      "status"
+    ]
+  },
+  {
+    "file": "callers-main.json",
+    "args": [
+      "callers",
+      "main"
+    ]
+  },
+  {
+    "file": "callees-main.json",
+    "args": [
+      "callees",
+      "main"
+    ]
+  },
+  {
+    "file": "node-main.json",
+    "args": [
+      "node",
+      "main"
+    ]
+  },
+  {
+    "file": "callers-Worker.Run.json",
+    "args": [
+      "callers",
+      "Worker.Run"
+    ]
+  },
+  {
+    "file": "callees-Worker.Run.json",
+    "args": [
+      "callees",
+      "Worker.Run"
+    ]
+  },
+  {
+    "file": "node-Worker.Run.json",
+    "args": [
+      "node",
+      "Worker.Run"
+    ]
+  },
+  {
+    "file": "callers-Calc.json",
+    "args": [
+      "callers",
+      "Calc"
+    ]
+  },
+  {
+    "file": "callees-Calc.json",
+    "args": [
+      "callees",
+      "Calc"
+    ]
+  },
+  {
+    "file": "node-Calc.json",
+    "args": [
+      "node",
+      "Calc"
+    ]
+  },
+  {
+    "file": "trace-main-to-Calc.json",
+    "args": [
+      "trace",
+      "main",
+      "Calc"
+    ]
+  },
+  {
+    "file": "trace-Worker.Run-to-Calc.json",
+    "args": [
+      "trace",
+      "Worker.Run",
+      "Calc"
+    ]
+  },
+  {
+    "file": "impact-main.go.json",
+    "args": [
+      "impact",
+      "main.go"
+    ]
+  },
+  {
+    "file": "impact-util_util.go.json",
+    "args": [
+      "impact",
+      "util/util.go"
+    ]
+  },
+  {
+    "file": "context-default.json",
+    "args": [
+      "context",
+      "main Worker.Run Calc"
+    ]
+  },
+  {
+    "file": "refresh.json",
+    "args": [
+      "refresh"
+    ]
+  },
+  {
+    "file": "session-refresh.json",
+    "args": [
+      "session-refresh",
+      "--max-time",
+      "5"
+    ]
+  }
+]

@@ -86,3 +86,19 @@ If the caller passes you the main reviewer's verdict + issues for comparison:
 - Be precise. "Looks risky" is not a finding; "passes unvalidated `req.body.amount` to `BigInt()` → throws on non-numeric input, 500s the request" is.
 
 You are the manual replacement for the auto-spawned sanity reviewer that previously ran in `hooks/auto-review.sh` at round 0 on non-strict branches. The push gate no longer downgrades main's verdict based on your output — your verdict is a recommendation the caller acts on (`SSPOWER_REVIEW_AUTO_APPLY` and the followups file still work for advisory issues).
+
+## Graph tool guidance
+
+Before signing off "looks fine":
+
+- `mcp__sspower-graph__graph_impact <file>` — confirm the change radius
+  matches the PR description. Mismatch (PR says "small refactor" but
+  impact list is 40+ symbols) is a real blocker, not style nitpick.
+- `mcp__sspower-graph__graph_trace <from> <to>` — when the diff claims
+  to short-circuit a code path, trace from entry to exit and verify the
+  path no longer exists.
+- `mcp__sspower-graph__graph_status` — confirm the graph is fresh
+  before relying on any other tool result. Stale index = no signal.
+
+Hard rule: call graph tools BEFORE delegating to the Explore subagent;
+never invoke graph tools from inside Explore.

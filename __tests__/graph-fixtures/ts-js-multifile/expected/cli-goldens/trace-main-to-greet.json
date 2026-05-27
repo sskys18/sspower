@@ -1,0 +1,18 @@
+{
+  "paths": [
+    {
+      "from": "main",
+      "to": "greet",
+      "hops": 1,
+      "edges": [
+        {
+          "from": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts#main#fb1e8061",
+          "to": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts#greet#aa2947ce",
+          "line": 4
+        }
+      ]
+    }
+  ],
+  "fromCount": 1,
+  "toCount": 1
+}

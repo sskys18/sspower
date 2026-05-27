@@ -1,0 +1,13 @@
+{
+  "window": 50,
+  "eligible_sessions_total": 0,
+  "sessions_with_call": 0,
+  "adoption_rate": 0,
+  "tool_histogram": {},
+  "p95_duration_ms_by_tool": {},
+  "degraded_session_id_count": 0,
+  "degraded_jsonl_parse_ratio": 0,
+  "ineligible_sessions_excluded": 0,
+  "gate_met": false,
+  "sessions_total": 0
+}

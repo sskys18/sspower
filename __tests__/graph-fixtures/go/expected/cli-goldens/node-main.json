@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#main#0a2f92de",
+    "kind": "function",
+    "name": "main",
+    "qualified_name": "main",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go",
+    "language": "go",
+    "start_line": 7,
+    "end_line": 10,
+    "signature": "func main() {",
+    "span_sha8": "0a2f92de",
+    "updated_at": 1779860126
+  }
+]

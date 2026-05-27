@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py#helper#181cd17e",
+    "kind": "function",
+    "name": "helper",
+    "qualified_name": "helper",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py",
+    "language": "python",
+    "start_line": 1,
+    "end_line": 2,
+    "signature": "def helper(x=0):",
+    "span_sha8": "181cd17e",
+    "updated_at": 1779860125
+  }
+]

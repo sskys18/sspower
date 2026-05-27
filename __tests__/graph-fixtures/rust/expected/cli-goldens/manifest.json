@@ -1,0 +1,157 @@
+[
+  {
+    "file": "build.json",
+    "args": [
+      "build"
+    ]
+  },
+  {
+    "file": "status.json",
+    "args": [
+      "status"
+    ]
+  },
+  {
+    "file": "callers-main.json",
+    "args": [
+      "callers",
+      "main"
+    ]
+  },
+  {
+    "file": "callees-main.json",
+    "args": [
+      "callees",
+      "main"
+    ]
+  },
+  {
+    "file": "node-main.json",
+    "args": [
+      "node",
+      "main"
+    ]
+  },
+  {
+    "file": "callers-caller.json",
+    "args": [
+      "callers",
+      "caller"
+    ]
+  },
+  {
+    "file": "callees-caller.json",
+    "args": [
+      "callees",
+      "caller"
+    ]
+  },
+  {
+    "file": "node-caller.json",
+    "args": [
+      "node",
+      "caller"
+    ]
+  },
+  {
+    "file": "callers-Worker.run.json",
+    "args": [
+      "callers",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "callees-Worker.run.json",
+    "args": [
+      "callees",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "node-Worker.run.json",
+    "args": [
+      "node",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "callers-calc.json",
+    "args": [
+      "callers",
+      "calc"
+    ]
+  },
+  {
+    "file": "callees-calc.json",
+    "args": [
+      "callees",
+      "calc"
+    ]
+  },
+  {
+    "file": "node-calc.json",
+    "args": [
+      "node",
+      "calc"
+    ]
+  },
+  {
+    "file": "trace-main-to-caller.json",
+    "args": [
+      "trace",
+      "main",
+      "caller"
+    ]
+  },
+  {
+    "file": "trace-caller-to-calc.json",
+    "args": [
+      "trace",
+      "caller",
+      "calc"
+    ]
+  },
+  {
+    "file": "trace-Worker.run-to-calc.json",
+    "args": [
+      "trace",
+      "Worker.run",
+      "calc"
+    ]
+  },
+  {
+    "file": "impact-src_main.rs.json",
+    "args": [
+      "impact",
+      "src/main.rs"
+    ]
+  },
+  {
+    "file": "impact-src_util.rs.json",
+    "args": [
+      "impact",
+      "src/util.rs"
+    ]
+  },
+  {
+    "file": "context-default.json",
+    "args": [
+      "context",
+      "main caller Worker.run"
+    ]
+  },
+  {
+    "file": "refresh.json",
+    "args": [
+      "refresh"
+    ]
+  },
+  {
+    "file": "session-refresh.json",
+    "args": [
+      "session-refresh",
+      "--max-time",
+      "5"
+    ]
+  }
+]

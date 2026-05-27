@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go#Calc#6c818067",
+    "kind": "function",
+    "name": "Calc",
+    "qualified_name": "Calc",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go",
+    "language": "go",
+    "start_line": 3,
+    "end_line": 3,
+    "signature": "func Calc(a, b int) int { return a + b }",
+    "span_sha8": "6c818067",
+    "updated_at": 1779860126
+  }
+]

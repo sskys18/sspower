@@ -3,7 +3,6 @@
 set -euo pipefail
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-cd "$ROOT"
 
 # Node >=22.5 runtime check (engines.node is documented in package.json but
 # not enforced by package managers without engine-strict).
@@ -22,6 +21,33 @@ if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt
   exit 1
 fi
 
+SERVER_KEY="${SSPOWER_GRAPH_MCP_KEY:-sspower-graph}"
+OWN_CMD_ABS="$ROOT/bin/sspower-graph-bootstrap.sh"
+OWN_CMD_TEMPLATE='${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh'
+OWN_MCP_JSON="$ROOT/.mcp.json"
+
+for CFG in "$HOME/.claude.json" "$PWD/.mcp.json"; do
+  [ -f "$CFG" ] || continue
+  if [ "$CFG" = "$OWN_MCP_JSON" ]; then continue; fi
+  if command -v jq >/dev/null 2>&1; then
+    FOREIGN=$(jq -r \
+      --arg key "$SERVER_KEY" \
+      --arg own_abs "$OWN_CMD_ABS" \
+      --arg own_tpl "$OWN_CMD_TEMPLATE" '
+      (.mcpServers // {}) | to_entries[]?
+      | select(.key == $key)
+      | select((.value.command // "") != $own_abs
+            and (.value.command // "") != $own_tpl)
+      | "\($key) in '"$CFG"' is owned by " + (.value.command // "<unset>")
+    ' "$CFG" 2>/dev/null || true)
+    if [ -n "$FOREIGN" ]; then
+      echo "sspower-graph: MCP server key collision: $FOREIGN" >&2
+      echo "  override with SSPOWER_GRAPH_MCP_KEY=<unique-key> in the foreign config" >&2
+      exit 78
+    fi
+  fi
+done
+
 # Lockfile-deterministic install: bun is the supported installer (bun.lock
 # is committed). The advisory v0 review (2026-05-26) flagged the npm
 # fallback as unreproducible since no package-lock.json is committed —
@@ -32,8 +58,9 @@ if [ ! -d "$ROOT/node_modules/@modelcontextprotocol" ]; then
     echo "  install: https://bun.sh — or pre-populate node_modules from another machine" >&2
     exit 127
   fi
-  bun install --frozen-lockfile --production --silent >/dev/null 2>&1 \
-    || bun install --frozen-lockfile --production >&2
+  ( cd "$ROOT" && \
+    ( bun install --frozen-lockfile --production --silent >/dev/null 2>&1 \
+      || bun install --frozen-lockfile --production >&2 ) )
 fi
 
 exec "$NODE_BIN" "$ROOT/bin/sspower-graph.mjs" "$@"

@@ -99,4 +99,27 @@ if command -v node >/dev/null 2>&1 && [[ -e "$PWD/.claude/graph/index.sqlite" ]]
   disown
 fi
 
+# P3: write per-project session-state file. Reuses $hook_payload captured
+# at the top of this hook script; stdin has already been drained.
+if [ -n "${hook_payload:-}" ]; then
+  SID="$(printf '%s' "$hook_payload" | jq -r '.session_id // empty' 2>/dev/null || true)"
+  CWD="$(printf '%s' "$hook_payload" | jq -r '.cwd // empty' 2>/dev/null || true)"
+  SRC="$(printf '%s' "$hook_payload" | jq -r '.source // "unknown"' 2>/dev/null || true)"
+  if [ -n "$SID" ] && [ -n "$CWD" ]; then
+    STATE_DIR="${SSPOWER_SESSION_STATE_DIR:-$HOME/.claude/state/sspower/sessions}"
+    mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
+    HASH="$(printf '%s' "$(realpath "$CWD" 2>/dev/null || echo "$CWD")" | shasum -a 256 | cut -c1-8)"
+    TMP="$STATE_DIR/.$HASH.tmp.$$"
+    jq -n \
+      --arg session_id "$SID" \
+      --arg cwd "$CWD" \
+      --arg started_ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg source "$SRC" \
+      '{session_id:$session_id,cwd:$cwd,started_ts:$started_ts,hook_event_name:"SessionStart",source:$source}' \
+      > "$TMP"
+    chmod 600 "$TMP"
+    mv -f "$TMP" "$STATE_DIR/$HASH.json"
+  fi
+fi
+
 exit 0
