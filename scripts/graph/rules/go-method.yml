@@ -1,0 +1,4 @@
+id: go-method
+language: go
+rule:
+  kind: method_declaration

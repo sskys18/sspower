@@ -67,20 +67,37 @@
 
 ## sspower-graph
 
-### CLI (P1)
+### CLI (P1 + P2)
 
 ```
 sspower-graph build [--cwd <dir>]
+sspower-graph refresh [--cwd <dir>]                       # P2
+sspower-graph session-refresh [--max-time <sec>]          # P2
 sspower-graph callers <name> [--limit N] [--disambiguate] [--json]
 sspower-graph callees <name> [--limit N] [--json]
+sspower-graph trace <from> <to> [--max-hops N] [--json]   # P2
+sspower-graph impact <file> [--json]                       # P2
+sspower-graph context <task> [--json]                      # P2
 sspower-graph node <name> [--json]
 sspower-graph status [--json]
 sspower-graph serve --mcp                # P0 stub MCP server
 ```
 
 `build` indexes the current working directory (or `--cwd`) into
-`<cwd>/.claude/graph/index.sqlite`. The current build is full-only;
-incremental refresh ships in P2.
+`<cwd>/.claude/graph/index.sqlite`. `refresh` (P2) does an incremental
+update driven by the JSONL `dirty` queue: a two-phase reverse-import
+closure transaction processes only files touched since the last build,
+with automatic fall-through to a full rebuild when >500 files are
+dirty. `session-refresh` plans the right action at SessionStart via
+git filesethash + rowid-stride sampling. Languages supported:
+TypeScript, JavaScript, Python, Go, Rust (all fixture-gated at
+P≥0.85, R≥0.70).
+
+The P2 query verbs round out the surface: `trace` runs a bidirectional
+BFS between two symbols, `impact` reports transitive callers of any
+node defined in a target file, and `context` composes an FTS5-driven
+top-N lookup with caller/callee neighborhoods (capped at 4KB for the
+P4 graph-orchestrator budget).
 
 `callers <name>` returns the call-sites that target `<name>`. If
 multiple symbols match by name, pass `--disambiguate` (or query with
@@ -107,6 +124,19 @@ resolved import, `0` = ambiguous same-name fallback.
 - **`.jsx`/`.tsx` JSX parsing is best-effort.** Component declarations
   and JSX handler call-sites are extracted, but exotic JSX-ts edge
   cases may miss. P5+ adds React-specific framework patterns.
+
+### Performance budgets (P2 acceptance gates, spec §4)
+
+- 10k-file repo, cold `build`: < 60s (M-series Mac)
+- warm `callers` p95: < 1s
+
+Reproduce: `SSPOWER_GRAPH_PERF=1 bash tests/graph/test-perf-10k.sh`. The
+bench is opt-in; CI does not run it. P2 baseline on M-series:
+build ≈ 19s, callers p95 ≈ 0.07ms. Achieved via two optimizations:
+(1) Phase 1 extract runs through a bounded worker pool
+(`SSPOWER_GRAPH_BUILD_CONCURRENCY`, defaults to `os.cpus().length`);
+(2) each per-file extractor batches its rule set into one ast-grep
+`--inline-rules` invocation (cuts subprocess spawns 6× for TS).
 
 > 📐 **[Architecture site →](https://sskys18.github.io/sspower/)** — interactive page covering hooks, bridge, sandbox, and memory. Markdown source: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

@@ -616,13 +616,19 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
-## sspower-graph (P0, stub MCP surface)
+## sspower-graph (P2 shipped, MCP stub surface)
 
 Per-project symbol graph subsystem inspired by codegraph (MIT). Built on
 ast-grep, exposed to Claude Code + sub-agents via MCP stdio.
 
-**Status:** P0 shipped (this branch). P1+ extractor/refresh/full-tool-set
-phased per spec.
+**Status:** P0/P1/P2 shipped at 1.3.0. MCP surface still ships the P0
+`graph_status` stub only — full tool exposure (callers/callees/trace/impact/
+context as MCP tools) lands in P3. CLI surface is the canonical interface
+through P2: `build`, `refresh`, `session-refresh`, `callers`, `callees`,
+`trace`, `impact`, `context`, `node`, `status`. Languages indexed:
+TypeScript, JavaScript, Python, Go, Rust (each fixture-gated at
+P≥0.85, R≥0.70). Perf gates: 10k-file build <60s, warm callers p95 <1s
+(opt-in via `SSPOWER_GRAPH_PERF=1`).
 
 **Entry points:**
 

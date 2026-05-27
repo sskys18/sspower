@@ -1,0 +1,7 @@
+id: py-method
+language: python
+rule:
+  kind: function_definition
+  inside:
+    kind: class_definition
+    stopBy: end

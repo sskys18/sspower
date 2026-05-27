@@ -89,4 +89,14 @@ session_context="<EXTREMELY_IMPORTANT>\nYou have sspower - a workflow engine. Th
 # Uses printf instead of heredoc to work around bash 5.3+ heredoc hang.
 printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$session_context"
 
+# Detached graph session-refresh worker (P2). Fail-OPEN: any failure
+# lands in the log file; never blocks the session start.
+if command -v node >/dev/null 2>&1 && [[ -e "$PWD/.claude/graph/index.sqlite" ]]; then
+  mkdir -p "$HOME/.claude/sspower" 2>/dev/null
+  CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" node "$PLUGIN_ROOT/bin/sspower-graph.mjs" \
+    session-refresh --cwd "$PWD" --max-time 5 \
+    >/dev/null 2>>"$HOME/.claude/sspower/graph-session.log" &
+  disown
+fi
+
 exit 0

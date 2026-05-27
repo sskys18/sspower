@@ -6,9 +6,20 @@ const TS_EXTS = ['.ts', '.tsx', '.mts', '.cts'];
 const JS_EXTS = ['.js', '.jsx', '.mjs', '.cjs'];
 const ALL_EXTS = [...TS_EXTS, ...JS_EXTS];
 
-export function resolveModule(importerAbs, moduleSpec) {
+export function resolveModule(importerAbs, moduleSpec, language) {
+  switch (language) {
+    case 'python': return resolveModulePy(importerAbs, moduleSpec);
+    case 'go':     return resolveModuleGo(importerAbs, moduleSpec);
+    case 'rust':   return resolveModuleRs(importerAbs, moduleSpec);
+    case 'typescript':
+    case 'javascript':
+    default:       return resolveModuleTs(importerAbs, moduleSpec);
+  }
+}
+
+function resolveModuleTs(importerAbs, moduleSpec) {
   if (!moduleSpec.startsWith('./') && !moduleSpec.startsWith('../') && !moduleSpec.startsWith('/')) {
-    return null;  // bare module (npm pkg etc.) — external
+    return null;
   }
   const importerDir = path.dirname(importerAbs);
   const base = path.resolve(importerDir, moduleSpec);
@@ -20,6 +31,124 @@ export function resolveModule(importerAbs, moduleSpec) {
   for (const ext of ALL_EXTS) {
     const candidate = path.join(base, `index${ext}`);
     if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+  }
+  return null;
+}
+
+// Per-language module resolvers — real bodies land with the extractor
+// for each language (Task 9 = Python, Task 10 = Go, Task 11 = Rust).
+function resolveModulePy(importerAbs, moduleSpec) {
+  const importerDir = path.dirname(importerAbs);
+
+  // Relative dots: ".x", "..pkg.mod", "."
+  if (moduleSpec.startsWith('.')) {
+    const dots = moduleSpec.match(/^\.+/)[0].length;
+    let base = importerDir;
+    for (let i = 1; i < dots; i++) base = path.dirname(base);
+    const rest = moduleSpec.slice(dots).replace(/\./g, '/');
+    const candidate = rest ? path.join(base, rest) : base;
+    const py = candidate + '.py';
+    const initF = path.join(candidate, '__init__.py');
+    if (fs.existsSync(py) && fs.statSync(py).isFile()) return py;
+    if (fs.existsSync(initF) && fs.statSync(initF).isFile()) return initF;
+    return null;
+  }
+
+  // Absolute (top-level pkg). Search the project root for a matching path.
+  // Walk up from importerDir looking for the FIRST ancestor that contains a
+  // matching <spec>.py OR <spec>/__init__.py. This matches CPython's
+  // sys.path-first-hit behavior for in-repo packages without simulating sys.path.
+  const rel = moduleSpec.replace(/\./g, '/');
+  let dir = importerDir;
+  for (let i = 0; i < 10; i++) {
+    const py = path.join(dir, rel + '.py');
+    const initF = path.join(dir, rel, '__init__.py');
+    if (fs.existsSync(py) && fs.statSync(py).isFile()) return py;
+    if (fs.existsSync(initF) && fs.statSync(initF).isFile()) return initF;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+function resolveModuleGo(importerAbs, moduleSpec) {
+  // Walk up from importerDir looking for go.mod; read its `module X` line.
+  let dir = path.dirname(importerAbs);
+  let modRoot = null, modPath = null;
+  for (let i = 0; i < 10; i++) {
+    const gomod = path.join(dir, 'go.mod');
+    if (fs.existsSync(gomod)) {
+      const m = fs.readFileSync(gomod, 'utf8').match(/^module\s+(\S+)/m);
+      if (m) { modRoot = dir; modPath = m[1]; }
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!modRoot || !modPath) return null;
+  // moduleSpec must start with modPath to be local; external pkgs return null.
+  if (moduleSpec === modPath) return modRoot;
+  if (!moduleSpec.startsWith(modPath + '/')) return null;
+  const rel = moduleSpec.slice(modPath.length + 1);
+  const dirCandidate = path.join(modRoot, rel);
+  if (!fs.existsSync(dirCandidate) || !fs.statSync(dirCandidate).isDirectory()) return null;
+  // Return the first .go file in the dir (extractor processes each file
+  // separately; the import resolves to the package dir but we need a file
+  // path. Pick lexicographically smallest .go file in the dir).
+  const files = fs.readdirSync(dirCandidate).filter(f => f.endsWith('.go')).sort();
+  if (files.length === 0) return null;
+  return path.join(dirCandidate, files[0]);
+}
+function resolveModuleRs(importerAbs, moduleSpec) {
+  // Find Cargo.toml ancestor.
+  let dir = path.dirname(importerAbs);
+  let crateRoot = null;
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, 'Cargo.toml'))) { crateRoot = dir; break; }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!crateRoot) return null;
+
+  // Normalize moduleSpec into segments, resolving crate::/self::/super::.
+  let segments;
+  if (moduleSpec.startsWith('crate::')) {
+    segments = moduleSpec.slice('crate::'.length).split('::');
+    dir = path.join(crateRoot, 'src');
+  } else if (moduleSpec.startsWith('self::')) {
+    segments = moduleSpec.slice('self::'.length).split('::');
+    dir = path.dirname(importerAbs);
+  } else if (moduleSpec.startsWith('super::')) {
+    let rest = moduleSpec;
+    dir = path.dirname(importerAbs);
+    while (rest.startsWith('super::')) { dir = path.dirname(dir); rest = rest.slice('super::'.length); }
+    segments = rest.split('::');
+  } else {
+    // Rust 2018 `use util::x` from a crate file can target a local crate module.
+    segments = moduleSpec.split('::');
+    dir = path.join(crateRoot, 'src');
+  }
+
+  // Walk down segments; each may be a file <seg>.rs OR dir <seg>/mod.rs.
+  let cur = dir;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    if (!seg) continue;
+    const asFile = path.join(cur, seg + '.rs');
+    const asMod  = path.join(cur, seg, 'mod.rs');
+    const last = i === segments.length - 1;
+    if (last) {
+      if (fs.existsSync(asFile) && fs.statSync(asFile).isFile()) return asFile;
+      if (fs.existsSync(asMod)  && fs.statSync(asMod).isFile())  return asMod;
+      return null;
+    }
+    if (fs.existsSync(path.join(cur, seg)) && fs.statSync(path.join(cur, seg)).isDirectory()) {
+      cur = path.join(cur, seg);
+    } else {
+      return null;
+    }
   }
   return null;
 }

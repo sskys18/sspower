@@ -1,0 +1,6 @@
+id: rs-call
+language: rust
+rule:
+  any:
+    - kind: call_expression
+    - kind: macro_invocation

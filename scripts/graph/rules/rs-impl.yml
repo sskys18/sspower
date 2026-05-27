@@ -1,0 +1,4 @@
+id: rs-impl
+language: rust
+rule:
+  kind: impl_item

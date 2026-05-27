@@ -3,8 +3,17 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const SOURCE_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
-const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.venv', 'venv']);
+const SOURCE_EXTS = new Set([
+  '.ts', '.tsx', '.mts', '.cts',
+  '.js', '.jsx', '.mjs', '.cjs',
+  '.py', '.go', '.rs',
+]);
+const IGNORE_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next',
+  '__pycache__', '.venv', 'venv', '.pytest_cache',
+  'target',   // Rust
+  'vendor',   // Go
+]);
 
 function isGitRepo(dir) {
   try {
