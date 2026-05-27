@@ -162,7 +162,7 @@ build ≈ 19s, callers p95 ≈ 0.07ms. Achieved via two optimizations:
 
 ### Prerequisites
 
-- **Node.js ≥ 22** (required by MCP SDK; check with `node --version`).
+- **Node.js ≥ 22.5** (required by node:sqlite stable surface; check with `node --version`).
 - **ast-grep ≥ 0.43** (`brew install ast-grep` on macOS; `cargo install ast-grep`
   elsewhere). Required for the symbol graph extractor (P1+); P0 install
   works without it but the graph subsystem won't index code until ast-grep

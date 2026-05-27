@@ -638,7 +638,7 @@ tracked via `tests/graph/perf-mcp.mjs`.
 |------|------|
 | `.mcp.json` | Plugin-root MCP server declaration. Registers `sspower-graph` with `command = bin/sspower-graph-bootstrap.sh`. |
 | `bin/sspower-graph.mjs` | CLI + MCP stdio server. P3 exposes 7 graph query tools and the `metric` CLI aggregator. Uses `@modelcontextprotocol/sdk` with `ListToolsRequestSchema` / `CallToolRequestSchema`. |
-| `bin/sspower-graph-bootstrap.sh` | Lazy `bun install` wrapper invoked by `.mcp.json`. Enforces Node ≥22, preserves caller cwd, and fails fast on MCP server-key collisions. |
+| `bin/sspower-graph-bootstrap.sh` | Lazy `bun install` wrapper invoked by `.mcp.json`. Enforces Node ≥22.5, preserves caller cwd, and fails fast on MCP server-key collisions. |
 | `hooks/_intent.sh` (`architecture` class) | Routes prompts like "callers of X" / "how does X reach Y" / "trace X" so future graph-context hook (P4) can inject without colliding with the qa guard. |
 | `scripts/graph-append-dirty.py` | JSONL appender for `<cwd>/.claude/graph/dirty`. Reuses `sspower_mem.lock.acquire_lock` (anchored, O_NOFOLLOW). |
 | `scripts/graph-with-lock.py` | Holds `<cwd>/.claude/graph/.lock` for the duration of a child process. Brackets the cross-language Node↔Python SQLite transaction (P2). |
@@ -646,7 +646,7 @@ tracked via `tests/graph/perf-mcp.mjs`.
 | `__tests__/graph-fixtures/` | vitest fixture harness plus P2 CLI back-compat goldens. |
 | `tests/graph/test-mcp-integration.mjs` | Executable MCP smoke through bootstrap (StdioClientTransport → initialize → tools/list → tools/call for 7 tools). |
 
-**Hard deps (P0):** ast-grep ≥0.43 (brew), Node ≥22 (bootstrap-enforced),
+**Hard deps (P0):** ast-grep ≥0.43 (brew), Node ≥22.5 (bootstrap-enforced),
 bun (committed `bun.lock`), `@modelcontextprotocol/sdk` ^1.0, vitest ^2.1.
 
 **Per-cwd state:**

@@ -8,6 +8,9 @@ CWD="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)"
 END_REASON="$(printf '%s' "$PAYLOAD" | jq -r '.reason // empty' 2>/dev/null)"
 [ -z "$SID" ] || [ -z "$CWD" ] && exit 0
 
-node "$CLAUDE_PLUGIN_ROOT/scripts/graph/mcp-tools/metric.mjs" \
-  reconcile --session "$SID" --cwd "$CWD" ${END_REASON:+--reason "$END_REASON"} || true
+args=(reconcile --session "$SID" --cwd "$CWD")
+if [ -n "$END_REASON" ]; then
+  args+=(--reason "$END_REASON")
+fi
+node "$CLAUDE_PLUGIN_ROOT/scripts/graph/mcp-tools/metric.mjs" "${args[@]}" || true
 exit 0
