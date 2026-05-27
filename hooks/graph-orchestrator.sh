@@ -121,8 +121,11 @@ wait 2>/dev/null || true
 
 DUR=$(( $(date +%s) - START ))
 
-# ---- Per-source 2KB cap (D-P4-2) ---------------------------------------
-SEM_CAP=2048
+# ---- Per-source cap (D-P4-2, tuned T12.3 round 1) ----------------------
+# SEM_CAP=3000 matches legacy semble-context.sh SSPOWER_SEMBLE_MAX_CHARS=3000
+# default so candidate doesn't lose answerable bytes vs baseline.
+# GR_CAP=2048 keeps room for graph context when it returns hits.
+SEM_CAP=3000
 GR_CAP=2048
 MARKER='
 [...truncated]'
