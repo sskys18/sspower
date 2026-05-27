@@ -12,6 +12,25 @@
 
 **Phase budget:** 5 task-days (T1..T5). Anti-goal at 10 task-days or any of 6 §9 triggers.
 
+## Execution conventions (READ FIRST)
+
+This plan can be executed three ways: `sspower:subagent-driven-development` (Claude subagent — can commit), `sspower:executing-plans` (Claude inline — can commit), or via Codex worker (CANNOT commit — repo `AGENTS.md` rule: Codex workers MUST leave changes uncommitted; the supervisor commits).
+
+Every task ends with a step that:
+
+1. Writes the suggested commit message to a temp file (`/tmp/commit-msg-<task>.txt`).
+2. Stages the files via `git add <exact paths>`.
+3. **If Claude (inline or subagent): runs `git commit -F /tmp/commit-msg-<task>.txt` as a standalone Bash invocation per the chokepoint policy.**
+4. **If Codex: STOPS HERE. Reports `staged: <files>; commit-msg: /tmp/commit-msg-<task>.txt` and lets the supervisor run the commit.**
+
+Task-end commit commands in this plan are written as Claude-mode (the recommended path). Codex workers must skip the `git commit` line and stop after staging.
+
+`git push` / `gh pr ...` only appear in Task 28 and are exclusively supervisor actions regardless of executor.
+
+## MCP↔CLI byte-identical contract (load-bearing)
+
+The CLI's `emit(opts, payload, pretty)` calls `JSON.stringify(payload, null, 2) + '\n'` for `--json` output (2-space indent, trailing newline). The MCP dispatch in Task 5 MUST serialize identically — otherwise Task 22 byte parity fails by construction. Use `JSON.stringify(payload, null, 2)` (no trailing newline; the test trims CLI side).
+
 ---
 
 ## File map
@@ -224,34 +243,32 @@ export function readSessionState(cwd) {
 
 - [ ] **Step 3: Patch `hooks/session-start`** to write the state file
 
+Concrete patch: the existing `hooks/session-start` captures stdin into `hook_payload` near the top (`hook_payload="$(cat 2>/dev/null || true)"`). The P3 block REUSES that variable — DO NOT call `cat` again (stdin is drained).
+
 Add after sspower's existing init steps (before the final `exit 0`):
 
 ```bash
-# P3: write per-project session-state file from stdin JSON payload.
-# Stdin already consumed by previous steps? Check existing hook flow.
-# If stdin still available — read here. Otherwise stash earlier in the hook.
-if [ -n "${SSPOWER_HOOK_STDIN:-}" ]; then
-  PAYLOAD="$SSPOWER_HOOK_STDIN"
-else
-  PAYLOAD="$(cat)"
-fi
-SID="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null)"
-CWD="$(printf '%s' "$PAYLOAD" | jq -r '.cwd // empty' 2>/dev/null)"
-SRC="$(printf '%s' "$PAYLOAD" | jq -r '.source // \"unknown\"' 2>/dev/null)"
-if [ -n "$SID" ] && [ -n "$CWD" ]; then
-  STATE_DIR="$HOME/.claude/state/sspower/sessions"
-  mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
-  HASH="$(printf '%s' "$(realpath "$CWD" 2>/dev/null || echo "$CWD")" | shasum -a 256 | cut -c1-8)"
-  TMP="$STATE_DIR/.$HASH.tmp.$$"
-  cat > "$TMP" <<EOF
+# P3: write per-project session-state file. Reuses $hook_payload captured
+# at the top of this hook script — do NOT re-read stdin (already drained).
+if [ -n "${hook_payload:-}" ]; then
+  SID="$(printf '%s' "$hook_payload" | jq -r '.session_id // empty' 2>/dev/null)"
+  CWD="$(printf '%s' "$hook_payload" | jq -r '.cwd // empty' 2>/dev/null)"
+  SRC="$(printf '%s' "$hook_payload" | jq -r '.source // "unknown"' 2>/dev/null)"
+  if [ -n "$SID" ] && [ -n "$CWD" ]; then
+    STATE_DIR="$HOME/.claude/state/sspower/sessions"
+    mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
+    HASH="$(printf '%s' "$(realpath "$CWD" 2>/dev/null || echo "$CWD")" | shasum -a 256 | cut -c1-8)"
+    TMP="$STATE_DIR/.$HASH.tmp.$$"
+    cat > "$TMP" <<EOF
 {"session_id":"$SID","cwd":"$CWD","started_ts":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","hook_event_name":"SessionStart","source":"$SRC"}
 EOF
-  chmod 600 "$TMP"
-  mv -f "$TMP" "$STATE_DIR/$HASH.json"
+    chmod 600 "$TMP"
+    mv -f "$TMP" "$STATE_DIR/$HASH.json"
+  fi
 fi
 ```
 
-**Note:** if `hooks/session-start` already consumes stdin upstream, stash it into `SSPOWER_HOOK_STDIN` at the top of the file before any other parser uses it.
+**Pre-flight grep**: before applying, run `grep -n 'hook_payload' hooks/session-start` to confirm the variable exists and the capture happens before any consumer. If the variable name has drifted in a future revision, update this block's references rather than re-reading stdin.
 
 - [ ] **Step 4: Unit test for session-state.mjs**
 
@@ -749,9 +766,12 @@ export async function dispatch(name, args) {
   const a = args ?? {};
   const effectiveCwd = a.cwd ?? process.cwd();
   const payload = await fn(a);
+  // Byte-identical with CLI emit(): 2-space pretty-print, NO trailing newline.
+  // The newline is CLI-only (emit appends one for terminal readability);
+  // MCP content text matches the JSON body proper.
   return {
-    content: [{ type: 'text', text: JSON.stringify(payload) }],
-    _effectiveCwd: effectiveCwd,   // attached for the request handler to forward to recordEvent
+    content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }],
+    _effectiveCwd: effectiveCwd,
   };
 }
 ```
