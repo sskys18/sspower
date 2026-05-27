@@ -514,13 +514,12 @@ export async function queryContext(cwd, task) {
 
 Repeat the same shape for `queryCallees / queryTrace / queryImpact / queryNode`. Each function returns the **exact JSON object** the existing CLI `--json` mode emits — the back-compat regression test in Task 22 is the truth oracle: any byte-diff fails the gate.
 
-- [ ] **Step 3: Extract `scripts/graph/db.mjs`**
+- [ ] **Step 3: EXTEND `scripts/graph/db.mjs`** (DO NOT REPLACE)
 
-Promote `withDb` + `graphDirFor` from `bin/sspower-graph.mjs` into a shared module so both `queries.mjs` and `bin/sspower-graph.mjs` import the same implementation.
+The existing `scripts/graph/db.mjs` already exports `openDb`, `initSchema`, `nodeId` — used by `build.mjs`, `refresh.mjs`, `session-refresh.mjs`, `bin/sspower-graph.mjs`, and the fixture harness. Preserve all three. ADD two new exports:
 
 ```js
-// scripts/graph/db.mjs
-import { DatabaseSync } from 'node:sqlite';
+// Append to scripts/graph/db.mjs — do not touch existing exports.
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -530,11 +529,18 @@ export function graphDirFor(cwd) {
 
 export async function withDb(graphDir, fn) {
   const dbPath = path.join(graphDir, 'index.sqlite');
-  if (!fs.existsSync(dbPath)) throw new Error(`graph index missing at ${dbPath}`);
-  const db = new DatabaseSync(dbPath, { readOnly: true });
+  // P2 behavior preservation: missing index returns {ok:false, reason:'no-index'}
+  // (see existing runStatus output for non-indexed projects). queries.mjs MUST
+  // mirror this contract — don't throw for missing index.
+  if (!fs.existsSync(dbPath)) {
+    return await fn(null);   // null db sentinel; query functions branch on this
+  }
+  const db = openDb(dbPath);  // reuse existing openDb factory
   try { return await fn(db); } finally { db.close(); }
 }
 ```
+
+Each `queryX` function checks `db === null` and returns the existing P2 no-index shape (e.g. `queryStatus` returns `{ok:false, reason:'no-index'}`; `queryCallers` returns `{name, matches:[], reason:'no-index'}`). Capture the exact no-index shape from current `bin/sspower-graph.mjs` per-handler.
 
 - [ ] **Step 4: Refactor existing CLI handlers in `bin/sspower-graph.mjs`**
 
@@ -951,10 +957,12 @@ feat(graph): graph_status MCP handler (P3-D1 first of 7)
 
 ```js
 import { handler as callersHandler } from '../../scripts/graph/mcp-tools/callers.mjs';
-const c = await callersHandler({ cwd: FIXTURE, name: 'fnA', limit: 10 });
-assert.ok(Array.isArray(c.callers), 'callers array');
-assert.equal(c.name, 'fnA');
-assert.ok(c.limit === 10);
+// `helper` is a known TS fixture symbol called by `caller` (see __tests__/graph-fixtures/ts-js/expected.json)
+const c = await callersHandler({ cwd: FIXTURE, name: 'helper', limit: 10 });
+// P2 shape: { name, matches: [...], limit, disambiguate, truncated }
+assert.ok(Array.isArray(c.matches), 'matches array (P2 shape)');
+assert.equal(c.name, 'helper');
+assert.ok(c.matches.some(m => /caller/.test(m.qname ?? m.name ?? '')), 'caller should appear in helper callers');
 console.log('graph_callers OK');
 ```
 
@@ -1026,8 +1034,10 @@ Codex-mode: stop after `git add`; report `staged: scripts/graph/mcp-tools/caller
 
 ```js
 import { handler as calleesHandler } from '../../scripts/graph/mcp-tools/callees.mjs';
-const cc = await calleesHandler({ cwd: FIXTURE, name: 'fnA' });
-assert.ok(Array.isArray(cc.callees));
+const cc = await calleesHandler({ cwd: FIXTURE, name: 'caller' });
+// P2 shape: { name, matches: [...], limit }
+assert.ok(Array.isArray(cc.matches));
+assert.ok(cc.matches.some(m => /helper/.test(m.qname ?? m.name ?? '')), 'caller should call helper');
 console.log('graph_callees OK');
 ```
 
@@ -1072,8 +1082,9 @@ feat(graph): graph_callees MCP handler
 
 ```js
 import { handler as traceHandler } from '../../scripts/graph/mcp-tools/trace.mjs';
-const t = await traceHandler({ cwd: FIXTURE, from: 'fnA', to: 'fnC', maxHops: 4 });
-assert.ok('path' in t || 'paths' in t, 'trace returns path field');
+const t = await traceHandler({ cwd: FIXTURE, from: 'caller', to: 'helper', maxHops: 4 });
+// P2 shape: { from, to, path: [...], hops } or { from, to, path: null } if no path
+assert.ok('path' in t, 'trace returns path field');
 console.log('graph_trace OK');
 ```
 
@@ -1119,8 +1130,10 @@ feat(graph): graph_trace MCP handler
 
 ```js
 import { handler as impactHandler } from '../../scripts/graph/mcp-tools/impact.mjs';
-const i = await impactHandler({ cwd: FIXTURE, file: 'src/a.ts' });
-assert.ok(Array.isArray(i.symbols));
+// sample-input.ts is the actual fixture file
+const i = await impactHandler({ cwd: FIXTURE, file: 'sample-input.ts' });
+// P2 shape: { file, files: [...], direct_count, transitive_count }
+assert.ok('files' in i || 'direct_count' in i, 'impact returns files/direct_count');
 console.log('graph_impact OK');
 ```
 
@@ -1165,16 +1178,19 @@ feat(graph): graph_impact MCP handler
 
 ```js
 import { handler as nodeHandler } from '../../scripts/graph/mcp-tools/node.mjs';
-const n = await nodeHandler({ cwd: FIXTURE, name: 'fnA' });
-assert.ok(n.source && typeof n.source === 'string');
+const n = await nodeHandler({ cwd: FIXTURE, name: 'helper' });
+// P2 shape: array of node rows (matches[]); each has source/start_line/end_line
+const rows = Array.isArray(n) ? n : (n.matches ?? []);
+assert.ok(rows.length > 0, 'helper should have at least one node row');
 console.log('graph_node OK');
 
 import { handler as ctxHandler } from '../../scripts/graph/mcp-tools/context.mjs';
-const ctx = await ctxHandler({ cwd: FIXTURE, task: 'add caching to fnA' });
-assert.ok(ctx && (Array.isArray(ctx.nodes) || Array.isArray(ctx.candidates)));
+const ctx = await ctxHandler({ cwd: FIXTURE, task: 'add caching to helper' });
+// P2 context return shape: { task, hits: [...], total_chars }
+assert.ok('hits' in ctx, 'graph_context returns hits[]');
 console.log('graph_context OK');
 
-// Length clamp
+// Length clamp at handler level
 let threw = false;
 try { await ctxHandler({ cwd: FIXTURE, task: 'x'.repeat(501) }); } catch { threw = true; }
 assert.ok(threw, 'graph_context did not clamp task length');
@@ -1245,14 +1261,16 @@ T1 done. Commit checkpoint.
 
 - [ ] **Step 1: Write failing test**
 
-Create `tests/graph/test-mcp-metric.mjs`:
+Create `tests/graph/test-mcp-metric.mjs`. Tests use `SSPOWER_GRAPH_STATE_DIR` env override so they NEVER touch real user telemetry under `~/.claude/state/sspower/graph-mcp/`.
 
 ```js
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { recordEvent, SPOOL_DIR } from '../../scripts/graph/mcp-tools/metric.mjs';
+// CRITICAL: set the env BEFORE importing metric.mjs so SPOOL_DIR picks it up.
+process.env.SSPOWER_GRAPH_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-state-'));
+const { recordEvent, SPOOL_DIR } = await import('../../scripts/graph/mcp-tools/metric.mjs');
 
 const real = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-metric-'));
 // Inject a state file so recordEvent picks up a known session id
@@ -1307,7 +1325,11 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { readSessionState } from '../session-state.mjs';
 
-export const SPOOL_DIR = path.join(os.homedir(), '.claude', 'state', 'sspower', 'graph-mcp');
+// State root is overridable via env for tests; production default is
+// ~/.claude/state/sspower/graph-mcp. NEVER hard-code the home path inside
+// tests — they would clobber real telemetry.
+export const SPOOL_DIR = process.env.SSPOWER_GRAPH_STATE_DIR
+  ?? path.join(os.homedir(), '.claude', 'state', 'sspower', 'graph-mcp');
 const MAX_RECORD_BYTES = 4096;
 
 function ensureSpool() {
@@ -1553,9 +1575,29 @@ function writeSessionsAtomic(obj) {
 
 export async function reconcile({ session, cwd, reason }) {
   ensureSpool();
-  // 1. Glob spool files for this session
+  // 1. Glob spool files for this session — both the named session id AND any
+  //    degraded fallback (deg-<sha8(pid:uptime:cwd)>) that was written when
+  //    the SessionStart state file was missing/stale at recordEvent time.
+  //    Degraded files are matched by deriving the same degradedId from the
+  //    cwd if the spool dir contains any deg-* file for this cwd's project.
   const all = fs.readdirSync(SPOOL_DIR);
-  const matching = all.filter(f => f.startsWith(`${session}.`) && f.endsWith('.jsonl'));
+  let matching = all.filter(f => f.startsWith(`${session}.`) && f.endsWith('.jsonl'));
+  // Sweep degraded spools: any deg-*.<pid>.jsonl whose first event's `cwd`
+  // realpath matches our session cwd → claim them for this session.
+  let realCwd;
+  try { realCwd = fs.realpathSync(cwd); } catch { realCwd = cwd; }
+  for (const f of all) {
+    if (!f.startsWith('deg-') || !f.endsWith('.jsonl')) continue;
+    if (matching.includes(f)) continue;
+    try {
+      const first = fs.readFileSync(path.join(SPOOL_DIR, f), 'utf8').split('\n').find(Boolean);
+      if (!first) continue;
+      const rec = JSON.parse(first);
+      let recReal;
+      try { recReal = fs.realpathSync(rec.cwd); } catch { recReal = rec.cwd; }
+      if (recReal === realCwd) matching.push(f);
+    } catch {}
+  }
   let events = [];
   let badLines = 0, totalLines = 0;
   for (const f of matching) {
@@ -1902,8 +1944,9 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import url from 'node:url';
+process.env.SSPOWER_GRAPH_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-state-zc-'));
 import { statePathFor } from '../../scripts/graph/session-state.mjs';
-import { SESSIONS_PATH, SPOOL_DIR } from '../../scripts/graph/mcp-tools/metric.mjs';
+const { SESSIONS_PATH, SPOOL_DIR } = await import('../../scripts/graph/mcp-tools/metric.mjs');
 
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
 const FIX = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-zc-'));
@@ -1939,6 +1982,34 @@ assert.equal(row.eligible, true);
 assert.equal(row.tool_calls, 0);
 assert.equal(row.zero_call_reason, 'no_mcp_invocations');
 console.log('zero-call eligible session OK');
+
+// --- Degraded-session pickup: no SessionStart hook fired, but a tool call
+// records a degraded event. SessionEnd reconcile MUST claim the deg-*.jsonl
+// file via cwd-equality and merge it into the row.
+const FIX2 = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-zc-deg-'));
+fs.mkdirSync(path.join(FIX2, '.claude', 'graph'), { recursive: true });
+// Skip SessionStart entirely — no state file exists
+const { recordEvent: rec2 } = await import('../../scripts/graph/mcp-tools/metric.mjs');
+const orig = process.cwd();
+process.chdir(FIX2);
+rec2({ tool: 'graph_status', ok: true, duration_ms: 5, cwd: FIX2 });
+process.chdir(orig);
+
+const endPayload2 = JSON.stringify({
+  session_id: 'deg-recovery-test', cwd: FIX2, reason: 'user_exit',
+  hook_event_name: 'SessionEnd',
+});
+const r2 = spawnSync('bash', [path.join(PLUGIN_ROOT, 'hooks', 'graph-metric-reconcile.sh')], {
+  input: endPayload2, encoding: 'utf8',
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, SSPOWER_GRAPH_STATE_DIR: process.env.SSPOWER_GRAPH_STATE_DIR },
+});
+assert.equal(r2.status, 0, `degraded reconcile stderr=${r2.stderr}`);
+const sj2 = JSON.parse(fs.readFileSync(SESSIONS_PATH, 'utf8'));
+const drow = sj2.sessions.find(s => s.session_id === 'deg-recovery-test');
+assert.ok(drow, 'no row for degraded recovery');
+assert.equal(drow.tool_calls, 1, 'degraded spool was not claimed by cwd-equality');
+assert.equal(drow.degraded, true);
+console.log('degraded-session reconcile OK');
 ```
 
 - [ ] **Step 2: Run — expect PASS**
@@ -1973,7 +2044,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import url from 'node:url';
-import { recordEvent, reconcile, SESSIONS_PATH, SPOOL_DIR } from '../../scripts/graph/mcp-tools/metric.mjs';
+process.env.SSPOWER_GRAPH_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-state-conc-'));
+const { recordEvent, reconcile, SESSIONS_PATH, SPOOL_DIR } = await import('../../scripts/graph/mcp-tools/metric.mjs');
 import { statePathFor } from '../../scripts/graph/session-state.mjs';
 
 const FIX = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-conc-'));
@@ -2223,13 +2295,13 @@ const client = new Client({ name: 'parity', version: '0' }, { capabilities: {} }
 await client.connect(transport);
 
 const cases = [
-  ['graph_status',  {},                             []],
-  ['graph_callers', { name: 'fnA' },                ['fnA']],
-  ['graph_callees', { name: 'fnA' },                ['fnA']],
-  ['graph_node',    { name: 'fnA' },                ['fnA']],
-  ['graph_trace',   { from: 'fnA', to: 'fnB' },     ['fnA', 'fnB']],
-  ['graph_impact',  { file: 'src/a.ts' },           ['src/a.ts']],
-  ['graph_context', { task: 'add caching to fnA' }, ['add caching to fnA']],
+  ['graph_status',  {},                                 []],
+  ['graph_callers', { name: 'helper' },                 ['helper']],
+  ['graph_callees', { name: 'caller' },                 ['caller']],
+  ['graph_node',    { name: 'helper' },                 ['helper']],
+  ['graph_trace',   { from: 'caller', to: 'helper' },   ['caller', 'helper']],
+  ['graph_impact',  { file: 'sample-input.ts' },        ['sample-input.ts']],
+  ['graph_context', { task: 'add cache to helper' },    ['add cache to helper']],
 ];
 
 for (const [mcpName, mcpArgs, cliArgs] of cases) {
@@ -2418,12 +2490,12 @@ assert.deepEqual(names, [...expected].sort(), 'tool name set mismatch');
 for (const name of expected) {
   const args = {
     graph_status:  {},
-    graph_callers: { name: 'fnA' },
-    graph_callees: { name: 'fnA' },
-    graph_trace:   { from: 'fnA', to: 'fnB' },
-    graph_impact:  { file: 'src/a.ts' },
-    graph_node:    { name: 'fnA' },
-    graph_context: { task: 'add cache to fnA' },
+    graph_callers: { name: 'helper' },
+    graph_callees: { name: 'caller' },
+    graph_trace:   { from: 'caller', to: 'helper' },
+    graph_impact:  { file: 'sample-input.ts' },
+    graph_node:    { name: 'helper' },
+    graph_context: { task: 'add cache to helper' },
   }[name];
   const r = await client.callTool({ name, arguments: args });
   assert.ok(r.content?.[0]?.text, `${name}: no text content`);
