@@ -1,0 +1,61 @@
+{
+  "verdict": "approve-with-followups",
+  "review_target": "implementation diff main..HEAD on feat/graph-P3",
+  "head_commits": [
+    "ac28678 fix(graph): bootstrap preserves caller cwd (P3-D8)",
+    "ac08794 feat(graph): P3 implementation — MCP expansion + adoption metric + agents"
+  ],
+  "summary": "All 8 locked decisions P3-D1..P3-D8 honored. 7 MCP tools, per-project session-state with cwd-equality + degraded fallback, per-process spool JSONL with eligibility filter + strict gate, reviewer agents inherit MCP tools (no explicit tools:), bootstrap preserves caller cwd. Spec §2 contracts implemented. Spec §6 test coverage broadly present.",
+  "followups": [
+    {
+      "severity": "medium",
+      "id": "F1",
+      "issue": "P3-D2 byte-identical contract weakened by trailing-newline mismatch",
+      "evidence": "bin/sspower-graph.mjs:101-103 emits JSON.stringify(...)+\"\\n\"; scripts/graph/mcp-tools/index.mjs:27-28 emits JSON.stringify(payload, null, 2) without newline; tests/graph/test-mcp-cli-parity.mjs:16-20 uses trimEnd()",
+      "fix": "Add \\n in MCP content text OR amend P3-D2 to parse-equivalent JSON (canonical JSON same after JSON.parse)"
+    },
+    {
+      "severity": "medium",
+      "id": "F2",
+      "issue": "P2 back-compat test scrubs volatile fields + skips session-refresh stdout — not strict byte-identical",
+      "evidence": "tests/graph/test-p2-cli-back-compat.mjs:12-28 normalizes volatile fields and reserializes; :45-47 skips session-refresh stdout; no per-case stderr assertion",
+      "fix": "Rename claim to canonical-JSON compat OR add stderr goldens + compare session-refresh after scrub"
+    },
+    {
+      "severity": "medium",
+      "id": "F3",
+      "issue": "P3 tests not wired into package.json graph:tests script",
+      "evidence": "package.json:14 graph:tests omits test-mcp-cli-parity, test-p2-cli-back-compat, test-session-state-*, test-bootstrap-*, test-mcp-metric*",
+      "fix": "Add P3 tests to graph:tests OR add graph:p3-tests script + document as required pre-ship"
+    },
+    {
+      "severity": "low",
+      "id": "F4",
+      "issue": "Metric row schema_version:2 + local O_EXCL lock diverges from spec §4 (v1 + sspower_mem.lock.acquire_lock)",
+      "evidence": "metric.mjs:204-225 writes schema_version:2 with tool_counts+tool_durations; :64-82 implements local lock file",
+      "fix": "Document the schema bump + local lock decision in ARCHITECTURE.md / spec amendment (the divergence is intentional per plan v6 Task 14 decision note)"
+    },
+    {
+      "severity": "low",
+      "id": "F5",
+      "issue": "hooks/session-start writes JSON via heredoc without escaping; unusual paths can corrupt state file",
+      "evidence": "hooks/session-start:104-117 embeds $SID/$CWD/$SRC directly; escape_for_json helper exists but unused for these fields",
+      "fix": "Use jq -n --arg or apply escape_for_json helper to all embedded values"
+    },
+    {
+      "severity": "low",
+      "id": "F6",
+      "issue": "Promised injected EIO write-failure test (spec §4.2) not implemented",
+      "evidence": "No test forces metric write failure; bin/sspower-graph.mjs:286-291 has the catch block but it's untested",
+      "fix": "Add test that makes SSPOWER_GRAPH_STATE_DIR unwritable, asserts MCP call still succeeds + stderr contains metric failure message"
+    }
+  ],
+  "decision_walkthrough": "D1 yes, exactly 7 tools and no graph_routes. D2 mostly yes on JSON payload shape, F1 tracks strict byte identity gap. D3 yes, aggregate strict-gates 50 most-recent eligible. D4 yes core behavior: per-project state, cwd validation, stale fallback, degraded ids. D5 yes, handlers split under scripts/graph/mcp-tools/. D6 functionally yes (pid spool, zero-call rows, reconcile); local lock vs sspower_mem.lock tracked as F4. D7 yes, reviewer agents have no tools: frontmatter and include hard rule. D8 yes, bootstrap preserves caller cwd, bun install in subshell.",
+  "ship_decision": "approve-with-followups = ship. F1-F6 are concrete + small + addressable in post-ship followup PRs without blocking 1.4.0.",
+  "_meta": {
+    "session_id": "019e6802-6a58-72a2-b258-1c6f4c321375",
+    "duration_ms": 177642,
+    "tokens_in": 714717,
+    "tokens_out": 7850
+  }
+}

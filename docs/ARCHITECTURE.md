@@ -616,13 +616,13 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
-## sspower-graph (P3 shipped at 1.4.0-rc.0)
+## sspower-graph (P3 shipped at 1.4.0)
 
 Per-project symbol graph subsystem inspired by codegraph (MIT). Built on
 ast-grep, exposed to Claude Code + sub-agents via MCP stdio.
 
-**Status:** P0/P1/P2 shipped at 1.3.0. P3 ship candidate is
-1.4.0-rc.0: seven MCP tools (`graph_status`, `graph_callers`,
+**Status:** P0/P1/P2 shipped at 1.3.0. P3 shipped at
+1.4.0: seven MCP tools (`graph_status`, `graph_callers`,
 `graph_callees`, `graph_trace`, `graph_impact`, `graph_node`,
 `graph_context`), per-project session-state lookup, and graph MCP
 adoption metrics. CLI surface remains: `build`, `refresh`,
