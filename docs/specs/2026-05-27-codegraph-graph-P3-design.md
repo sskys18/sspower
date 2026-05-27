@@ -148,74 +148,155 @@ exported within `bin/sspower-graph.mjs`; promote to a shared module
 
 ### 4.1 Session identifier
 
-Resolution order inside `recordEvent`:
+**Decision (P3-D4 below)**: env propagation from a shell `export` in
+`hooks/session-start` to the MCP-spawned child does NOT work — Claude
+Code spawns the MCP server from its own parent env, and a hook subshell
+cannot mutate the parent. The `.mcp.json` `env:` block accepts only
+static values, not per-session vars.
 
-1. `process.env.CLAUDE_SESSION_ID` if present.
-2. `process.env.CLAUDE_PROJECT_DIR` + start-of-day timestamp
-   (`YYYYMMDD` in UTC) if `CLAUDE_SESSION_ID` absent.
-3. Fallback: `sha8(pid + boottime + cwd)` — flagged in metric report as
-   `degraded_session_id_count`.
+The MCP server reads the current session id from a **session-state
+file** written by `hooks/session-start`:
 
-The hard preference is (1). The hook contract change to guarantee (1):
-extend `hooks/session-start` to export `CLAUDE_SESSION_ID=<uuid>` into the
-environment of any subsequently-spawned MCP server. Verify Claude Code
-session-start hooks can export env — if not, fall through to (2).
+```
+~/.claude/state/sspower/current-session
+```
+
+Format (single line, atomic write via tempfile + rename):
+
+```
+<session_id>\t<cwd>\t<started_ts>
+```
+
+`hooks/session-start` receives the session id from stdin JSON
+(`{"session_id":"...","cwd":"..."}`) — Claude Code's documented hook
+payload. The hook writes this file before returning. Permissions `0600`.
+
+The MCP server reads this file at the start of each `CallToolRequest`
+(cheap: single `read` of <100 bytes). The file mtime → session bound is
+exact for the current session; if the file is missing or older than
+24 h, the server falls back to `sha8(pid + boottime + cwd)` and flags
+`degraded_session_id_count` in the metric.
+
+Date-based fallback is dropped: it had a non-trivial midnight boundary
+bug AND blurred the denominator (two distinct Claude sessions on the
+same day in the same project would collapse into one).
 
 ### 4.2 Event log writer (`scripts/graph/mcp-tools/metric.mjs`)
 
-Append-only JSONL at `~/.claude/state/sspower/graph-mcp/<session-id>.jsonl`:
+**Per-process spool jsonl** (resolves concurrent-write race) at:
 
-```json
-{"ts":"2026-05-27T14:22:01.337Z","tool":"graph_callers","ok":true,"duration_ms":34,"cwd":"/Users/sskys/proj"}
+```
+~/.claude/state/sspower/graph-mcp/<session-id>.<pid>.jsonl
 ```
 
-Atomic append via `fs.appendFile` (jsonl tolerates partial writes — last
-line discarded by parsers). Best-effort: failure to write is logged to
-`stderr` but NEVER throws back to the MCP request handler. The metric
-must not break query execution.
+Each MCP server process gets its own jsonl. Even if multiple Claude Code
+clients share a session id (unusual but possible with `--continue`), the
+pid suffix guarantees no two writers contend on the same file. Append
+inside one process is serialized by Node's single-threaded event loop;
+each line is a single `fs.appendFile` call with the full record (under
+4KB, well below `PIPE_BUF` 512 atomic-write guarantee — no torn writes
+under POSIX `O_APPEND` semantics).
 
-Directory permissions: `0700` on the per-session dir, `0600` on jsonl
-files. Reuses the existing `~/.claude/state/sspower/` pattern from the
-Codex registry (`scripts/codex-registry.mjs`).
+Record format:
+
+```json
+{"ts":"2026-05-27T14:22:01.337Z","tool":"graph_callers","ok":true,"duration_ms":34,"cwd":"/Users/sskys/proj","schema":1}
+```
+
+`schema:1` field included for forward-compat (future schema bumps add
+fields without breaking aggregator parsing).
+
+Parser contract: skip lines that fail `JSON.parse` (treat as partial /
+truncated mid-write) but continue reading. Do not abort on bad lines.
+A "bad lines / total lines > 1%" ratio is logged as
+`degraded_jsonl_parse_ratio` in the aggregator output for diagnostics.
+
+Best-effort: failure to write is logged to `stderr` but NEVER throws
+back to the MCP request handler. The metric must not break query
+execution. Tested via injected EIO failure in `test-mcp-metric.mjs`.
+
+Directory permissions: `0700` on `~/.claude/state/sspower/graph-mcp/`,
+`0600` on jsonl files. Reuses the existing `~/.claude/state/sspower/`
+pattern from the Codex registry (`scripts/codex-registry.mjs`).
 
 ### 4.3 SessionEnd reconciler
 
-New hook script: `hooks/graph-metric-reconcile.sh` (PostSessionEnd matcher).
+New hook script: `hooks/graph-metric-reconcile.sh` (SessionEnd matcher).
+Receives `session_id` from stdin JSON payload (the same channel
+`hooks/session-start` uses).
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-SID="${CLAUDE_SESSION_ID:-}"
+PAYLOAD="$(cat)"
+SID="$(printf '%s' "$PAYLOAD" | jq -r '.session_id // empty')"
 [ -z "$SID" ] && exit 0
-node "$CLAUDE_PLUGIN_ROOT/scripts/graph/mcp-tools/metric.mjs" reconcile --session "$SID" || true
+node "$CLAUDE_PLUGIN_ROOT/scripts/graph/mcp-tools/metric.mjs" \
+  reconcile --session "$SID" --cwd "$PWD" || true
 exit 0
 ```
 
-`metric.mjs reconcile` reads `<session-id>.jsonl`, computes per-session
-summary `{session_id, tool_calls, unique_tools, first_call_ts,
-last_call_ts}`, and appends to
-`~/.claude/state/sspower/graph-mcp/sessions.json`:
+**Always-write contract (resolves denominator gap)**: the reconciler
+appends a row to `sessions.json` whether or not `<session-id>.*.jsonl`
+exists. If no jsonl exists, the row is `{session_id, tool_calls:0,
+zero_call_reason: "no_mcp_invocations", ...}`. This makes the
+denominator = "every Claude session in which `hooks/session-start` ran"
+— a well-defined, observable population.
+
+`metric.mjs reconcile`:
+
+1. Glob `<session-id>.*.jsonl`, parse each (skip bad lines per §4.2),
+   merge events.
+2. Compute per-session summary (schema below).
+3. Acquire exclusive lock on `~/.claude/state/sspower/graph-mcp/.sessions.lock`
+   via the existing `sspower_mem.lock.acquire_lock` helper (already
+   battle-tested for graph dirty-queue writes).
+4. Read `sessions.json` (treat missing/corrupt as empty), append the new
+   row, tail-truncate, atomic temp+rename.
+5. Release lock.
+6. Move the per-session spool jsonl files to
+   `~/.claude/state/sspower/graph-mcp/archive/<YYYYMM>/` (retention
+   capped at 60 days; older archives pruned on each reconcile).
+
+Per-session row schema:
+
+```json
+{
+  "session_id": "01HXY…",
+  "schema_version": 1,
+  "session_source": "claude_session_id|degraded",
+  "session_start_ts": "2026-05-27T14:18:02Z",
+  "session_end_ts":   "2026-05-27T14:55:42Z",
+  "project_hash": "sha8(cwd)",
+  "eligible": true,
+  "tool_calls": 7,
+  "unique_tools": ["graph_callers","graph_trace"],
+  "first_call_ts": "2026-05-27T14:22:01Z",
+  "last_call_ts":  "2026-05-27T14:55:32Z",
+  "zero_call_reason": null,
+  "degraded": false
+}
+```
+
+`zero_call_reason ∈ {null, "no_mcp_invocations", "session_id_missing",
+"jsonl_unreadable"}`. `degraded:true` whenever
+`session_source == "degraded"` or `zero_call_reason == "jsonl_unreadable"`.
+
+`sessions.json` file shape:
 
 ```json
 {
   "schema_version": 1,
   "updated": "2026-05-27T22:14:00Z",
-  "sessions": [
-    {
-      "session_id": "01HXY…",
-      "tool_calls": 7,
-      "unique_tools": ["graph_callers", "graph_trace"],
-      "first_call_ts": "2026-05-27T14:22:01Z",
-      "last_call_ts":  "2026-05-27T14:55:32Z"
-    }
-  ]
+  "sessions": [ <row>, <row>, ... ]
 }
 ```
 
 Tail-truncate `sessions[]` to most-recent 500 entries on each write,
-ordered by `last_call_ts desc` (sessions with no `last_call_ts` are
-dropped first). Atomic via write-tempfile + `fs.rename` (POSIX rename
-atomic on same fs).
+ordered by `session_end_ts desc` (sessions missing `session_end_ts`
+fall back to `last_call_ts`, then to `first_call_ts`, then dropped).
+Atomic via write-tempfile + `fs.rename` (POSIX rename atomic on same fs)
+under the held lock.
 
 ### 4.4 Aggregator CLI
 
@@ -228,7 +309,7 @@ Prints (or returns JSON):
 ```json
 {
   "window": 50,
-  "sessions_total": 50,
+  "eligible_sessions_total": 50,
   "sessions_with_call": 47,
   "adoption_rate": 0.94,
   "tool_histogram": {
@@ -238,18 +319,52 @@ Prints (or returns JSON):
   },
   "p95_duration_ms_by_tool": { "graph_callers": 47, ... },
   "degraded_session_id_count": 0,
-  "gate_met": true
+  "degraded_jsonl_parse_ratio": 0.0,
+  "ineligible_sessions_excluded": 12,
+  "gate_met": false
 }
 ```
 
-`gate_met = sessions_with_call >= 50 AND adoption_rate >= 1.0`.
+`gate_met = eligible_sessions_total >= 50 AND every row in that window has tool_calls >= 1`
+(strict per §4.4 above; `adoption_rate` is informational).
 
-Note: spec §4 reads "≥1 call per session × 50 sessions". Strict reading
-= 50 *consecutive* sessions all with ≥1 call. Aggregator implements
-strict: gate_met iff every one of the 50 most-recent sessions has
-tool_calls ≥1.
+Note: parent spec §4 P3 reads "≥1 call per session × 50 sessions".
+
+**Denominator definition (resolves spec ambiguity)**: a "session" is a
+Claude Code session for which `hooks/session-start` AND the
+`SessionEnd` reconciler both fired and `project_hash` matches a project
+that contains an `sspower-graph` index (i.e. `.claude/graph/`
+directory). Sessions in projects with no graph index are excluded —
+they cannot use MCP tools, so including them would dilute the
+adoption signal toward zero by construction. This is recorded in the
+row as `eligible: true|false` and the aggregator filters
+`eligible == true` before applying the gate.
+
+Aggregator implements **strict** reading: gate_met iff every one of
+the 50 most-recent eligible sessions has tool_calls ≥1.
 
 ## 5. Sub-agent .md updates
+
+### 5.0 Frontmatter `tools:` decision
+
+Verified Claude Code agent semantics (current behavior, plugin
+marketplace 2026-05-27): an agent file with no `tools:` frontmatter
+field inherits the full toolset of the spawning context, INCLUDING all
+MCP tools registered at the plugin level. Explicit `tools:` field
+*restricts* the toolset (allowlist). `codex-rescue.md` uses this
+restriction intentionally per D10.
+
+**Decision (P3-D7 below)**: `code-reviewer.md`, `sanity-reviewer.md`,
+`security-reviewer.md` do NOT add explicit `tools:` frontmatter. They
+inherit, so the 7 MCP tools become available without further config.
+The P3 agent-smoke test verifies each agent can in fact call ≥1 MCP
+tool — if Claude Code semantics change, the smoke test red-flags it.
+
+If a future Claude Code release changes inheritance default to deny,
+the spec amendment is: add explicit `tools:` with `mcp__sspower-graph__*`
+wildcard to all three agents. No prose change needed.
+
+### 5.1 Section structure
 
 Each of the 3 files gets a new `## Graph tool guidance` section appended
 as the last section of the body (after the existing role instructions,
@@ -259,7 +374,7 @@ lifted verbatim from parent spec §6:
 > Call graph tools BEFORE delegating to the Explore subagent; never
 > invoke graph tools from inside Explore.
 
-### 5.1 `agents/code-reviewer.md` (role-tuned)
+### 5.2 `agents/code-reviewer.md` (role-tuned)
 
 ```markdown
 ## Graph tool guidance
@@ -279,7 +394,7 @@ Hard rule: call graph tools BEFORE delegating to the Explore subagent;
 never invoke graph tools from inside Explore.
 ```
 
-### 5.2 `agents/sanity-reviewer.md` (role-tuned)
+### 5.3 `agents/sanity-reviewer.md` (role-tuned)
 
 ```markdown
 ## Graph tool guidance
@@ -299,7 +414,7 @@ Hard rule: call graph tools BEFORE delegating to the Explore subagent;
 never invoke graph tools from inside Explore.
 ```
 
-### 5.3 `agents/security-reviewer.md` (role-tuned)
+### 5.4 `agents/security-reviewer.md` (role-tuned)
 
 ```markdown
 ## Graph tool guidance
@@ -325,8 +440,10 @@ never invoke graph tools from inside Explore.
 |---|---|---|---|
 | Unit | per-tool handler with fixture DB returns CLI-equivalent JSON | `tests/graph/test-mcp-tools-unit.mjs` (new) | green |
 | Integration | MCP smoke harness extended: listTools = 7 entries; callTool on each returns parseable payload | `tests/graph/test-mcp-stub.mjs` (extend existing) | green |
-| Metric | synthesized event jsonl → reconciler → aggregator gate output | `tests/graph/test-mcp-metric.mjs` (new) | gate logic correct on synthetic 50-session input |
-| Agent | manual: invoke each agent in a fixture project; transcript shows ≥1 graph_* call before any Explore delegation | manual smoke (recorded in plan execution log) | each agent calls ≥1 graph tool |
+| P2 regression | each P2 CLI verb (`status`, `callers`, `callees`, `trace`, `impact`, `context`, `node`, `build`, `refresh`, `session-refresh`) — assert exit code, stderr, argv parsing, and `--json` output byte-identical to a pre-P3 golden | `tests/graph/test-p2-cli-back-compat.mjs` (new); golden output captured from `bd782c3` against each fixture pack | byte-identical match required |
+| Metric concurrency | 50 parallel `CallToolRequest` calls in one session → reconciler produces 1 row with correct `tool_calls:50`; no jsonl corruption | `tests/graph/test-mcp-metric-concurrency.mjs` (new) | row count + tool_calls exact |
+| Metric | synthesized event jsonl → reconciler → aggregator gate output (incl. zero-call sessions, ineligible projects, degraded fallback) | `tests/graph/test-mcp-metric.mjs` (new) | gate logic correct on synthetic 50-session input |
+| Agent | manual: invoke each agent in a fixture project (graph index present); transcript shows ≥1 graph_* call before any Explore delegation | manual smoke (recorded in plan execution log) | each agent calls ≥1 graph tool |
 | Perf | per-tool p95 latency over 100 invocations on 10k-file fixture | `tests/graph/perf-mcp.mjs` (new, opt-in via `SSPOWER_GRAPH_PERF=1`) | p95 ≤ 300ms (advisory) |
 
 All Vitest harness tests under `__tests__/graph-fixtures/` remain green
@@ -352,6 +469,8 @@ without modification — the MCP layer doesn't touch the index schema.
 | Spec §4 reads ≥1 call per session × 50 sessions ambiguously | Implementation locks the strict reading (every one of the most-recent 50 = ≥1 call). Documented in §4.4 of this spec. If user prefers looser reading (≥50% of last 50), parameterize via `--threshold 0.5`. |
 | Metric harness sandbags MCP latency | `recordEvent` writes async, never blocks the MCP response. Failure logged to stderr, never thrown. Verified by injecting a write failure in tests. |
 | Tool name collision with future codegraph install | All 7 tools prefixed `graph_`; codegraph upstream uses `codegraph_*`. No collision today; document the convention. |
+| MCP server-key collision (`.mcp.json` `sspower-graph` key already used in a user's config) | Bootstrap script `bin/sspower-graph-bootstrap.sh` adds a preflight: if `~/.claude.json` or `<cwd>/.mcp.json` defines `mcpServers.sspower-graph` with a `command` that doesn't match `${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh`, log a clear stderr error and exit non-zero. Document the namespaced override path (`SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2`) in README. Coexistence with upstream `codegraph install`: documented as supported (distinct server keys + distinct tool prefixes). |
+| P2 CLI back-compat regression from §3 scaffolding refactor | The "P2 regression" test gate (§6) gates merge: any byte-diff in `--json` output, exit code, or argv parsing fails CI. Pre-P3 golden output captured from commit `bd782c3` against all 5 P2 fixture packs. |
 
 ## 9. Anti-goal circuit-breaker (parent §1)
 
@@ -363,44 +482,84 @@ Estimate: 5 task-days.
 - T4: integration + perf tests + perf gate verification.
 - T5: plan-review + ship + tag + handoff.
 
-If execution exceeds 10 task-days (2 weeks) measured from worktree
-creation to merged PR, fire spec §1 anti-goal: abandon P3 in-tree, ship
-`codegraph install` companion script that installs the upstream MIT
-package and aliases its tools under `sspower-graph` prefix. Decision
-point: 10 task-days elapsed without merged PR → trigger.
+**Trigger** (any one fires the anti-goal — `codegraph install`
+companion script instead):
 
-## 10. Locked decisions (P3-specific, additions to parent §10)
+1. **Hard time gate**: 10 task-days elapsed from worktree creation
+   without merged PR.
+2. **Session-id contract failure**: end of T2 (metric harness landed)
+   with `CLAUDE_SESSION_ID` propagation still unverified — i.e. the
+   `~/.claude/state/sspower/current-session` file is empty or absent
+   after a real Claude Code session-start hook fires in a test repo.
+3. **Concurrency gate failure**: `test-mcp-metric-concurrency.mjs`
+   cannot pass after one fix attempt — implies the metric design
+   itself is wrong, not a tactical bug.
+4. **Agent invocation impossibility**: any of the 3 agents cannot
+   call any MCP tool in the smoke test due to Claude Code permission
+   semantics, AND adding explicit `tools:` frontmatter does not fix it.
+5. **P2 regression unresolvable**: P2 back-compat test gate fails and
+   remains failing after one fix attempt — the refactor in §3 broke
+   shipped behavior and cannot be undone without rewriting the MCP
+   approach.
+6. **MCP cold-start p95 > 1s** on the fixture even after moving SDK
+   imports to module top-level (the only known tuning lever).
 
-- **D11**: 7 MCP tools = `graph_{status,callers,callees,trace,impact,node,context}`.
+Any trigger fires: stop P3 in-tree work, draft `codegraph install`
+companion plan, ship that instead.
+
+## 10. Locked decisions (P3-specific; parent §10 uses D1..D11, so this
+spec uses prefix `P3-D*` to avoid collision)
+
+- **P3-D1**: 7 MCP tools = `graph_{status,callers,callees,trace,impact,node,context}`.
   `graph_routes` deferred to P4. Tool names lock at P3; renames after P3
   ship require a parent-spec amendment.
-- **D12**: Output shape is `{content:[{type:'text', text:<JSON>}]}` where
-  the JSON matches CLI `--json` byte-identical. Tests assert exact match
-  against `sspower-graph <verb> --json` golden output on fixture DB.
-- **D13**: Adoption metric uses strict reading of spec §4 P3 — every one
-  of the 50 most-recent sessions must show ≥1 graph tool call. Looser
+- **P3-D2**: Output shape is `{content:[{type:'text', text:<JSON>}]}`
+  where the JSON matches CLI `--json` byte-identical. Tests assert
+  exact match against `sspower-graph <verb> --json` golden output on
+  fixture DB.
+- **P3-D3**: Adoption metric uses strict reading of parent §4 P3 — every
+  one of the 50 most-recent **eligible** sessions must show ≥1 graph
+  tool call. Eligibility = project has `.claude/graph/` index. Looser
   thresholds are CLI flags, not the default.
-- **D14**: `CLAUDE_SESSION_ID` is the canonical session identifier. Date-
-  based fallback is degraded; sha8(pid+boottime+cwd) is last-resort.
-  Hook contract update may be required; probe early.
-- **D15**: Per-tool handlers live under `scripts/graph/mcp-tools/<tool>.mjs`,
-  not inlined in `bin/sspower-graph.mjs`. The bin file orchestrates only.
+- **P3-D4**: Session id is read from
+  `~/.claude/state/sspower/current-session` (written by
+  `hooks/session-start` from its stdin payload). No env propagation
+  required. Fallback `sha8(pid+boottime+cwd)` only when the state file
+  is missing or stale (>24h); flagged as `degraded` in metric output.
+- **P3-D5**: Per-tool handlers live under
+  `scripts/graph/mcp-tools/<tool>.mjs`, not inlined in
+  `bin/sspower-graph.mjs`. The bin file orchestrates only. Shared db
+  helpers promoted to `scripts/graph/db.mjs` if not already.
+- **P3-D6**: Metric concurrency uses per-process spool jsonl
+  (`<session-id>.<pid>.jsonl`); reconcile merges spool files under
+  exclusive lock via `sspower_mem.lock.acquire_lock`. SessionEnd
+  reconciler always writes a row (zero-call sessions included) so the
+  denominator is observable.
+- **P3-D7**: Reviewer agents (`code-reviewer`, `sanity-reviewer`,
+  `security-reviewer`) do NOT receive explicit `tools:` frontmatter;
+  they inherit the spawning context's toolset, which includes MCP
+  tools. Verified at P3-implementation time via smoke test; if
+  semantics change, amendment adds explicit `tools: mcp__sspower-graph__*`
+  wildcard.
 
 ## 11. Open questions (to resolve in plan, not blocking spec)
 
-1. Does Claude Code's session-start hook contract permit exporting env
-   vars consumed by MCP child processes? Probe before T2.
-2. Does the existing `tests/graph/test-mcp-stub.mjs` harness need a
+1. Does the existing `tests/graph/test-mcp-stub.mjs` harness need a
    fixture DB seeded before listTools, or does the SDK tolerate a missing
    DB until callTool? Probe before T1.
-3. `graph_context "<task>"` underlying handler accepts free-form
-   task strings. Does the MCP input validation need to constrain length
-   to avoid token-budget blowup in caller subagents? Decision: clamp
-   `task.length ≤ 500`; document in tool schema.
-4. Sub-agent `.md` updates — should each agent's frontmatter `tools:`
-   field be extended to explicitly list the 7 MCP tools? Today agents
-   without an explicit `tools:` line inherit "All tools". Decision pending
-   verification of Claude Code agent semantics.
+2. `graph_context "<task>"` underlying handler accepts free-form task
+   strings. Confirm MCP input validation clamps `task.length ≤ 500` to
+   avoid token-budget blowup in caller subagents.
+3. P2 golden capture path — the `test-p2-cli-back-compat.mjs` golden
+   needs to be regenerated whenever a future P3+ change intentionally
+   shifts CLI output. Define the regeneration script
+   (`tests/graph/regenerate-cli-goldens.sh`) at T1 to avoid friction
+   when the intentional shift comes.
+
+Closed (decisions moved to §10):
+
+- Session id contract → P3-D4.
+- Frontmatter `tools:` field → P3-D7.
 
 ---
 
