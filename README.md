@@ -67,7 +67,7 @@
 
 ## sspower-graph
 
-### CLI (P1 + P2)
+### CLI (P1 + P2 + P4)
 
 ```
 sspower-graph build [--cwd <dir>]
@@ -80,7 +80,8 @@ sspower-graph impact <file> [--json]                       # P2
 sspower-graph context <task> [--json]                      # P2
 sspower-graph node <name> [--json]
 sspower-graph status [--json]
-sspower-graph serve --mcp                # P3 MCP server (7 graph tools)
+sspower-graph routes [--framework F] [--limit N] [--json] # P4 (Express only; P5+ adds more)
+sspower-graph serve --mcp                # MCP server (P3 7 tools + P4 graph_routes = 8 total)
 ```
 
 `build` indexes the current working directory (or `--cwd`) into
@@ -140,6 +141,39 @@ resolved import, `0` = ambiguous same-name fallback.
 - **`.jsx`/`.tsx` JSX parsing is best-effort.** Component declarations
   and JSX handler call-sites are extracted, but exotic JSX-ts edge
   cases may miss. P5+ adds React-specific framework patterns.
+
+### Hooks orchestration (P4)
+
+`hooks/graph-orchestrator.sh` replaces `semble-context.sh` in the
+UserPromptSubmit chain. It forks `semble_rs plan` + `sspower-graph
+context` concurrently (5s timeout each, 6s wall budget) and emits one
+merged `additionalContext` block (3KB semble + 2KB graph per-source
+caps, independently truncated). Fail-open: graph absent OR dirty queue
+non-empty OR `SSPOWER_GRAPH_ORCHESTRATOR=off` → `exec semble-context.sh`
+fallback (no behavior change for graph-less repos).
+
+`hooks/auto-review.sh` extends its cache key with `||GRAPH_VERSION||
+GRAPH_HASH` (append-only; graph-absent keeps the pre-graph hash
+byte-identical). On cache miss, an enrichment block parses changed
+files from the diff and runs `sspower-graph impact <file> --json
+--timeout 3s` in parallel (cap 8 files) — appending a `# Graph impact`
+section to the Codex review prompt. Skips silently when the dirty
+queue is non-empty (stale-data avoidance).
+
+Environment variables (P4):
+
+- `SSPOWER_GRAPH_ORCHESTRATOR=on|off` — controls the orchestrator
+  swap. Default `on` after the v1.5.0 eval gate (balanced pass:
+  answerable +0.10, bytes ratio 1.40, p95 1169ms over 20 prompts).
+  Set to `off` to revert to pure semble injection.
+- `SSPOWER_SEMBLE=0` — disables the semble child only (graph still
+  injects).
+- `SSPOWER_GRAPH=0` — disables the graph child only (semble still
+  injects).
+
+Eval reproduction: `bun run graph:p4-eval-baseline` then
+`bun run graph:p4-eval-candidate` then `bun run graph:p4-eval-gate`.
+The gate exits 0/1 — binary verdict, no human judgment.
 
 ### Performance budgets (P2 acceptance gates, spec §4)
 

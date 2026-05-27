@@ -53,7 +53,7 @@ exec_semble_fallback() {
   exec "$SEMBLE_HOOK" <<< "$INPUT"
 }
 
-[[ "${SSPOWER_GRAPH_ORCHESTRATOR:-off}" != "on" ]] && exec_semble_fallback
+[[ "${SSPOWER_GRAPH_ORCHESTRATOR:-on}" != "on" ]] && exec_semble_fallback
 command -v jq >/dev/null 2>&1 || exec_semble_fallback
 
 PROMPT="$(printf '%s' "$INPUT" | jq -r '.prompt // empty' 2>/dev/null)"
