@@ -2168,9 +2168,9 @@ Harness loop now includes the go pack.
 
 ```bash
 echo 'fn foo() {}' > /tmp/probe.rs
-ast-grep run -p 'fn $NAME($$$)' --lang rust --json=compact /tmp/probe.rs
+ast-grep run -p 'fn $NAME($$$) {}' --lang rust --json=compact /tmp/probe.rs
 ```
-Expected: JSON match.
+Expected: JSON match (Rust parser requires the body for `function_item` recognition; a bodyless `fn $NAME($$$)` pattern returns `[]` even though the grammar supports the kind — confirmed against ast-grep 0.43.0).
 
 - [ ] **Step 11.2: Rule files**
 
