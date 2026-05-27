@@ -7,6 +7,7 @@ import { walkSources } from './walk.mjs';
 import { extractorFor } from './extract.mjs';
 import { resolveModule, resolveEdges } from './resolve.mjs';
 import { openDb, initSchema, nodeId } from './db.mjs';
+import { truncateDirty } from './dirty.mjs';
 
 // Phase 1 worker concurrency. Each extractor spawn is an ast-grep subprocess
 // (~5ms cold) -- with 6 rules per file the serial path dominates the 10k-file
@@ -69,7 +70,7 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
       let extracted;
       try {
         const ex = await extractorFor(language);
-        extracted = await ex.extractFile({ absPath: filePath, source, language });
+        extracted = await ex.extractFile({ absPath: filePath, source, language, rootDir });
       }
       catch (e) {
         log(`skip extract ${filePath}: ${e.message}`);
@@ -192,6 +193,13 @@ export async function build({ rootDir, graphDir, log = () => {} }) {
     throw e;
   }
   log(`build done: ${fileCount} files, ${allNodes.length} nodes, ${edges.length} edges`);
+
+  // Full build supersedes any pending incremental work. Clear the dirty
+  // queue so the next session-refresh sees a clean slate -- otherwise a
+  // refresh that fell through to full-rebuild (thrash >500 or closure
+  // cap) would leave stale entries that re-trigger the same fallback
+  // loop forever.
+  await truncateDirty(graphDir);
 
   await fs.writeFile(
     path.join(graphDir, 'version'),

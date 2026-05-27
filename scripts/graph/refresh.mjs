@@ -87,7 +87,7 @@ export async function refresh({ rootDir, graphDir, log = () => {} }) {
     let extracted;
     try {
       const ex = await extractorFor(lang);
-      extracted = await ex.extractFile({ absPath, source, language: lang });
+      extracted = await ex.extractFile({ absPath, source, language: lang, rootDir });
     } catch (e) {
       log(`skip extract ${absPath}: ${e.message}`);
       extractFailures++;

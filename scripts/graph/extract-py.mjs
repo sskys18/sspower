@@ -40,12 +40,17 @@ function moduleNameFromPath(absPath) {
   return path.basename(absPath, path.extname(absPath));
 }
 
-function moduleQualifiedNameFromPath(absPath) {
-  // Graph builds run from the project root, so cwd-relative paths are stable module qualified names.
-  return path.relative(process.cwd(), absPath).replace(/\.py$/, '').split(path.sep).join('/');
+function moduleQualifiedNameFromPath(absPath, rootDir) {
+  // Module qname must be stable across invokers — derive from the build's
+  // rootDir, never the ambient process.cwd(). Otherwise running
+  // `sspower-graph build --cwd /repo` from a different directory than
+  // `/repo` shifts every Python qname, invalidating IDs and forcing a
+  // false full rebuild.
+  const base = rootDir ?? process.cwd();
+  return path.relative(base, absPath).replace(/\.py$/, '').split(path.sep).join('/');
 }
 
-export async function extractFile({ absPath, source, language = 'python' }) {
+export async function extractFile({ absPath, source, language = 'python', rootDir }) {
   const buckets = await runRulesBatch(RULES_INLINE, absPath);
   const fns     = buckets.get(RULE_ID.function) ?? [];
   const classes = buckets.get(RULE_ID.class)    ?? [];
@@ -140,7 +145,7 @@ export async function extractFile({ absPath, source, language = 'python' }) {
       .pop();
     if (!enclosing) {
       const name = moduleNameFromPath(absPath);
-      const qualifiedName = moduleQualifiedNameFromPath(absPath);
+      const qualifiedName = moduleQualifiedNameFromPath(absPath, rootDir);
       const byteEnd = Buffer.byteLength(source, 'utf8');
       const moduleNode = {
         kind: 'module', name, qualifiedName,
