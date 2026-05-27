@@ -21,6 +21,7 @@
     --c-impl:#60a5fa; --c-json:#2dd4bf; --c-spec:#fbbf24; --c-qual:#4ade80;
     /* ---- fix loop ---- */
     --c-a:#a78bfa; --c-b:#7b8494; --c-bad:#fb7185; --c-good:#4ade80;
+    --cc:var(--c-route); --from:#3a4150; --to:#3a4150;
     --mono:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     /* ---- spacing scale (4/8 grid) ---- */
     --s2:8px; --s3:16px; --s4:24px; --s5:32px; --s6:48px; --s7:64px;
@@ -47,7 +48,7 @@
   /* ============ FIXED CANVAS — connectors anchor to this ============ */
   .canvas{
     position:relative; z-index:1;
-    width:1280px; height:2200px; margin:0 auto;
+    width:1280px; height:2580px; margin:0 auto;
     padding:48px 44px 56px;
   }
   /* SVG connector layer — sits above surfaces, below text-bearing nodes */
@@ -123,6 +124,8 @@
   .track.fix-top{height:154px}
   .track.fix-bottom{justify-content:flex-start; margin-left:132px}
   .track.fix-bottom{height:218px}
+  .track.hooks-row{height:178px; align-items:stretch}
+  .track.hooks-row + .track.hooks-row{margin-top:18px}
 
   /* --- start / end caps --- */
   .cap{
@@ -271,6 +274,10 @@
     border-color:rgba(251,113,133,.22);
     background:rgba(251,113,133,.026);
   }
+  .panel.hooks{
+    border-color:rgba(167,139,250,.24);
+    background:rgba(167,139,250,.026);
+  }
   /* corner accent tick to read as a "zoom frame" */
   .panel::before, .panel::after{
     content:""; position:absolute; width:16px; height:16px; pointer-events:none;
@@ -287,6 +294,8 @@
   }
   .panel.fix::before{border-color:rgba(251,113,133,.5)}
   .panel.fix::after{border-color:rgba(251,113,133,.5)}
+  .panel.hooks::before{border-color:rgba(167,139,250,.5)}
+  .panel.hooks::after{border-color:rgba(167,139,250,.5)}
 
   /* detail-tier cards: visually quieter than the primary pipeline */
   .panel .ph{
@@ -325,6 +334,40 @@
   .panel.fix .conn{ flex-direction:column; align-items:center; width:108px; gap:7px; }
   .panel.fix .conn .line{display:flex; align-items:center; width:100%}
   .panel.fix .conn.plain{width:62px}
+  .panel.hooks .ph{width:190px; padding:18px 14px 15px}
+  .panel.hooks .ph.wide{width:218px}
+  .panel.hooks .ph.graph{width:236px}
+  .panel.hooks .conn{width:28px}
+  .hook-event{
+    align-self:center; flex-shrink:0; width:112px;
+    font-family:var(--mono); font-size:10px; font-weight:700; line-height:1.42;
+    color:var(--tx); text-align:center; padding:12px 10px; border-radius:12px;
+    background:var(--surf-2); border:1px solid rgba(167,139,250,.38);
+    box-shadow:var(--el-0);
+  }
+  .fork{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px;
+  }
+  .fork .chip{padding:8px 9px}
+  .merge-note{
+    margin-top:10px; font-family:var(--mono); font-size:9px; line-height:1.45;
+    color:var(--dim); border:1px dashed rgba(45,212,191,.36);
+    background:rgba(45,212,191,.07); border-radius:10px; padding:8px 9px;
+  }
+  .tool-list{
+    display:grid; grid-template-columns:repeat(2,1fr); gap:5px; margin-top:11px;
+  }
+  .tool-list span{
+    font-family:var(--mono); font-size:8.5px; color:var(--dim);
+    background:#080a0e; border:1px solid var(--line-soft); border-radius:7px;
+    padding:5px 6px; white-space:nowrap;
+  }
+  .mini-badge{
+    display:inline-flex; align-items:center; gap:5px; margin-top:10px;
+    font-family:var(--mono); font-size:8.5px; font-weight:700;
+    color:#c4b5fd; border:1px solid rgba(167,139,250,.46);
+    background:rgba(167,139,250,.12); border-radius:999px; padding:5px 8px;
+  }
   .vlabel{
     font-family:var(--mono); font-size:9.5px; font-weight:700;
     padding:4px 11px; border-radius:999px; border:1px solid; white-space:nowrap;
@@ -352,7 +395,7 @@
 
   /* ===================== single-page PDF export ===================== */
   @media print{
-    @page{ size:1280px 2200px; margin:0 }
+    @page{ size:1280px 2580px; margin:0 }
     html,body{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
     body{ min-width:0 }
   }
@@ -363,7 +406,7 @@
   <div class="canvas">
 
     <!-- ===== SVG connector layer: drill-down "zoom" curves ===== -->
-    <svg class="links" viewBox="0 0 1280 2200" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="links" viewBox="0 0 1280 2580" preserveAspectRatio="none" aria-hidden="true">
       <defs>
         <!-- userSpaceOnUse: gradient maps to absolute canvas y so every path
              segment shares one consistent fade, regardless of its bbox -->
@@ -642,6 +685,88 @@
 
           <div class="cap end">✓&nbsp;TASK<br>CLEARED</div>
 
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== TIER 4 — P4 HOOK ORCHESTRATION ===================== -->
+    <div class="stage">
+      <div class="tier-label detail">
+        <span class="pill"></span>
+        <span class="idx">04</span>
+        <span class="tag">P4 Hooks &amp; Graph</span>
+        <span class="desc">v1.5.0 orchestration layer · prompt context + review enrichment</span>
+      </div>
+
+      <div class="panel hooks">
+        <div class="track hooks-row">
+
+          <div class="hook-event">UserPromptSubmit<br>event</div>
+          <div class="conn" style="--from:#3a4150;--to:var(--c-route)"><i></i><b></b></div>
+
+          <div id="hook-1" class="ph wide" style="--cc:var(--c-route)">
+            <div class="bar"><div class="badge">🧭</div><span class="sess a">NEW SLOT</span></div>
+            <div class="nm">graph-orchestrator.sh</div>
+            <div class="ds">Replaces <b>semble-context.sh</b> in the prompt hook chain.</div>
+            <div class="fork">
+              <div class="chip"><div class="cn">semble_rs plan</div><div class="cd">5s · 3KB cap</div></div>
+              <div class="chip"><div class="cn">sspower-graph context</div><div class="cd">5s · 2KB cap</div></div>
+            </div>
+          </div>
+          <div class="conn" style="--from:var(--c-route);--to:var(--c-plan)"><i></i><b></b></div>
+
+          <div id="hook-2" class="ph" style="--cc:var(--c-plan)">
+            <div class="bar"><div class="badge">⏱️</div><span class="sess b">6S WALL</span></div>
+            <div class="nm">merge contexts</div>
+            <div class="merge-note">fail-open: graph absent · dirty queue non-empty · SSPOWER_GRAPH_ORCHESTRATOR=off → exec semble-context.sh</div>
+          </div>
+          <div class="conn" style="--from:var(--c-plan);--to:var(--c-json)"><i></i><b></b></div>
+
+          <div id="hook-3" class="ph" style="--cc:var(--c-json)">
+            <div class="bar"><div class="badge">📎</div></div>
+            <div class="nm">additionalContext</div>
+            <div class="ds">Merged Semble plan + graph context is attached to the user prompt.</div>
+          </div>
+        </div>
+
+        <div class="track hooks-row">
+
+          <div class="hook-event">PreToolUse:Bash<br>event</div>
+          <div class="conn" style="--from:#3a4150;--to:var(--c-gate)"><i></i><b></b></div>
+
+          <div id="hook-4" class="ph wide" style="--cc:var(--c-gate)">
+            <div class="bar"><div class="badge">🛡️</div><span class="sess a">CACHE</span></div>
+            <div class="nm">auto-review.sh</div>
+            <div class="ds">Key includes <b>GRAPH_VERSION</b> + sha8 <b>GRAPH_HASH</b>.</div>
+            <div class="merge-note">cache miss → run impact in parallel per changed file; skip silently when dirty queue is non-empty</div>
+          </div>
+          <div class="conn" style="--from:var(--c-gate);--to:var(--c-build)"><i></i><b></b></div>
+
+          <div id="hook-5" class="ph" style="--cc:var(--c-build)">
+            <div class="bar"><div class="badge">⚙️</div><span class="sess b">CAP 8</span></div>
+            <div class="nm">sspower-graph impact</div>
+            <div class="ds">Parallel file impact calls, <b>3s timeout</b> each.</div>
+          </div>
+          <div class="conn" style="--from:var(--c-build);--to:var(--c-qual)"><i></i><b></b></div>
+
+          <div id="hook-6" class="ph" style="--cc:var(--c-qual)">
+            <div class="bar"><div class="badge">📝</div></div>
+            <div class="nm">Codex review prompt</div>
+            <div class="ds">Appends <b># Graph impact</b> before review.</div>
+          </div>
+          <div class="conn" style="--from:var(--c-qual);--to:var(--c-route)"><i></i><b></b></div>
+
+          <div id="hook-7" class="ph graph" style="--cc:var(--c-route)">
+            <div class="bar"><div class="badge">🕸️</div><span class="sess a">8 MCP TOOLS</span></div>
+            <div class="nm">sspower-graph surface</div>
+            <div class="tool-list">
+              <span>status</span><span>callers</span>
+              <span>callees</span><span>trace</span>
+              <span>impact</span><span>node</span>
+              <span>context</span><span>routes</span>
+            </div>
+            <div class="mini-badge">Express extractor · routes CLI</div>
+          </div>
         </div>
       </div>
     </div>
