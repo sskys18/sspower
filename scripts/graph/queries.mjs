@@ -60,3 +60,27 @@ export async function queryContext(cwd, task) {
     return contextQuery(db, task);
   });
 }
+
+export async function queryRoutes(cwd, { framework = null, limit = 200 } = {}) {
+  return withDb(graphDirFor(cwd), db => {
+    if (db === null) return { routes: [], reason: 'no-index' };
+    // P4: `framework` filter is a no-op until P5 adds a `framework`
+    // column to nodes. Express is the only emitter today, so returning
+    // every kind=route node is correct. Pass `framework=express` or null
+    // -> all routes; any other framework -> empty (forward-compat).
+    let rows;
+    if (framework === null || framework === 'express') {
+      rows = db.prepare(`
+        SELECT name, qualified_name AS qname, file_path AS file,
+               start_line AS line, signature
+          FROM nodes
+         WHERE kind = 'route'
+         ORDER BY file_path, start_line
+         LIMIT ?
+      `).all(Math.max(1, limit | 0));
+    } else {
+      rows = [];
+    }
+    return { routes: rows, framework: framework ?? 'all' };
+  });
+}

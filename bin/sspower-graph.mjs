@@ -61,13 +61,14 @@ Usage:
   sspower-graph impact <file> [--json] [--cwd <dir>]
   sspower-graph context <task> [--json] [--cwd <dir>]
   sspower-graph node <name> [--json] [--cwd <dir>]
+  sspower-graph routes [--framework <name>] [--limit N] [--json] [--cwd <dir>]
   sspower-graph status [--json] [--cwd <dir>]
   sspower-graph serve --mcp
 `);
 }
 
 function parseOpts(rest) {
-  const opts = { cwd: process.cwd(), limit: 50, disambiguate: false, json: false, maxTime: 5, maxHops: 6, window: 50, positional: [] };
+  const opts = { cwd: process.cwd(), limit: 50, disambiguate: false, json: false, maxTime: 5, maxHops: 6, window: 50, framework: null, positional: [] };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--cwd') opts.cwd = path.resolve(rest[++i]);
@@ -75,6 +76,7 @@ function parseOpts(rest) {
     else if (a === '--max-time') opts.maxTime = parseInt(rest[++i], 10);
     else if (a === '--max-hops') opts.maxHops = parseInt(rest[++i], 10);
     else if (a === '--window') opts.window = parseInt(rest[++i], 10);
+    else if (a === '--framework') opts.framework = rest[++i];
     else if (a === '--disambiguate') opts.disambiguate = true;
     else if (a === '--json') opts.json = true;
     else opts.positional.push(a);
@@ -254,6 +256,20 @@ async function runNode(opts, name) {
     p.map(n => `${n.file_path}:${n.start_line}-${n.end_line}\t${n.qualified_name}\t${n.kind}\t${n.signature ?? ''}`).join('\n'));
 }
 
+async function runRoutes(opts) {
+  const { queryRoutes } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  // CLI default limit is the verb-specific 200 (matches MCP tool); fall
+  // back to the parsed --limit only when the user explicitly passed it.
+  // parseOpts seeds opts.limit=50, so check for an explicit pass via argv.
+  const explicitLimit = argv.includes('--limit');
+  const r = await queryRoutes(opts.cwd, {
+    framework: opts.framework,
+    limit: explicitLimit ? opts.limit : 200,
+  });
+  emit(opts, r, p => (p.routes ?? []).length === 0 ? 'no routes' :
+    p.routes.map(rt => `${rt.file}:${rt.line}\t${rt.name}\t${rt.signature ?? ''}`).join('\n'));
+}
+
 async function runStatus(opts) {
   const { queryStatus } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
   const s = await queryStatus(opts.cwd);
@@ -316,6 +332,7 @@ try {
                             await runCallees(opts, opts.positional[0]); break;
     case 'node':            if (!opts.positional[0]) { usage(); process.exit(2); }
                             await runNode(opts, opts.positional[0]); break;
+    case 'routes':          await runRoutes(opts); break;
     case 'status':          await runStatus(opts); break;
     case 'metric':          {
                               const { aggregate } = await import('../scripts/graph/mcp-tools/metric.mjs');
