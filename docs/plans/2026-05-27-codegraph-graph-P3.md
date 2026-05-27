@@ -612,8 +612,12 @@ for pack in ts-js ts-js-multifile python go rust; do
     done < "$PACK/expected/impact-files.txt"
   fi
   if [ -f "$PACK/expected/context-tasks.txt" ]; then
+    # Build a manifest so the regression test can recover the original task arg
+    # for each context-<hash>.json golden.
+    : > "$GOLDEN/context-manifest.tsv"
     while IFS= read -r t; do
       hash=$(printf '%s' "$t" | shasum | cut -c1-8)
+      printf '%s\t%s\n' "$hash" "$t" >> "$GOLDEN/context-manifest.tsv"
       node "$GRAPH_BIN" context --cwd "$PACK" --json "$t" > "$GOLDEN/context-$hash.json" 2>/dev/null || true
     done < "$PACK/expected/context-tasks.txt"
   fi
@@ -645,7 +649,18 @@ const packs = fs.readdirSync(FIXTURES).filter(p =>
 let checked = 0;
 for (const pack of packs) {
   const goldenDir = path.join(FIXTURES, pack, 'expected', 'cli-goldens');
+  // Load context manifest if present: hash → task text
+  const ctxManifest = {};
+  const manifestPath = path.join(goldenDir, 'context-manifest.tsv');
+  if (fs.existsSync(manifestPath)) {
+    for (const line of fs.readFileSync(manifestPath, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      const [hash, ...task] = line.split('\t');
+      ctxManifest[hash] = task.join('\t');
+    }
+  }
   for (const goldenFile of fs.readdirSync(goldenDir)) {
+    if (goldenFile === 'context-manifest.tsv') continue;
     const base = goldenFile.replace('.json', '');
     const [verb, ...rest] = base.split('-');
     const args = ['--cwd', path.join(FIXTURES, pack), '--json'];
@@ -654,8 +669,10 @@ for (const pack of packs) {
     } else if (verb === 'impact') {
       args.unshift(verb); args.push(rest.join('-').replace(/_/g, '/'));
     } else if (verb === 'context') {
-      // context goldens keyed by hash — skip if we cannot recover the task text
-      continue;
+      const hash = rest.join('-');
+      const task = ctxManifest[hash];
+      assert.ok(task, `${pack}/${goldenFile}: no manifest entry for hash ${hash}`);
+      args.unshift(verb); args.push(task);
     } else if (rest.length) {
       args.unshift(verb); args.push(rest.join('-'));
     } else {
@@ -2082,27 +2099,21 @@ const cases = [
 for (const [mcpName, mcpArgs, cliArgs] of cases) {
   const r = await client.callTool({ name: mcpName, arguments: mcpArgs });
   const mcpText = r.content[0].text;
-  // Canonicalize both via JSON re-stringify with stable key order
-  const a = JSON.stringify(sortKeys(JSON.parse(mcpText)));
-  const b = JSON.stringify(sortKeys(JSON.parse(cliJson(mcpName.replace(/^graph_/, ''), ...cliArgs))));
-  assert.equal(a, b, `${mcpName}: MCP/CLI canonical-JSON mismatch\nMCP=${mcpText}\nCLI=${cliJson(mcpName.replace(/^graph_/, ''), ...cliArgs)}`);
-}
-
-function sortKeys(x) {
-  if (Array.isArray(x)) return x.map(sortKeys);
-  if (x && typeof x === 'object') {
-    const out = {};
-    for (const k of Object.keys(x).sort()) out[k] = sortKeys(x[k]);
-    return out;
-  }
-  return x;
+  const cliRaw = cliJson(mcpName.replace(/^graph_/, ''), ...cliArgs);
+  // P3-D2 byte-identical contract. Both sides run `JSON.stringify` on the
+  // SAME query function's return value (same insertion order, same nested
+  // shape). Compare raw strings; any divergence is a real bug in queries.mjs
+  // or the emit() path.
+  assert.equal(mcpText, cliRaw, `${mcpName}: MCP/CLI raw byte mismatch\nMCP=${mcpText}\nCLI=${cliRaw}`);
 }
 
 await client.close();
-console.log('MCP/CLI parity OK (7 tools)');
+console.log('MCP/CLI byte-identical parity OK (7 tools)');
 ```
 
-**Note on byte vs canonical comparison**: spec §10 P3-D2 says "byte-identical". The test canonicalizes via key-sorted re-stringify because CLI `JSON.stringify` and MCP `JSON.stringify` may differ in key order if the underlying query function returns plain objects (Object key order is insertion-order in Node). Canonical comparison is strictly stronger than parseability and matches the *semantic* contract of P3-D2. If the spec interpretation is byte-strict, this test will reveal any divergence — at which point the fix is to canonicalize at the query-function return site, not loosen the assertion.
+**Note on byte vs canonical**: spec §10 P3-D2 says "byte-identical". Because both MCP and CLI call the same `queryX()` function and `JSON.stringify` is deterministic for a given input object, the output should match byte-for-byte. If this test fails, the bug is in the query layer (or the CLI's `emit()` is stripping/adding whitespace) — do NOT loosen the assertion to canonical comparison; fix the source.
+
+**CLI trailing newline**: `emit()` in `bin/sspower-graph.mjs` appends `\n` after `JSON.stringify`. The test's `cliJson()` uses `trimEnd()` to strip it, so the comparison is against the JSON body proper. MCP content text has no trailing newline (the SDK does not add one). If `emit()` ever changes formatting, update the trim accordingly.
 
 - [ ] **Step 2: Run — expect PASS**
 
@@ -2135,14 +2146,25 @@ schema drift between query() returns and CLI emit().
 
 ```bash
 SERVER_KEY="${SSPOWER_GRAPH_MCP_KEY:-sspower-graph}"
-OWN_CMD="$ROOT/bin/sspower-graph-bootstrap.sh"
+OWN_CMD_ABS="$ROOT/bin/sspower-graph-bootstrap.sh"
+OWN_CMD_TEMPLATE='${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh'
+OWN_MCP_JSON="$ROOT/.mcp.json"
+
 for CFG in "$HOME/.claude.json" "$PWD/.mcp.json"; do
   [ -f "$CFG" ] || continue
+  # Skip our own packaged .mcp.json: it lives at $ROOT/.mcp.json and uses the
+  # unexpanded ${CLAUDE_PLUGIN_ROOT} template — comparing it to the absolute
+  # OWN_CMD_ABS would always false-positive.
+  if [ "$CFG" = "$OWN_MCP_JSON" ]; then continue; fi
   if command -v jq >/dev/null 2>&1; then
-    FOREIGN=$(jq -r --arg key "$SERVER_KEY" --arg own "$OWN_CMD" '
+    FOREIGN=$(jq -r \
+      --arg key "$SERVER_KEY" \
+      --arg own_abs "$OWN_CMD_ABS" \
+      --arg own_tpl "$OWN_CMD_TEMPLATE" '
       (.mcpServers // {}) | to_entries[]?
       | select(.key == $key)
-      | select(.value.command != $own)
+      | select((.value.command // "") != $own_abs
+            and (.value.command // "") != $own_tpl)
       | "\($key) in '"$CFG"' is owned by " + (.value.command // "<unset>")
     ' "$CFG" 2>/dev/null || true)
     if [ -n "$FOREIGN" ]; then
@@ -2154,7 +2176,7 @@ for CFG in "$HOME/.claude.json" "$PWD/.mcp.json"; do
 done
 ```
 
-Exit code `78` (EX_CONFIG from sysexits.h) signals "the user must reconfigure".
+Exit code `78` (EX_CONFIG from sysexits.h) signals "the user must reconfigure". Accepts BOTH the absolute path AND the literal template string as "own command", and explicitly skips the plugin's own packaged `.mcp.json` to avoid the false-positive Codex flagged.
 
 - [ ] **Step 2: Document override in `README.md`**
 
@@ -2162,7 +2184,7 @@ Add a paragraph under sspower-graph install instructions:
 
 > If you already have an MCP server registered under the key `sspower-graph` from another plugin or your own config, set `SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2` (or any unique key) in the foreign config's `command` env to disambiguate. The sspower bootstrap detects collisions at startup and exits 78 if found.
 
-- [ ] **Step 3: Write contract test**
+- [ ] **Step 3: Write contract test — both negative and positive paths**
 
 ```js
 // tests/graph/test-bootstrap-preflight.mjs
@@ -2173,19 +2195,43 @@ import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import url from 'node:url';
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-pre-'));
-const conflicting = path.join(tmp, '.mcp.json');
-fs.writeFileSync(conflicting, JSON.stringify({
+
+// --- Case 1: foreign config in tmp cwd → exit 78
+const tmp1 = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-pre-foreign-'));
+fs.writeFileSync(path.join(tmp1, '.mcp.json'), JSON.stringify({
   mcpServers: { 'sspower-graph': { command: '/usr/bin/some-other-tool' } },
 }));
-const r = spawnSync('bash', [path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'), '--print-cwd'], {
-  cwd: tmp,
-  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, NODE: process.execPath, HOME: tmp },
+let r = spawnSync('bash', [path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'), '--print-cwd'], {
+  cwd: tmp1,
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, NODE: process.execPath, HOME: tmp1 },
   encoding: 'utf8',
 });
-assert.equal(r.status, 78, `expected exit 78 on collision, got ${r.status}`);
-assert.ok(r.stderr.includes('collision'), 'stderr should mention collision');
-console.log('bootstrap preflight collision OK');
+assert.equal(r.status, 78, `case 1 expected 78, got ${r.status} stderr=${r.stderr}`);
+assert.ok(r.stderr.includes('collision'), 'case 1 stderr mentions collision');
+console.log('preflight foreign collision OK');
+
+// --- Case 2: plugin's own .mcp.json template → MUST NOT trip
+// Spawn bootstrap from the plugin root itself; PWD/.mcp.json == $ROOT/.mcp.json.
+r = spawnSync('bash', [path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'), '--print-cwd'], {
+  cwd: PLUGIN_ROOT,
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, NODE: process.execPath, HOME: fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-pre-home-')) },
+  encoding: 'utf8',
+});
+assert.equal(r.status, 0, `case 2 (own .mcp.json) expected 0, got ${r.status} stderr=${r.stderr}`);
+console.log('preflight own-config skip OK');
+
+// --- Case 3: matching template in foreign location → MUST NOT trip
+const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-pre-tpl-'));
+fs.writeFileSync(path.join(tmp3, '.mcp.json'), JSON.stringify({
+  mcpServers: { 'sspower-graph': { command: '${CLAUDE_PLUGIN_ROOT}/bin/sspower-graph-bootstrap.sh' } },
+}));
+r = spawnSync('bash', [path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'), '--print-cwd'], {
+  cwd: tmp3,
+  env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, NODE: process.execPath, HOME: tmp3 },
+  encoding: 'utf8',
+});
+assert.equal(r.status, 0, `case 3 (template match) expected 0, got ${r.status} stderr=${r.stderr}`);
+console.log('preflight template-match accept OK');
 ```
 
 - [ ] **Step 4: Run + commit**
