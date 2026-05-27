@@ -6,12 +6,15 @@ import url from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ensureFixtureGraph } from './fixture-graph.mjs';
 
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
 const FIXTURE = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures', 'ts-js');
 const GRAPH = path.join(PLUGIN_ROOT, 'bin', 'sspower-graph.mjs');
 const metricState = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-parity-metric-'));
 const sessionState = fs.mkdtempSync(path.join(os.tmpdir(), 'sssg-parity-session-'));
+
+await ensureFixtureGraph(FIXTURE);
 
 function cliJson(verb, ...args) {
   const r = spawnSync(process.execPath, [GRAPH, verb, '--cwd', FIXTURE, '--json', ...args], { encoding: 'utf8' });

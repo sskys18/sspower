@@ -5,9 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import url from 'node:url';
+import { ensureFixtureGraph } from './fixture-graph.mjs';
 
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
 const FIXTURE = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures', 'ts-js');
+
+await ensureFixtureGraph(FIXTURE);
 
 const transport = new StdioClientTransport({
   command: path.join(PLUGIN_ROOT, 'bin', 'sspower-graph-bootstrap.sh'),

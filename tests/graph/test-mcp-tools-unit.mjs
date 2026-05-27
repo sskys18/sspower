@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import url from 'node:url';
+import { ensureFixtureGraph } from './fixture-graph.mjs';
 
 const PLUGIN_ROOT = path.resolve(url.fileURLToPath(import.meta.url), '../../..');
 const FIXTURE = path.join(PLUGIN_ROOT, '__tests__', 'graph-fixtures', 'ts-js');
+
+await ensureFixtureGraph(FIXTURE);
 
 import { handler as statusHandler } from '../../scripts/graph/mcp-tools/status.mjs';
 const r = await statusHandler({ cwd: FIXTURE });
