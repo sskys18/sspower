@@ -1,0 +1,4 @@
+id: go-import
+language: go
+rule:
+  kind: import_declaration

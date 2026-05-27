@@ -71,7 +71,35 @@ function resolveModulePy(importerAbs, moduleSpec) {
   }
   return null;
 }
-function resolveModuleGo(_importerAbs, _moduleSpec) { return null; }
+function resolveModuleGo(importerAbs, moduleSpec) {
+  // Walk up from importerDir looking for go.mod; read its `module X` line.
+  let dir = path.dirname(importerAbs);
+  let modRoot = null, modPath = null;
+  for (let i = 0; i < 10; i++) {
+    const gomod = path.join(dir, 'go.mod');
+    if (fs.existsSync(gomod)) {
+      const m = fs.readFileSync(gomod, 'utf8').match(/^module\s+(\S+)/m);
+      if (m) { modRoot = dir; modPath = m[1]; }
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (!modRoot || !modPath) return null;
+  // moduleSpec must start with modPath to be local; external pkgs return null.
+  if (moduleSpec === modPath) return modRoot;
+  if (!moduleSpec.startsWith(modPath + '/')) return null;
+  const rel = moduleSpec.slice(modPath.length + 1);
+  const dirCandidate = path.join(modRoot, rel);
+  if (!fs.existsSync(dirCandidate) || !fs.statSync(dirCandidate).isDirectory()) return null;
+  // Return the first .go file in the dir (extractor processes each file
+  // separately; the import resolves to the package dir but we need a file
+  // path. Pick lexicographically smallest .go file in the dir).
+  const files = fs.readdirSync(dirCandidate).filter(f => f.endsWith('.go')).sort();
+  if (files.length === 0) return null;
+  return path.join(dirCandidate, files[0]);
+}
 function resolveModuleRs(_importerAbs, _moduleSpec) { return null; }
 
 export function resolveEdges({ nodes, callSites }) {

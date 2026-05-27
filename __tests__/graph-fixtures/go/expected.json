@@ -1,0 +1,12 @@
+{
+  "language": "go",
+  "nodes": [
+    { "name": "main", "qualifiedName": "main", "kind": "function", "file": "main.go", "start_line": 7, "end_line": 10 },
+    { "name": "Run", "qualifiedName": "Worker.Run", "kind": "method", "file": "main.go", "start_line": 14, "end_line": 16 },
+    { "name": "Calc", "qualifiedName": "Calc", "kind": "function", "file": "util/util.go", "start_line": 3, "end_line": 3 }
+  ],
+  "edges": [
+    { "source": "main", "target": "Calc", "kind": "calls", "confidence": 2 },
+    { "source": "Worker.Run", "target": "Calc", "kind": "calls", "confidence": 2 }
+  ]
+}

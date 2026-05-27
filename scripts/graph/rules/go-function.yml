@@ -1,0 +1,4 @@
+id: go-function
+language: go
+rule:
+  kind: function_declaration

@@ -11,6 +11,7 @@ const LANGUAGE_PACKS = [
   { dir: 'ts-js', language: 'typescript' },
   { dir: 'ts-js-multifile', language: 'typescript' },
   { dir: 'python', language: 'python' },
+  { dir: 'go', language: 'go' },
 ];
 
 const P_THRESHOLD = 0.85;
