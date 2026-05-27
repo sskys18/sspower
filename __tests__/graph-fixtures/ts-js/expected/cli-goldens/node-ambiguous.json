@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#ambiguous#78b1d74d",
+    "kind": "function",
+    "name": "ambiguous",
+    "qualified_name": "ambiguous",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+    "language": "typescript",
+    "start_line": 21,
+    "end_line": 23,
+    "signature": "function ambiguous(a: A, b: B): string {",
+    "span_sha8": "78b1d74d",
+    "updated_at": 1779860122
+  }
+]

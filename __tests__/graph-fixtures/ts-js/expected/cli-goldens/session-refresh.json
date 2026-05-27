@@ -1,0 +1,7 @@
+{
+  "action": "build",
+  "reason": "filesethash-changed",
+  "dirtyEmitted": 0,
+  "pendingFilesetHash": "dde39e02"
+}
+1 files, 7 nodes, 5 edges

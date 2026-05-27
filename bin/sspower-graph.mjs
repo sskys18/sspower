@@ -37,6 +37,17 @@ if (cmd === '--print-cwd') {
   process.exit(0);
 }
 
+if (cmd === '--probe-session') {
+  const { readSessionState } = await import('../scripts/graph/session-state.mjs');
+  const r = readSessionState(process.cwd());
+  if (!r.sessionId) {
+    process.stderr.write(`degraded source=${r.source}\n`);
+    process.exit(2);
+  }
+  process.stdout.write(r.sessionId);
+  process.exit(0);
+}
+
 function usage() {
   console.error(`sspower-graph — symbol graph CLI + MCP server
 
@@ -56,13 +67,14 @@ Usage:
 }
 
 function parseOpts(rest) {
-  const opts = { cwd: process.cwd(), limit: 50, disambiguate: false, json: false, maxTime: 5, maxHops: 6, positional: [] };
+  const opts = { cwd: process.cwd(), limit: 50, disambiguate: false, json: false, maxTime: 5, maxHops: 6, window: 50, positional: [] };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--cwd') opts.cwd = path.resolve(rest[++i]);
     else if (a === '--limit') opts.limit = parseInt(rest[++i], 10);
     else if (a === '--max-time') opts.maxTime = parseInt(rest[++i], 10);
     else if (a === '--max-hops') opts.maxHops = parseInt(rest[++i], 10);
+    else if (a === '--window') opts.window = parseInt(rest[++i], 10);
     else if (a === '--disambiguate') opts.disambiguate = true;
     else if (a === '--json') opts.json = true;
     else opts.positional.push(a);
@@ -196,97 +208,88 @@ async function runSessionRefresh(opts) {
 }
 
 async function runTrace(opts, fromName, toName) {
-  const { trace } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/trace.mjs'));
-  await withDb(graphDirFor(opts.cwd), db => {
-    const r = trace(db, fromName, toName, { maxHops: opts.maxHops, limit: opts.limit });
-    emit(opts, r, p => p.paths.length === 0 ? 'no path' :
-      p.paths.map(pp => `${pp.from} -> ... -> ${pp.to} (${pp.hops} hops)`).join('\n'));
-  });
+  const { queryTrace } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const r = await queryTrace(opts.cwd, fromName, toName, { maxHops: opts.maxHops, limit: opts.limit });
+  emit(opts, r, p => p.paths.length === 0 ? 'no path' :
+    p.paths.map(pp => `${pp.from} -> ... -> ${pp.to} (${pp.hops} hops)`).join('\n'));
 }
 
 async function runImpact(opts, filePath) {
-  const { impact } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/impact.mjs'));
-  const absFile = path.resolve(opts.cwd, filePath);
-  await withDb(graphDirFor(opts.cwd), db => {
-    const r = impact(db, absFile, { limit: opts.limit });
-    emit(opts, r, p => `${p.target_file}\ndirect=${p.direct_count} transitive=${p.transitive_count}\n` +
-      p.files.map(f => `  ${f.file_path}\n    ${f.qnames.join(', ')}`).join('\n'));
-  });
+  const { queryImpact } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const r = await queryImpact(opts.cwd, filePath, { limit: opts.limit });
+  emit(opts, r, p => `${p.target_file}\ndirect=${p.direct_count} transitive=${p.transitive_count}\n` +
+    p.files.map(f => `  ${f.file_path}\n    ${f.qnames.join(', ')}`).join('\n'));
 }
 
 async function runContext(opts, task) {
-  const { context: ctxFn } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/context.mjs'));
-  await withDb(graphDirFor(opts.cwd), db => {
-    const r = ctxFn(db, task);
-    emit(opts, r, p => p.hits.length === 0 ? 'no context' :
-      p.hits.map(h => `${h.qname}\t${h.file}:${h.line}\t${h.signature ?? ''}`).join('\n'));
-  });
+  const { queryContext } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const r = await queryContext(opts.cwd, task);
+  emit(opts, r, p => p.hits.length === 0 ? 'no context' :
+    p.hits.map(h => `${h.qname}\t${h.file}:${h.line}\t${h.signature ?? ''}`).join('\n'));
 }
 
 async function runCallers(opts, name) {
-  const { callers } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/query.mjs'));
-  await withDb(graphDirFor(opts.cwd), db => {
-    const r = callers(db, name, { limit: opts.limit, disambiguate: opts.disambiguate });
-    if (r.ambiguous) {
-      emit(opts, r, p => `ambiguous: ${p.targets.length} targets — pass --disambiguate or query a more specific name\n` +
-        p.targets.map(t => `  ${t.qualified_name} (${t.file_path}:${t.start_line})`).join('\n'));
-      return;
-    }
-    emit(opts, r, p => p.matches.length === 0 ? 'no callers' :
-      p.matches.map(m => `${m.src_file}:${m.line}\t${m.src_qname}\t-> ${m.tgt_qname}\t(conf=${m.confidence})`).join('\n'));
-  });
+  const { queryCallers } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const r = await queryCallers(opts.cwd, name, { limit: opts.limit, disambiguate: opts.disambiguate });
+  if (r.ambiguous) {
+    emit(opts, r, p => `ambiguous: ${p.targets.length} targets — pass --disambiguate or query a more specific name\n` +
+      p.targets.map(t => `  ${t.qualified_name} (${t.file_path}:${t.start_line})`).join('\n'));
+    return;
+  }
+  emit(opts, r, p => p.matches.length === 0 ? 'no callers' :
+    p.matches.map(m => `${m.src_file}:${m.line}\t${m.src_qname}\t-> ${m.tgt_qname}\t(conf=${m.confidence})`).join('\n'));
 }
 
 async function runCallees(opts, name) {
-  const { callees } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/query.mjs'));
-  await withDb(graphDirFor(opts.cwd), db => {
-    const r = callees(db, name, { limit: opts.limit });
-    emit(opts, r, p => p.matches.length === 0 ? 'no callees' :
-      p.matches.map(m => `${m.tgt_file}:${m.tgt_start}\t${m.tgt_qname}\t<- ${m.src_qname}\t(conf=${m.confidence})`).join('\n'));
-  });
+  const { queryCallees } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const r = await queryCallees(opts.cwd, name, { limit: opts.limit });
+  emit(opts, r, p => p.matches.length === 0 ? 'no callees' :
+    p.matches.map(m => `${m.tgt_file}:${m.tgt_start}\t${m.tgt_qname}\t<- ${m.src_qname}\t(conf=${m.confidence})`).join('\n'));
 }
 
 async function runNode(opts, name) {
-  const { nodeLookup } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/query.mjs'));
-  await withDb(graphDirFor(opts.cwd), db => {
-    const rows = nodeLookup(db, name);
-    emit(opts, rows, p => p.length === 0 ? 'not found' :
-      p.map(n => `${n.file_path}:${n.start_line}-${n.end_line}\t${n.qualified_name}\t${n.kind}\t${n.signature ?? ''}`).join('\n'));
-  });
+  const { queryNode } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const rows = await queryNode(opts.cwd, name);
+  emit(opts, rows, p => p.length === 0 ? 'not found' :
+    p.map(n => `${n.file_path}:${n.start_line}-${n.end_line}\t${n.qualified_name}\t${n.kind}\t${n.signature ?? ''}`).join('\n'));
 }
 
 async function runStatus(opts) {
-  const { status } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/query.mjs'));
-  const graphDir = graphDirFor(opts.cwd);
-  const dbPath = path.join(graphDir, 'index.sqlite');
-  if (!fs.existsSync(dbPath)) {
-    emit(opts, { ok: false, reason: 'no-index', dbPath }, p => `no index: ${p.dbPath}`);
-    return;
-  }
-  await withDb(graphDir, db => {
-    const s = status(db, graphDir);
-    emit(opts, s, p => `files=${p.fileCount} nodes=${p.nodeCount} edges=${p.edgeCount} dirty=${p.dirtyCount} last=${p.lastIndexed}`);
-  });
+  const { queryStatus } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/queries.mjs'));
+  const s = await queryStatus(opts.cwd);
+  emit(opts, s, p => p.ok
+    ? `files=${p.fileCount} nodes=${p.nodeCount} edges=${p.edgeCount} dirty=${p.dirtyCount} last=${p.lastIndexed}`
+    : `no index: ${p.dbPath}`);
 }
 
 async function runMcpServer() {
   const { Server } = await import('@modelcontextprotocol/sdk/server/index.js');
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
   const { ListToolsRequestSchema, CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+  const { TOOLS, dispatch } = await import('../scripts/graph/mcp-tools/index.mjs');
 
   const server = new Server({ name: 'sspower-graph', version: PKG_VERSION }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [{
-      name: 'graph_status',
-      description: 'Graph index freshness (P0 stub — always returns {ok:true,stub:true,phase:"P0"}).',
-      inputSchema: { type: 'object', properties: {}, required: [] },
-    }],
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
   server.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
-    if (params.name === 'graph_status') {
-      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, stub: true, phase: 'P0' }) }] };
+    const t0 = Date.now();
+    let ok = true;
+    let effectiveCwd = params.arguments?.cwd ?? process.cwd();
+    try {
+      const result = await dispatch(params.name, params.arguments);
+      effectiveCwd = result._effectiveCwd ?? effectiveCwd;
+      const { _effectiveCwd, ...client } = result;
+      return client;
+    } catch (e) {
+      ok = false;
+      throw e;
+    } finally {
+      try {
+        const { recordEvent } = await import('../scripts/graph/mcp-tools/metric.mjs');
+        recordEvent({ tool: params.name, ok, duration_ms: Date.now() - t0, cwd: effectiveCwd });
+      } catch (e) {
+        if (e.code !== 'ERR_MODULE_NOT_FOUND') process.stderr.write(`metric write failed: ${e.message}\n`);
+      }
     }
-    throw new Error(`unknown tool: ${params.name}`);
   });
   await server.connect(new StdioServerTransport());
 }
@@ -314,6 +317,12 @@ try {
     case 'node':            if (!opts.positional[0]) { usage(); process.exit(2); }
                             await runNode(opts, opts.positional[0]); break;
     case 'status':          await runStatus(opts); break;
+    case 'metric':          {
+                              const { aggregate } = await import('../scripts/graph/mcp-tools/metric.mjs');
+                              const ag = aggregate({ window: opts.window ?? 50 });
+                              emit(opts, ag, a => `gate_met=${a.gate_met} eligible=${a.eligible_sessions_total} with_call=${a.sessions_with_call}`);
+                              break;
+                            }
     case 'serve':           if (argv[1] === '--mcp') { await runMcpServer(); }
                             else { usage(); process.exit(2); }
                             break;

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py#calc#5cb5731b",
+    "kind": "function",
+    "name": "calc",
+    "qualified_name": "calc",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py",
+    "language": "python",
+    "start_line": 1,
+    "end_line": 2,
+    "signature": "def calc(a, b):",
+    "span_sha8": "5cb5731b",
+    "updated_at": 1779860125
+  }
+]

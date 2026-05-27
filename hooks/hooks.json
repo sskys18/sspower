@@ -115,6 +115,12 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/wiki-archive.sh\"",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/graph-metric-reconcile.sh\"",
+            "async": false,
+            "timeout": 5
           }
         ]
       }

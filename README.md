@@ -99,6 +99,12 @@ node defined in a target file, and `context` composes an FTS5-driven
 top-N lookup with caller/callee neighborhoods (capped at 4KB for the
 P4 graph-orchestrator budget).
 
+If you already have an MCP server registered under the key
+`sspower-graph` from another plugin or your own config, set
+`SSPOWER_GRAPH_MCP_KEY=sspower-graph-v2` (or any unique key) in the
+foreign config's command environment to disambiguate. The sspower
+bootstrap detects collisions at startup and exits 78 if found.
+
 `callers <name>` returns the call-sites that target `<name>`. If
 multiple symbols match by name, pass `--disambiguate` (or query with
 a `Class.method` form). Output line shape:

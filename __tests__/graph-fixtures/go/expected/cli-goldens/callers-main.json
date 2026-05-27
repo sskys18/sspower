@@ -1,0 +1,12 @@
+{
+  "matches": [],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#main#0a2f92de",
+      "name": "main",
+      "qualified_name": "main",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go",
+      "start_line": 7
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts#greet#aa2947ce",
+    "kind": "function",
+    "name": "greet",
+    "qualified_name": "greet",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts",
+    "language": "typescript",
+    "start_line": 1,
+    "end_line": 3,
+    "signature": "function greet(name: string): string {",
+    "span_sha8": "aa2947ce",
+    "updated_at": 1779860124
+  }
+]

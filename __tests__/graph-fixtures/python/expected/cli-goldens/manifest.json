@@ -1,0 +1,185 @@
+[
+  {
+    "file": "build.json",
+    "args": [
+      "build"
+    ]
+  },
+  {
+    "file": "status.json",
+    "args": [
+      "status"
+    ]
+  },
+  {
+    "file": "callers-caller.json",
+    "args": [
+      "callers",
+      "caller"
+    ]
+  },
+  {
+    "file": "callees-caller.json",
+    "args": [
+      "callees",
+      "caller"
+    ]
+  },
+  {
+    "file": "node-caller.json",
+    "args": [
+      "node",
+      "caller"
+    ]
+  },
+  {
+    "file": "callers-Worker.json",
+    "args": [
+      "callers",
+      "Worker"
+    ]
+  },
+  {
+    "file": "callees-Worker.json",
+    "args": [
+      "callees",
+      "Worker"
+    ]
+  },
+  {
+    "file": "node-Worker.json",
+    "args": [
+      "node",
+      "Worker"
+    ]
+  },
+  {
+    "file": "callers-Worker.run.json",
+    "args": [
+      "callers",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "callees-Worker.run.json",
+    "args": [
+      "callees",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "node-Worker.run.json",
+    "args": [
+      "node",
+      "Worker.run"
+    ]
+  },
+  {
+    "file": "callers-helper.json",
+    "args": [
+      "callers",
+      "helper"
+    ]
+  },
+  {
+    "file": "callees-helper.json",
+    "args": [
+      "callees",
+      "helper"
+    ]
+  },
+  {
+    "file": "node-helper.json",
+    "args": [
+      "node",
+      "helper"
+    ]
+  },
+  {
+    "file": "callers-calc.json",
+    "args": [
+      "callers",
+      "calc"
+    ]
+  },
+  {
+    "file": "callees-calc.json",
+    "args": [
+      "callees",
+      "calc"
+    ]
+  },
+  {
+    "file": "node-calc.json",
+    "args": [
+      "node",
+      "calc"
+    ]
+  },
+  {
+    "file": "trace-caller-to-helper.json",
+    "args": [
+      "trace",
+      "caller",
+      "helper"
+    ]
+  },
+  {
+    "file": "trace-caller-to-calc.json",
+    "args": [
+      "trace",
+      "caller",
+      "calc"
+    ]
+  },
+  {
+    "file": "trace-Worker.run-to-helper.json",
+    "args": [
+      "trace",
+      "Worker.run",
+      "helper"
+    ]
+  },
+  {
+    "file": "impact-main.py.json",
+    "args": [
+      "impact",
+      "main.py"
+    ]
+  },
+  {
+    "file": "impact-helpers.py.json",
+    "args": [
+      "impact",
+      "helpers.py"
+    ]
+  },
+  {
+    "file": "impact-pkg_util.py.json",
+    "args": [
+      "impact",
+      "pkg/util.py"
+    ]
+  },
+  {
+    "file": "context-default.json",
+    "args": [
+      "context",
+      "caller Worker Worker.run"
+    ]
+  },
+  {
+    "file": "refresh.json",
+    "args": [
+      "refresh"
+    ]
+  },
+  {
+    "file": "session-refresh.json",
+    "args": [
+      "session-refresh",
+      "--max-time",
+      "5"
+    ]
+  }
+]

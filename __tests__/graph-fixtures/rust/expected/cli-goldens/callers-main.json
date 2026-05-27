@@ -1,0 +1,12 @@
+{
+  "matches": [],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#main#6de613d1",
+      "name": "main",
+      "qualified_name": "main",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "start_line": 5
+    }
+  ]
+}

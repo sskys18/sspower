@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#Worker.Run#a1daa17d",
+    "kind": "method",
+    "name": "Run",
+    "qualified_name": "Worker.Run",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go",
+    "language": "go",
+    "start_line": 14,
+    "end_line": 16,
+    "signature": "func (w *Worker) Run() int {",
+    "span_sha8": "a1daa17d",
+    "updated_at": 1779860126
+  }
+]

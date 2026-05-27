@@ -1,0 +1,37 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#caller#af051ad4",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs#calc#d6de4f48",
+      "line": 11,
+      "confidence": 2,
+      "src_qname": "caller",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "src_start": 10,
+      "tgt_qname": "calc",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs",
+      "tgt_start": 1
+    },
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#Worker.run#0d2f4f9a",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs#calc#d6de4f48",
+      "line": 18,
+      "confidence": 2,
+      "src_qname": "Worker.run",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "src_start": 17,
+      "tgt_qname": "calc",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs",
+      "tgt_start": 1
+    }
+  ],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs#calc#d6de4f48",
+      "name": "calc",
+      "qualified_name": "calc",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/util.rs",
+      "start_line": 1
+    }
+  ]
+}

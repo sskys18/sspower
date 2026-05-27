@@ -1,0 +1,20 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts#main#fb1e8061",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts#greet#aa2947ce",
+      "line": 4,
+      "confidence": 2,
+      "src_qname": "main",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts",
+      "tgt_qname": "greet",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts",
+      "tgt_start": 1
+    }
+  ],
+  "sources": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts#main#fb1e8061"
+    }
+  ]
+}

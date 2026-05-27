@@ -1,0 +1,18 @@
+{
+  "paths": [
+    {
+      "from": "main",
+      "to": "Calc",
+      "hops": 1,
+      "edges": [
+        {
+          "from": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#main#0a2f92de",
+          "to": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go#Calc#6c818067",
+          "line": 8
+        }
+      ]
+    }
+  ],
+  "fromCount": 1,
+  "toCount": 1
+}

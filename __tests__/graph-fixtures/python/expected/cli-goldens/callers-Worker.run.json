@@ -1,0 +1,12 @@
+{
+  "matches": [],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#Worker.run#8ce7077f",
+      "name": "run",
+      "qualified_name": "Worker.run",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+      "start_line": 8
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#caller#8024c1e5",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py#helper#181cd17e",
+      "line": 5,
+      "confidence": 2,
+      "src_qname": "caller",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+      "src_start": 4,
+      "tgt_qname": "helper",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py",
+      "tgt_start": 1
+    },
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#Worker.run#8ce7077f",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py#helper#181cd17e",
+      "line": 9,
+      "confidence": 2,
+      "src_qname": "Worker.run",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+      "src_start": 8,
+      "tgt_qname": "helper",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py",
+      "tgt_start": 1
+    }
+  ],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py#helper#181cd17e",
+      "name": "helper",
+      "qualified_name": "helper",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py",
+      "start_line": 1
+    }
+  ]
+}

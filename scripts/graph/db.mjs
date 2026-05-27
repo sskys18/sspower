@@ -86,3 +86,17 @@ export function initSchema(db) {
 export function nodeId(filePath, qualifiedName, spanSha8) {
   return `${filePath}#${qualifiedName}#${spanSha8}`;
 }
+
+export function graphDirFor(cwd) {
+  return path.join(cwd, '.claude', 'graph');
+}
+
+export async function withDb(graphDir, fn) {
+  const dbPath = path.join(graphDir, 'index.sqlite');
+  if (!fs.existsSync(dbPath)) {
+    return await fn(null);
+  }
+  const db = openDb(dbPath);
+  initSchema(db);
+  try { return await fn(db); } finally { db.close(); }
+}

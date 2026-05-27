@@ -1,0 +1,13 @@
+{
+  "target_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+  "direct_count": 1,
+  "transitive_count": 1,
+  "files": [
+    {
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "qnames": [
+        "main"
+      ]
+    }
+  ]
+}

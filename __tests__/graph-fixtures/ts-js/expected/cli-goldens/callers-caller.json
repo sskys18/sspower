@@ -1,0 +1,12 @@
+{
+  "matches": [],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#caller#9bab6714",
+      "name": "caller",
+      "qualified_name": "caller",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+      "start_line": 9
+    }
+  ]
+}

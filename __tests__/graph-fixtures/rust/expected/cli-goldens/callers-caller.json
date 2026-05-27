@@ -1,0 +1,25 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#main#6de613d1",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#caller#af051ad4",
+      "line": 6,
+      "confidence": 1,
+      "src_qname": "main",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "src_start": 5,
+      "tgt_qname": "caller",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "tgt_start": 10
+    }
+  ],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#caller#af051ad4",
+      "name": "caller",
+      "qualified_name": "caller",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+      "start_line": 10
+    }
+  ]
+}

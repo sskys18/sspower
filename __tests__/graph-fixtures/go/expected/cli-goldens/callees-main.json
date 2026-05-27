@@ -1,0 +1,20 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#main#0a2f92de",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go#Calc#6c818067",
+      "line": 8,
+      "confidence": 2,
+      "src_qname": "main",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go",
+      "tgt_qname": "Calc",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go",
+      "tgt_start": 3
+    }
+  ],
+  "sources": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go#main#0a2f92de"
+    }
+  ]
+}

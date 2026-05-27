@@ -1,0 +1,20 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#caller#9bab6714",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#helper#2215fff9",
+      "line": 10,
+      "confidence": 1,
+      "src_qname": "caller",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+      "tgt_qname": "helper",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+      "tgt_start": 5
+    }
+  ],
+  "sources": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#caller#9bab6714"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#caller#af051ad4",
+    "kind": "function",
+    "name": "caller",
+    "qualified_name": "caller",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+    "language": "rust",
+    "start_line": 10,
+    "end_line": 12,
+    "signature": "fn caller() -> i32 {",
+    "span_sha8": "af051ad4",
+    "updated_at": 1779860127
+  }
+]

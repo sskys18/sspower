@@ -1,0 +1,99 @@
+[
+  {
+    "file": "build.json",
+    "args": [
+      "build"
+    ]
+  },
+  {
+    "file": "status.json",
+    "args": [
+      "status"
+    ]
+  },
+  {
+    "file": "callers-greet.json",
+    "args": [
+      "callers",
+      "greet"
+    ]
+  },
+  {
+    "file": "callees-greet.json",
+    "args": [
+      "callees",
+      "greet"
+    ]
+  },
+  {
+    "file": "node-greet.json",
+    "args": [
+      "node",
+      "greet"
+    ]
+  },
+  {
+    "file": "callers-main.json",
+    "args": [
+      "callers",
+      "main"
+    ]
+  },
+  {
+    "file": "callees-main.json",
+    "args": [
+      "callees",
+      "main"
+    ]
+  },
+  {
+    "file": "node-main.json",
+    "args": [
+      "node",
+      "main"
+    ]
+  },
+  {
+    "file": "trace-main-to-greet.json",
+    "args": [
+      "trace",
+      "main",
+      "greet"
+    ]
+  },
+  {
+    "file": "impact-util.ts.json",
+    "args": [
+      "impact",
+      "util.ts"
+    ]
+  },
+  {
+    "file": "impact-app.ts.json",
+    "args": [
+      "impact",
+      "app.ts"
+    ]
+  },
+  {
+    "file": "context-default.json",
+    "args": [
+      "context",
+      "greet main"
+    ]
+  },
+  {
+    "file": "refresh.json",
+    "args": [
+      "refresh"
+    ]
+  },
+  {
+    "file": "session-refresh.json",
+    "args": [
+      "session-refresh",
+      "--max-time",
+      "5"
+    ]
+  }
+]

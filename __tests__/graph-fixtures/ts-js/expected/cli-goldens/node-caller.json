@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts#caller#9bab6714",
+    "kind": "function",
+    "name": "caller",
+    "qualified_name": "caller",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js/sample-input.ts",
+    "language": "typescript",
+    "start_line": 9,
+    "end_line": 11,
+    "signature": "function caller(): number {",
+    "span_sha8": "9bab6714",
+    "updated_at": 1779860122
+  }
+]

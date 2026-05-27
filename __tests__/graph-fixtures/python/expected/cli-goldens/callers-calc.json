@@ -1,0 +1,25 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#caller#8024c1e5",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py#calc#5cb5731b",
+      "line": 5,
+      "confidence": 2,
+      "src_qname": "caller",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+      "src_start": 4,
+      "tgt_qname": "calc",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py",
+      "tgt_start": 1
+    }
+  ],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py#calc#5cb5731b",
+      "name": "calc",
+      "qualified_name": "calc",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/pkg/util.py",
+      "start_line": 1
+    }
+  ]
+}

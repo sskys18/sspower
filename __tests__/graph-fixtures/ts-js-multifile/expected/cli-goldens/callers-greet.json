@@ -1,0 +1,25 @@
+{
+  "matches": [
+    {
+      "source": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts#main#fb1e8061",
+      "target": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts#greet#aa2947ce",
+      "line": 4,
+      "confidence": 2,
+      "src_qname": "main",
+      "src_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/app.ts",
+      "src_start": 3,
+      "tgt_qname": "greet",
+      "tgt_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts",
+      "tgt_start": 1
+    }
+  ],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts#greet#aa2947ce",
+      "name": "greet",
+      "qualified_name": "greet",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/ts-js-multifile/util.ts",
+      "start_line": 1
+    }
+  ]
+}

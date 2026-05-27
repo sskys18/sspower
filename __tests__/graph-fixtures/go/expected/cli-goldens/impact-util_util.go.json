@@ -1,0 +1,14 @@
+{
+  "target_file": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/util/util.go",
+  "direct_count": 2,
+  "transitive_count": 2,
+  "files": [
+    {
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/go/main.go",
+      "qnames": [
+        "main",
+        "Worker.Run"
+      ]
+    }
+  ]
+}

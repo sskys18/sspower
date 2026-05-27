@@ -1,0 +1,18 @@
+{
+  "paths": [
+    {
+      "from": "Worker.run",
+      "to": "helper",
+      "hops": 1,
+      "edges": [
+        {
+          "from": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#Worker.run#8ce7077f",
+          "to": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/helpers.py#helper#181cd17e",
+          "line": 9
+        }
+      ]
+    }
+  ],
+  "fromCount": 1,
+  "toCount": 1
+}

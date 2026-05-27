@@ -1,0 +1,12 @@
+{
+  "matches": [],
+  "targets": [
+    {
+      "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py#caller#8024c1e5",
+      "name": "caller",
+      "qualified_name": "caller",
+      "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/python/main.py",
+      "start_line": 4
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#Worker.run#0d2f4f9a",
+    "kind": "method",
+    "name": "run",
+    "qualified_name": "Worker.run",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+    "language": "rust",
+    "start_line": 17,
+    "end_line": 19,
+    "signature": "fn run(&self) -> i32 {",
+    "span_sha8": "0d2f4f9a",
+    "updated_at": 1779860127
+  }
+]

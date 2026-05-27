@@ -616,47 +616,54 @@ OUT OF SCOPE (P5): advisory -> block promotion (D-B6, operator-gated, separate s
 (spec §11). The `grep` -> semantic-search mismatch is bounded by the bare-identifier
 gate + ask-only, accepted as a lossy-but-visible convenience, not a correctness path.
 
-## sspower-graph (P2 shipped, MCP stub surface)
+## sspower-graph (P3 shipped at 1.4.0-rc.0)
 
 Per-project symbol graph subsystem inspired by codegraph (MIT). Built on
 ast-grep, exposed to Claude Code + sub-agents via MCP stdio.
 
-**Status:** P0/P1/P2 shipped at 1.3.0. MCP surface still ships the P0
-`graph_status` stub only — full tool exposure (callers/callees/trace/impact/
-context as MCP tools) lands in P3. CLI surface is the canonical interface
-through P2: `build`, `refresh`, `session-refresh`, `callers`, `callees`,
-`trace`, `impact`, `context`, `node`, `status`. Languages indexed:
-TypeScript, JavaScript, Python, Go, Rust (each fixture-gated at
-P≥0.85, R≥0.70). Perf gates: 10k-file build <60s, warm callers p95 <1s
-(opt-in via `SSPOWER_GRAPH_PERF=1`).
+**Status:** P0/P1/P2 shipped at 1.3.0. P3 ship candidate is
+1.4.0-rc.0: seven MCP tools (`graph_status`, `graph_callers`,
+`graph_callees`, `graph_trace`, `graph_impact`, `graph_node`,
+`graph_context`), per-project session-state lookup, and graph MCP
+adoption metrics. CLI surface remains: `build`, `refresh`,
+`session-refresh`, `callers`, `callees`, `trace`, `impact`, `context`,
+`node`, `status`, `metric`. Languages indexed: TypeScript, JavaScript,
+Python, Go, Rust (each fixture-gated at P≥0.85, R≥0.70). Perf gates:
+10k-file build <60s, warm callers p95 <1s, MCP representative tool p95
+tracked via `tests/graph/perf-mcp.mjs`.
 
 **Entry points:**
 
 | Path | Role |
 |------|------|
 | `.mcp.json` | Plugin-root MCP server declaration. Registers `sspower-graph` with `command = bin/sspower-graph-bootstrap.sh`. |
-| `bin/sspower-graph.mjs` | MCP stdio server. P0 exposes one tool: `graph_status`. Uses `@modelcontextprotocol/sdk` with `ListToolsRequestSchema` / `CallToolRequestSchema`. |
-| `bin/sspower-graph-bootstrap.sh` | Lazy `bun install` wrapper invoked by `.mcp.json`. Enforces Node ≥22. Fails fast if bun absent (npm fallback dropped per Codex review A1). |
+| `bin/sspower-graph.mjs` | CLI + MCP stdio server. P3 exposes 7 graph query tools and the `metric` CLI aggregator. Uses `@modelcontextprotocol/sdk` with `ListToolsRequestSchema` / `CallToolRequestSchema`. |
+| `bin/sspower-graph-bootstrap.sh` | Lazy `bun install` wrapper invoked by `.mcp.json`. Enforces Node ≥22, preserves caller cwd, and fails fast on MCP server-key collisions. |
 | `hooks/_intent.sh` (`architecture` class) | Routes prompts like "callers of X" / "how does X reach Y" / "trace X" so future graph-context hook (P4) can inject without colliding with the qa guard. |
 | `scripts/graph-append-dirty.py` | JSONL appender for `<cwd>/.claude/graph/dirty`. Reuses `sspower_mem.lock.acquire_lock` (anchored, O_NOFOLLOW). |
 | `scripts/graph-with-lock.py` | Holds `<cwd>/.claude/graph/.lock` for the duration of a child process. Brackets the cross-language Node↔Python SQLite transaction (P2). |
-| `__tests__/graph-fixtures/` | vitest fixture harness (goldens-only mode in P0; P1 wires extractor + precision/recall gate). |
-| `tests/graph/test-mcp-stub.mjs` | Executable MCP smoke through bootstrap (StdioClientTransport → initialize → tools/list → tools/call). |
+| `scripts/graph/mcp-tools/` | P3 per-tool MCP handlers, dispatcher, and metric writer/reconciler. |
+| `__tests__/graph-fixtures/` | vitest fixture harness plus P2 CLI back-compat goldens. |
+| `tests/graph/test-mcp-integration.mjs` | Executable MCP smoke through bootstrap (StdioClientTransport → initialize → tools/list → tools/call for 7 tools). |
 
 **Hard deps (P0):** ast-grep ≥0.43 (brew), Node ≥22 (bootstrap-enforced),
 bun (committed `bun.lock`), `@modelcontextprotocol/sdk` ^1.0, vitest ^2.1.
 
-**Per-cwd state (P2 onwards, not yet active):**
+**Per-cwd state:**
 ```
 <cwd>/.claude/graph/index.sqlite      # WAL-mode SQLite cache
 <cwd>/.claude/graph/dirty             # JSONL: {op,path} per PostToolUse event
 <cwd>/.claude/graph/.lock             # POSIX fcntl flock anchor
 <cwd>/.claude/graph/version           # schema rev + ast-grep version + git_filesethash
+~/.claude/state/sspower/sessions/<sha8>.json       # P3 per-project session id
+~/.claude/state/sspower/graph-mcp/sessions.json    # P3 adoption metrics
 ```
 
 **Spec + plan:**
 - [docs/specs/2026-05-26-codegraph-style-graph-design.md](specs/2026-05-26-codegraph-style-graph-design.md) — 5 codex plan-review passes to `approve-with-followups`. 40 locked decisions.
+- [docs/specs/2026-05-27-codegraph-graph-P3-design.md](specs/2026-05-27-codegraph-graph-P3-design.md) — P3 MCP expansion + metric design.
 - [docs/plans/2026-05-26-codegraph-graph-P0.md](plans/2026-05-26-codegraph-graph-P0.md) — P0 plan, `approve` verdict.
+- [docs/plans/2026-05-27-codegraph-graph-P3.md](plans/2026-05-27-codegraph-graph-P3.md) — P3 implementation plan.
 - [docs/codegraph-graph-P0-followups.md](codegraph-graph-P0-followups.md) — A1/A2/A3 resolved inline.
 
 **Anti-goal circuit-breaker:** if the full MCP layer (P3) exceeds 2 weeks,

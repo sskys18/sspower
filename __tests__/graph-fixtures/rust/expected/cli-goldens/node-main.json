@@ -1,0 +1,15 @@
+[
+  {
+    "id": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs#main#6de613d1",
+    "kind": "function",
+    "name": "main",
+    "qualified_name": "main",
+    "file_path": "/Users/sskys/.claude/plugins/marketplaces/sskys18/plugins/sspower-graph-P3/__tests__/graph-fixtures/rust/src/main.rs",
+    "language": "rust",
+    "start_line": 5,
+    "end_line": 8,
+    "signature": "fn main() {",
+    "span_sha8": "6de613d1",
+    "updated_at": 1779860127
+  }
+]

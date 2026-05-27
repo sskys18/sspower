@@ -1,0 +1,213 @@
+[
+  {
+    "file": "build.json",
+    "args": [
+      "build"
+    ]
+  },
+  {
+    "file": "status.json",
+    "args": [
+      "status"
+    ]
+  },
+  {
+    "file": "callers-helper.json",
+    "args": [
+      "callers",
+      "helper"
+    ]
+  },
+  {
+    "file": "callees-helper.json",
+    "args": [
+      "callees",
+      "helper"
+    ]
+  },
+  {
+    "file": "node-helper.json",
+    "args": [
+      "node",
+      "helper"
+    ]
+  },
+  {
+    "file": "callers-caller.json",
+    "args": [
+      "callers",
+      "caller"
+    ]
+  },
+  {
+    "file": "callees-caller.json",
+    "args": [
+      "callees",
+      "caller"
+    ]
+  },
+  {
+    "file": "node-caller.json",
+    "args": [
+      "node",
+      "caller"
+    ]
+  },
+  {
+    "file": "callers-A.shared.json",
+    "args": [
+      "callers",
+      "A.shared"
+    ]
+  },
+  {
+    "file": "callees-A.shared.json",
+    "args": [
+      "callees",
+      "A.shared"
+    ]
+  },
+  {
+    "file": "node-A.shared.json",
+    "args": [
+      "node",
+      "A.shared"
+    ]
+  },
+  {
+    "file": "callers-B.shared.json",
+    "args": [
+      "callers",
+      "B.shared"
+    ]
+  },
+  {
+    "file": "callees-B.shared.json",
+    "args": [
+      "callees",
+      "B.shared"
+    ]
+  },
+  {
+    "file": "node-B.shared.json",
+    "args": [
+      "node",
+      "B.shared"
+    ]
+  },
+  {
+    "file": "callers-A.json",
+    "args": [
+      "callers",
+      "A"
+    ]
+  },
+  {
+    "file": "callees-A.json",
+    "args": [
+      "callees",
+      "A"
+    ]
+  },
+  {
+    "file": "node-A.json",
+    "args": [
+      "node",
+      "A"
+    ]
+  },
+  {
+    "file": "callers-B.json",
+    "args": [
+      "callers",
+      "B"
+    ]
+  },
+  {
+    "file": "callees-B.json",
+    "args": [
+      "callees",
+      "B"
+    ]
+  },
+  {
+    "file": "node-B.json",
+    "args": [
+      "node",
+      "B"
+    ]
+  },
+  {
+    "file": "callers-ambiguous.json",
+    "args": [
+      "callers",
+      "ambiguous"
+    ]
+  },
+  {
+    "file": "callees-ambiguous.json",
+    "args": [
+      "callees",
+      "ambiguous"
+    ]
+  },
+  {
+    "file": "node-ambiguous.json",
+    "args": [
+      "node",
+      "ambiguous"
+    ]
+  },
+  {
+    "file": "trace-caller-to-helper.json",
+    "args": [
+      "trace",
+      "caller",
+      "helper"
+    ]
+  },
+  {
+    "file": "trace-ambiguous-to-A.shared.json",
+    "args": [
+      "trace",
+      "ambiguous",
+      "A.shared"
+    ]
+  },
+  {
+    "file": "trace-ambiguous-to-B.shared.json",
+    "args": [
+      "trace",
+      "ambiguous",
+      "B.shared"
+    ]
+  },
+  {
+    "file": "impact-sample-input.ts.json",
+    "args": [
+      "impact",
+      "sample-input.ts"
+    ]
+  },
+  {
+    "file": "context-default.json",
+    "args": [
+      "context",
+      "helper caller A.shared"
+    ]
+  },
+  {
+    "file": "refresh.json",
+    "args": [
+      "refresh"
+    ]
+  },
+  {
+    "file": "session-refresh.json",
+    "args": [
+      "session-refresh",
+      "--max-time",
+      "5"
+    ]
+  }
+]
