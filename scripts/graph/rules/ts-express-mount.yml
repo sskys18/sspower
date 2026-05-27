@@ -1,0 +1,4 @@
+id: ts-express-mount
+language: typescript
+rule:
+  pattern: $APP.use($PREFIX, $ROUTER)

@@ -1,0 +1,17 @@
+id: ts-express-router
+language: typescript
+rule:
+  any:
+    # Direct router method (matches fixture: r.get('/users', listUsers))
+    - pattern: $ROUTER.get($PATH, $$$H)
+    - pattern: $ROUTER.post($PATH, $$$H)
+    - pattern: $ROUTER.put($PATH, $$$H)
+    - pattern: $ROUTER.delete($PATH, $$$H)
+    - pattern: $ROUTER.patch($PATH, $$$H)
+    - pattern: $ROUTER.all($PATH, $$$H)
+    # Chained .route(path).METHOD form
+    - pattern: $ROUTER.route($PATH).get($$$H)
+    - pattern: $ROUTER.route($PATH).post($$$H)
+    - pattern: $ROUTER.route($PATH).put($$$H)
+    - pattern: $ROUTER.route($PATH).delete($$$H)
+    - pattern: $ROUTER.route($PATH).patch($$$H)
