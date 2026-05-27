@@ -181,16 +181,32 @@ async function runSessionRefresh(opts) {
   else if (planner.action === 'refresh')  await runRefreshLocked(opts);
 }
 
-async function runTrace(opts, from, to) {
-  throw new Error('not yet implemented — see Task 12');
+async function runTrace(opts, fromName, toName) {
+  const { trace } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/trace.mjs'));
+  await withDb(graphDirFor(opts.cwd), db => {
+    const r = trace(db, fromName, toName, { maxHops: opts.maxHops, limit: opts.limit });
+    emit(opts, r, p => p.paths.length === 0 ? 'no path' :
+      p.paths.map(pp => `${pp.from} -> ... -> ${pp.to} (${pp.hops} hops)`).join('\n'));
+  });
 }
 
-async function runImpact(opts, file) {
-  throw new Error('not yet implemented — see Task 12');
+async function runImpact(opts, filePath) {
+  const { impact } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/impact.mjs'));
+  const absFile = path.resolve(opts.cwd, filePath);
+  await withDb(graphDirFor(opts.cwd), db => {
+    const r = impact(db, absFile, { limit: opts.limit });
+    emit(opts, r, p => `${p.target_file}\ndirect=${p.direct_count} transitive=${p.transitive_count}\n` +
+      p.files.map(f => `  ${f.file_path}\n    ${f.qnames.join(', ')}`).join('\n'));
+  });
 }
 
 async function runContext(opts, task) {
-  throw new Error('not yet implemented — see Task 12');
+  const { context: ctxFn } = await import(path.join(PLUGIN_ROOT, 'scripts/graph/context.mjs'));
+  await withDb(graphDirFor(opts.cwd), db => {
+    const r = ctxFn(db, task);
+    emit(opts, r, p => p.hits.length === 0 ? 'no context' :
+      p.hits.map(h => `${h.qname}\t${h.file}:${h.line}\t${h.signature ?? ''}`).join('\n'));
+  });
 }
 
 async function runCallers(opts, name) {
