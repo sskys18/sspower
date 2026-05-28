@@ -1006,6 +1006,12 @@ function _runCodexComplete(prompt, options) {
     "exec",
     "--json",
     "--ephemeral",
+    // codex >= 0.131 refuses non-git CWDs unless --skip-git-repo-check is set.
+    // Bridge callers may launch `complete` from doc-only repos (e.g.
+    // /blockwavelabs/infinite-block/legacy/docs) where the cwd is not a git
+    // tree; matches the other entry points (cmdReview/cmdResume) that already
+    // pass this flag.
+    "--skip-git-repo-check",
     "--sandbox", "read-only",
     "-o", resultFile,
     "-",
