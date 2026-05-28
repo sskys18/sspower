@@ -1,4 +1,4 @@
-description = "Dev pipeline - start/advance/abort the plan->review->exec->test->review flow"
+description = "Dev pipeline - start/advance/abort the plan->plan-review->exec->test->review->merge flow"
 prompt = """Run the sspower flow state machine.
 
 Execute: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/flow.sh" {{args}}` and report the
@@ -15,4 +15,9 @@ Drive it yourself - do not wait for the user between stages:
   survives compaction, then `flow.sh advance`.
 - As each later stage's deliverable is done, run `flow.sh advance` and continue.
 - On test failure, run `flow.sh back` (returns to EXEC), fix, retry.
-- Stop only on failure. The flow clears itself after the REVIEW stage."""
+- After REVIEW passes, the flow advances to MERGE. The MERGE stage aligns
+  docs, commits pending changes, pushes the feature branch, merges to main
+  (if on a feature branch), pushes main, then runs the handoff skill.
+  Git chokepoints (commit/push/merge) remain standalone Bash invocations;
+  the auto-review hook still gates them on the REVIEW-stage codex verdict.
+- Stop only on failure. The flow clears itself after the MERGE stage."""

@@ -53,7 +53,7 @@ sub "bug -> debugging trigger" "systematic-debugging" "$out"; teardown
 setup
 out="$(run '{"prompt":"implement a retry layer with backoff and jitter for the api client","cwd":"'"$CWD"'"}')"
 sub "multi-step -> AUTO-FLOW" "AUTO-FLOW" "$out"
-sub "multi-step -> plan stage" "FLOW[plan 1/5]" "$out"
+sub "multi-step -> plan stage" "FLOW[plan 1/6]" "$out"
 ( cd "$CWD" && bash "$FLOW" abort >/dev/null 2>&1 ); teardown
 
 # quick: suppresses auto-start
@@ -70,14 +70,14 @@ empty "quick: + Q&A -> silent" "$out"; teardown
 setup
 ( cd "$CWD" && bash "$FLOW" start "demo task" >/dev/null )
 out="$(run '{"prompt":"what is a closure?","cwd":"'"$CWD"'"}')"
-sub "active flow -> orders" "FLOW[plan 1/5]" "$out"
+sub "active flow -> orders" "FLOW[plan 1/6]" "$out"
 ( cd "$CWD" && bash "$FLOW" abort >/dev/null ); teardown
 
 # active flow wins even with an empty prompt (flow spine sacrosanct)
 setup
 ( cd "$CWD" && bash "$FLOW" start "demo task" >/dev/null )
 out="$(run '{"prompt":"","cwd":"'"$CWD"'"}')"
-sub "active flow + empty prompt -> orders" "FLOW[plan 1/5]" "$out"
+sub "active flow + empty prompt -> orders" "FLOW[plan 1/6]" "$out"
 ( cd "$CWD" && bash "$FLOW" abort >/dev/null ); teardown
 
 # auto-start failure -> falls back to the targeted trigger, not a flow.

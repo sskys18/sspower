@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sspower flow - plan->plan-review->exec->test->review pipeline state machine.
+# sspower flow - plan->plan-review->exec->test->review->merge pipeline state machine.
 #
 # State: ~/.claude/sspower/flow-state.json  { version, flows: { <cwd>: {...} } }
 # Keyed by working directory so multiple projects each carry their own flow.
@@ -7,8 +7,8 @@
 # Subcommands:
 #   start <task>     begin a flow at the PLAN stage
 #   set-plan <path>  record the plan-file path (required before leaving PLAN)
-#   advance          move to the next stage (review -> done clears the flow)
-#   back             return to EXEC - valid only from test/review
+#   advance          move to the next stage (merge -> done clears the flow)
+#   back             return to EXEC - valid only from test/review/merge
 #   status           print the current stage line (default)
 #   orders           print ONLY the current stage's marching orders (for the hook)
 #   abort            clear the flow for this directory
@@ -23,7 +23,8 @@ umask 077
 
 STATE_DIR="${HOME}/.claude/sspower"
 STATE_FILE="${STATE_DIR}/flow-state.json"
-STAGES=(plan plan-review exec test review)
+STAGES=(plan plan-review exec test review merge)
+TOTAL_STAGES="${#STAGES[@]}"
 # plugin root = scripts/.. - used to build absolute paths in stage orders.
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 FLOW_SH="${PLUGIN_ROOT}/scripts/flow.sh"
@@ -99,7 +100,7 @@ print_status() {
     return
   fi
   local i; i="$(idx_of "$stage")"
-  echo "flow: ${stage} ($((i + 1))/5) - task: ${task}${plan_path:+ - plan: ${plan_path}}"
+  echo "flow: ${stage} ($((i + 1))/${TOTAL_STAGES}) - task: ${task}${plan_path:+ - plan: ${plan_path}}"
 }
 
 # SINGLE source of truth for stage marching orders. Emits the instruction
@@ -108,22 +109,26 @@ render_orders() {
   local s="$1" n ref=""
   n="$(idx_of "$s")"; n=$((n + 1))
   [ -n "$plan_path" ] && ref=" Plan file: ${plan_path}."
+  local t="${TOTAL_STAGES}"
   case "$s" in
     plan)
-      printf 'FLOW[plan %d/5] - task: "%s". Stage = PLAN. Invoke the sspower:writing-plans skill. Produce the plan only - no implementation code. When the plan file exists, run: bash "%s" set-plan <path-to-plan>, then bash "%s" advance. Auto-advance is on - drive the whole pipeline yourself, stop only on failure.' \
-        "$n" "$task" "$FLOW_SH" "$FLOW_SH" ;;
+      printf 'FLOW[plan %d/%d] - task: "%s". Stage = PLAN. Invoke the sspower:writing-plans skill. Produce the plan only - no implementation code. When the plan file exists, run: bash "%s" set-plan <path-to-plan>, then bash "%s" advance. Auto-advance is on - drive the whole pipeline yourself, stop only on failure.' \
+        "$n" "$t" "$task" "$FLOW_SH" "$FLOW_SH" ;;
     plan-review)
-      printf 'FLOW[plan-review %d/5] - task: "%s".%s Stage = PLAN-REVIEW. Review the plan: run `node "%s/scripts/codex-bridge.mjs" plan-review --cd "%s" --prompt @%s`. Fix every high/medium finding inline and re-run until the verdict is approve or approve-with-followups. Then run: bash "%s" advance.' \
-        "$n" "$task" "$ref" "$PLUGIN_ROOT" "$CWD" "${plan_path:-<plan-path>}" "$FLOW_SH" ;;
+      printf 'FLOW[plan-review %d/%d] - task: "%s".%s Stage = PLAN-REVIEW. Review the plan: run `node "%s/scripts/codex-bridge.mjs" plan-review --cd "%s" --prompt @%s`. Fix every high/medium finding inline and re-run until the verdict is approve or approve-with-followups. Then run: bash "%s" advance.' \
+        "$n" "$t" "$task" "$ref" "$PLUGIN_ROOT" "$CWD" "${plan_path:-<plan-path>}" "$FLOW_SH" ;;
     exec)
-      printf 'FLOW[exec %d/5] - task: "%s".%s Stage = EXEC. Plan approved. Invoke sspower:executing-plans (or test-driven-development for a feature/bugfix) and implement the plan. When implementation is complete, run: bash "%s" advance.' \
-        "$n" "$task" "$ref" "$FLOW_SH" ;;
+      printf 'FLOW[exec %d/%d] - task: "%s".%s Stage = EXEC. Plan approved. Invoke sspower:executing-plans (or test-driven-development for a feature/bugfix) and implement the plan. When implementation is complete, run: bash "%s" advance.' \
+        "$n" "$t" "$task" "$ref" "$FLOW_SH" ;;
     test)
-      printf 'FLOW[test %d/5] - task: "%s". Stage = TEST. Invoke sspower:verification-before-completion. Run tests, type-check, lint - real commands, real output. PASS -> run: bash "%s" advance. FAIL -> run: bash "%s" back (returns to EXEC), fix, retry. Never advance with failures outstanding.' \
-        "$n" "$task" "$FLOW_SH" "$FLOW_SH" ;;
+      printf 'FLOW[test %d/%d] - task: "%s". Stage = TEST. Invoke sspower:verification-before-completion. Run tests, type-check, lint - real commands, real output. PASS -> run: bash "%s" advance. FAIL -> run: bash "%s" back (returns to EXEC), fix, retry. Never advance with failures outstanding.' \
+        "$n" "$t" "$task" "$FLOW_SH" "$FLOW_SH" ;;
     review)
-      printf 'FLOW[review %d/5] - task: "%s". Stage = REVIEW. Invoke sspower:requesting-code-review on the diff. If a blocker needs a code change, run: bash "%s" back. When the review is clean, run: bash "%s" advance - this completes and clears the flow.' \
-        "$n" "$task" "$FLOW_SH" "$FLOW_SH" ;;
+      printf 'FLOW[review %d/%d] - task: "%s". Stage = REVIEW. Invoke sspower:requesting-code-review on the diff. If a blocker needs a code change, run: bash "%s" back. When the review is clean, run: bash "%s" advance - moves to MERGE.' \
+        "$n" "$t" "$task" "$FLOW_SH" "$FLOW_SH" ;;
+    merge)
+      printf 'FLOW[merge %d/%d] - task: "%s". Stage = MERGE. Auto-finish: (1) Align docs (handoff.md / CLAUDE.md / touched design docs) with the latest code; show diffs before staging. (2) Write commit message to /tmp/sspower-flow-commit.txt (Conventional Commits, terse, why-over-what). (3) Stage specific paths, then: git -C "%s" commit -F /tmp/sspower-flow-commit.txt (standalone, no chained ops). (4) git -C "%s" push (standalone). (5) Check current branch with: git -C "%s" rev-parse --abbrev-ref HEAD. If on a feature branch: confirm with the user, then git -C "%s" checkout main, git -C "%s" merge --no-ff <branch> (standalone), git -C "%s" push (standalone). If already on main: skip the checkout+merge step. (6) Invoke the sspower:handoff skill (or `/handoff`) to write the next-session resume doc. (7) Run: bash "%s" advance - completes and clears the flow. Hard rules: chokepoints (commit/push/merge) MUST be standalone Bash calls — no &&, ;, ||. Auto-review hook gates them on the REVIEW-stage codex verdict — if it denies, run: bash "%s" back, fix, retry. To skip the merge stage for a flow that does not need a branch merge, run: bash "%s" advance now (clears the flow without further action).' \
+        "$n" "$t" "$task" "$CWD" "$CWD" "$CWD" "$CWD" "$CWD" "$CWD" "$FLOW_SH" "$FLOW_SH" "$FLOW_SH" ;;
     *)
       : ;;
   esac
@@ -177,8 +182,8 @@ case "$cmd" in
   back)
     [ -n "$stage" ] || die "no active flow"
     case "$stage" in
-      test|review) ;;
-      *) die "back is valid only from test/review (current stage: $stage)" ;;
+      test|review|merge) ;;
+      *) die "back is valid only from test/review/merge (current stage: $stage)" ;;
     esac
     jq_set '.flows[$c].stage = "exec" | .flows[$c].updated = $n'
     stage="exec"; print_stage
