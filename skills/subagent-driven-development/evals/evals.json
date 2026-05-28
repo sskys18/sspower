@@ -33,7 +33,7 @@
         },
         {
           "name": "schema-compliant",
-          "text": "Response contains all required fields: status, summary, files_changed, tests, self_review, concerns, questions, blocked_reason",
+          "text": "Response contains all required fields: status, summary, files_changed, tests, self_review, blocked_reason",
           "type": "programmatic"
         }
       ]
