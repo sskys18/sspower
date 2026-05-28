@@ -195,7 +195,7 @@ Defaults: governed by `~/.codex/config.toml` profiles. The bridge maps each subc
 | `spec-review` | `read-only` | no (ephemeral) | `spec-review-output` |
 | `review` | `read-only` | no (ephemeral) | `quality-review-output` |
 | `rescue [--write]` | `read-only` / `workspace-write` | persist on `--write` | none |
-| `resume --session-id <id>` | inherits | yes | optional via prompt-wrapping |
+| `resume --session-id <id>` | inherits | yes | `implementation-output` by default (`--no-schema` for free-form) |
 | `ps` / `status` / `tail` / `kill` / `steer` | n/a | session registry ops |
 
 `--write` switches sandbox to `workspace-write`. All write paths take optional `--cd`, `--worktree <branch>`, `--auto-commit [msg]`.
@@ -271,11 +271,11 @@ Structured-output contracts passed to `codex exec --output-schema`. Codex return
 
 | Schema | Used by |
 |--------|---------|
-| `implementation-output.json` | `bridge implement` |
+| `implementation-output.json` | `bridge implement`; `bridge resume` by default |
 | `spec-review-output.json` | `bridge spec-review` |
 | `quality-review-output.json` | `bridge review` |
 
-Resume mode (`bridge resume`) doesn't support `--output-schema`, so the bridge wraps the prompt with explicit JSON instruction and parses the response text.
+Resume mode (`bridge resume`) doesn't support `--output-schema`, so the bridge defaults to an `implementation-output` prompt wrapper and parses the response text. Use `--no-schema` for free-form resume. Bridge applies the TDD guard on resume too (DONE with `tests.ran!=true` or `tests.failed>0` converts to BLOCKED).
 
 ## Slash commands (`commands/`)
 

@@ -1655,7 +1655,9 @@ async function cmdImplement(argv) {
   }
 
   // TDD guard: DONE requires executed tests with zero failures.
-  if (opts.write) applyTddGuard(result, "bridge.implement");
+  // Applies to dry runs too — read-only mode cannot credibly claim DONE
+  // (no code written), and gating uniformly removes an edge-case bypass.
+  applyTddGuard(result, "bridge.implement");
 
   // Auto-commit after successful implementation
   if (result.exitCode === 0 && result.structured?.status === "DONE" && opts.autoCommit) {
