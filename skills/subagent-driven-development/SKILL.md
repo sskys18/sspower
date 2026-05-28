@@ -96,17 +96,17 @@ node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" implement \
 
 **Prompt template:** See `codex-implementer-prompt.md` — fill placeholders and write to temp file.
 
-**Response:** Structured JSON with identical status codes (`DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`). Parse and handle exactly like Claude subagent reports.
+**Response:** Structured JSON with binary status (`DONE` or `BLOCKED`). The schema was narrowed: `DONE_WITH_CONCERNS` and `NEEDS_CONTEXT` were removed as soft-fallback patterns. Bridge enforces additional gates — `DONE` with `tests.ran=false` or `tests.failed > 0` is auto-converted to `BLOCKED`.
 
-**Key difference:** Codex cannot ask mid-task questions. Front-load all context in the prompt.
+**Key difference:** Codex cannot ask mid-task questions. Front-load all context in the prompt. If you missed something, the run returns BLOCKED — resume with the missing context.
 
 **Session tracking:** The bridge prints `[codex:session] <id>` to stderr during implement runs. Capture this ID — you need it for fix loops.
 
-If Codex returns `NEEDS_CONTEXT`, provide context by resuming the implementer session:
+If Codex returns `BLOCKED` with a context gap, resume the implementer session:
 
 ```bash
 node "${SSPOWER_PLUGIN_ROOT}/scripts/codex-bridge.mjs" resume \
-  --session-id {IMPLEMENT_SESSION_ID} --prompt "Context: {ANSWERS_TO_QUESTIONS}"
+  --session-id {IMPLEMENT_SESSION_ID} --prompt "Additional context: {ANSWERS}"
 ```
 
 ### Codex for Reviews
@@ -142,10 +142,17 @@ See `references/codex-integration.md` for full details on engine selection, thre
 
 ## Handling Implementer Status
 
-**DONE:** Proceed to spec review.
-**DONE_WITH_CONCERNS:** Read concerns. If correctness/scope → address before review. If observations → note and proceed.
-**NEEDS_CONTEXT:** Provide missing context and re-dispatch.
-**BLOCKED:** Assess: context problem → provide context; needs more reasoning → more capable model; too large → break it up; plan wrong → escalate to human.
+Status enum is binary: `DONE | BLOCKED`. No middle ground — `DONE_WITH_CONCERNS` and `NEEDS_CONTEXT` were removed as soft-fallback patterns.
+
+**DONE:** Proceed to spec review. Implementer asserts the spec is fully implemented AND the test runner ran with zero failures. Bridge enforces both for Codex; verify the report for Claude.
+
+**BLOCKED:** Read `blocked_reason`. Choose one resolution:
+- Context problem → resume with the missing context
+- Needs more reasoning → re-dispatch with a more capable model
+- Too large → break the task into smaller pieces and re-plan
+- Plan is wrong → escalate to human, fix the plan, re-dispatch
+
+Never coerce BLOCKED into a partial DONE. Never patch around the obstacle without addressing the root cause.
 
 ## Red Flags
 

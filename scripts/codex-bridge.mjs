@@ -1613,6 +1613,33 @@ async function cmdImplement(argv) {
     }
   }
 
+  // TDD guard: DONE requires executed tests with zero failures. The schema
+  // permits status=DONE with tests.ran=false (boolean is just a boolean) but
+  // policy does not. Convert to BLOCKED with a precise reason — never silently
+  // accept untested DONE. Skipped for --write=false (dry runs / planning).
+  if (opts.write && result.structured?.status === "DONE") {
+    const t = result.structured.tests || {};
+    if (!t.ran) {
+      result.structured.status = "BLOCKED";
+      result.structured.blocked_reason = "TDD violation: tests.ran=false. DONE requires executed test runner output.";
+      logEvent("error", "bridge.implement", {
+        kind: "tdd_violation_no_run",
+        session: result.sessionId,
+        passed: t.passed,
+        failed: t.failed,
+      });
+    } else if (typeof t.failed === "number" && t.failed > 0) {
+      result.structured.status = "BLOCKED";
+      result.structured.blocked_reason = `TDD violation: ${t.failed} failing test(s). DONE requires zero failures.`;
+      logEvent("error", "bridge.implement", {
+        kind: "tdd_violation_failures",
+        session: result.sessionId,
+        passed: t.passed,
+        failed: t.failed,
+      });
+    }
+  }
+
   // Auto-commit after successful implementation
   if (result.exitCode === 0 && result.structured?.status === "DONE" && opts.autoCommit) {
     const commitMsg = opts.autoCommit === true
