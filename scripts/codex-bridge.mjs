@@ -1576,9 +1576,9 @@ function applyTddGuard(result, eventSource) {
       passed: t.passed,
       failed: t.failed,
     });
-  } else if (!Number.isInteger(t.failed)) {
+  } else if (!Number.isInteger(t.failed) || t.failed < 0) {
     result.structured.status = "BLOCKED";
-    result.structured.blocked_reason = "TDD violation: tests.failed is not an integer. DONE requires zero failures.";
+    result.structured.blocked_reason = "TDD violation: tests.failed is not a non-negative integer. DONE requires zero failures.";
     logEvent("error", eventSource, {
       kind: "tdd_violation_invalid_failed",
       session: result.sessionId,

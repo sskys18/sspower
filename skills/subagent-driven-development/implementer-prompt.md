@@ -111,5 +111,5 @@ Task tool (general-purpose):
     - **Files changed:** every file created or modified, absolute paths.
     - **Tests:** ran (true/false), passed, failed, raw runner output, exit code.
     - **Self-review:** the eight answers above, with confidence tags.
-    - **Blocked reason:** exact obstacle when BLOCKED; omit when DONE.
+    - **Blocked reason:** exact obstacle when BLOCKED; empty string when DONE (schema requires the field).
 ```

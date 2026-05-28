@@ -128,8 +128,6 @@ Codex returns:
   "files_changed": ["src/routes/users.ts", "src/routes/users.test.ts"],
   "tests": {"ran": true, "passed": 4, "failed": 0, "details": "vitest pass"},
   "self_review": "Clean implementation, follows existing route patterns",
-  "concerns": [],
-  "questions": [],
   "blocked_reason": ""
 }
 

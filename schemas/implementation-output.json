@@ -24,8 +24,8 @@
       "required": ["ran", "passed", "failed", "details"],
       "properties": {
         "ran": { "type": "boolean", "description": "True only if test runner was executed and its output was read" },
-        "passed": { "type": "integer", "description": "Count from runner output" },
-        "failed": { "type": "integer", "description": "Count from runner output" },
+        "passed": { "type": "integer", "minimum": 0, "description": "Count from runner output" },
+        "failed": { "type": "integer", "minimum": 0, "description": "Count from runner output" },
         "details": { "type": "string", "description": "Raw test runner output (not a summary)" }
       }
     },
