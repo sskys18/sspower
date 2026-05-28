@@ -2180,4 +2180,5 @@ if (_isCli) {
 export { runLspGate as __test_runLspGate };
 export { runLspRepairLoop as __test_runLspRepairLoop };
 export { _extractSid };
+export { applyTddGuard as __test_applyTddGuard };
 export { lspDiffHash as __test_lspDiffHash };
