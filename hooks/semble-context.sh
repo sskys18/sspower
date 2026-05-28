@@ -89,9 +89,16 @@ else TO=(); fi   # no timeout binary AND no perl (extreme): run unbounded, never
 
 START="$(date +%s)"
 OUT=""
+# Capture stderr to a tmpfile so we can classify benign rc=1 cases
+# (e.g. `Error: No supported files found ...` when cwd has no
+# indexable source files — happens on plugin tool subdirs, fixture
+# dirs, doc-only repos). The hook is fail-open either way, but logging
+# these as `error` spammed errors.jsonl with non-actionable noise.
+STDERR_FILE="$(mktemp -t semble-stderr.XXXXXX 2>/dev/null || echo /tmp/semble-stderr.$$)"
 # bash-3.2-safe empty-array expansion (${arr[@]+...}) - no set -u unbound error.
-if OUT="$(${TO[@]+"${TO[@]}"} semble_rs plan "$USER_PROMPT" "$CWD" 2>/dev/null)"; then
+if OUT="$(${TO[@]+"${TO[@]}"} semble_rs plan "$USER_PROMPT" "$CWD" 2>"$STDERR_FILE")"; then
   DUR=$(( $(date +%s) - START ))
+  rm -f "$STDERR_FILE" 2>/dev/null
   if [[ -n "$OUT" ]]; then
     # HARD char cap: final string (slice + marker) is <= MAX_CHARS, not
     # MAX_CHARS + marker. Marker reserved at 28 chars; floor MAX_CHARS at 64.
@@ -108,9 +115,20 @@ ${OUT}"
   log_hook warn "kind=empty dur=${DUR}s cwd=$CWD"; emit_nothing
 else
   RC=$?; DUR=$(( $(date +%s) - START ))
+  ERR_SNIP="$(head -c 200 "$STDERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  rm -f "$STDERR_FILE" 2>/dev/null
   case "$RC" in
     124|142) log_hook warn "kind=timeout dur=${DUR}s cwd=$CWD" ;;
-    *)       log_hook error "kind=semble_failed rc=$RC dur=${DUR}s cwd=$CWD" ;;
+    1)
+      # rc=1 with "No supported files" is benign — cwd has no indexable
+      # source. Demote to info/no-files, no error spam.
+      if [[ "$ERR_SNIP" == *"No supported files"* ]]; then
+        log_hook info "kind=no-files dur=${DUR}s cwd=$CWD"
+      else
+        log_hook error "kind=semble_failed rc=$RC dur=${DUR}s cwd=$CWD err=\"${ERR_SNIP}\""
+      fi
+      ;;
+    *)       log_hook error "kind=semble_failed rc=$RC dur=${DUR}s cwd=$CWD err=\"${ERR_SNIP}\"" ;;
   esac
   emit_nothing
 fi
