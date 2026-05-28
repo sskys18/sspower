@@ -1564,16 +1564,28 @@ function _extractSid(result) {
 function applyTddGuard(result, eventSource) {
   if (result.structured?.status !== "DONE") return;
   const t = result.structured.tests || {};
-  if (!t.ran) {
+  // cmdResume cannot pass --output-schema (Codex CLI limitation), so type
+  // coercion isn't enforced upstream. Strict checks: ran must be literal
+  // true, failed must be a real integer. Strings or undefined fail closed.
+  if (t.ran !== true) {
     result.structured.status = "BLOCKED";
-    result.structured.blocked_reason = "TDD violation: tests.ran=false. DONE requires executed test runner output.";
+    result.structured.blocked_reason = "TDD violation: tests.ran is not boolean true. DONE requires executed test runner output.";
     logEvent("error", eventSource, {
       kind: "tdd_violation_no_run",
       session: result.sessionId,
       passed: t.passed,
       failed: t.failed,
     });
-  } else if (typeof t.failed === "number" && t.failed > 0) {
+  } else if (!Number.isInteger(t.failed)) {
+    result.structured.status = "BLOCKED";
+    result.structured.blocked_reason = "TDD violation: tests.failed is not an integer. DONE requires zero failures.";
+    logEvent("error", eventSource, {
+      kind: "tdd_violation_invalid_failed",
+      session: result.sessionId,
+      passed: t.passed,
+      failed: t.failed,
+    });
+  } else if (t.failed > 0) {
     result.structured.status = "BLOCKED";
     result.structured.blocked_reason = `TDD violation: ${t.failed} failing test(s). DONE requires zero failures.`;
     logEvent("error", eventSource, {
