@@ -135,6 +135,21 @@ if [ "$n" = "8" ]; then PASS=$((PASS+1)); echo "ok   - 8 concurrent starts all p
 else FAIL=$((FAIL+1)); echo "FAIL - concurrent starts: want 8 flows, got $n"; fi
 teardown
 
+# --- render_orders: brainstorm orders + gate line on every stage ---
+setup
+bash "$FLOW" start --stage brainstorm "orders-test" >/dev/null
+out="$(bash "$FLOW" orders)"
+check "brainstorm orders surfaced" "Stage = BRAINSTORM" "$out"
+check "brainstorm orders carry gate line" "Gate to advance" "$out"
+teardown
+setup
+bash "$FLOW" start "orders-plan" >/dev/null
+out="$(bash "$FLOW" orders)"; check "plan orders carry gate line" "Gate to advance" "$out"
+bash "$FLOW" set-plan "docs/plans/demo.md" >/dev/null
+bash "$FLOW" advance >/dev/null   # plan -> plan-review
+out="$(bash "$FLOW" orders)"; check "plan-review orders mention enter-worktree" "enter-worktree" "$out"
+teardown
+
 # --- plan-review marker goes stale when the plan file changes (hash re-key) ---
 setup
 bash "$FLOW" start "stale-test" >/dev/null
