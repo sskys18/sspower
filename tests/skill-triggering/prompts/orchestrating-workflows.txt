@@ -1,0 +1,1 @@
+This service has 60+ API route handlers and I need every one audited for missing authorization checks. Each handler should be checked independently, and I want a structured list back of which routes are vulnerable with the reasoning — verified, so I'm not chasing false positives. Can you orchestrate this across agents in the background?

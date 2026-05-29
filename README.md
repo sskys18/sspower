@@ -8,10 +8,10 @@
 [![Version](https://img.shields.io/badge/version-1.1.1-green.svg)](.claude-plugin/plugin.json)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)](#)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-8A2BE2.svg)](https://claude.com/claude-code)
-[![Skills](https://img.shields.io/badge/skills-19-orange.svg)](#-all-19-skills)
+[![Skills](https://img.shields.io/badge/skills-20-orange.svg)](#-all-20-skills)
 [![Docs](https://img.shields.io/badge/docs-architecture%20site-a371f7.svg)](https://sskys18.github.io/sspower/)
 
-*19 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
+*20 composable skills that automatically trigger during your workflow — mandatory workflows, not suggestions. The agent checks for relevant skills before every task.*
 
 <img src="docs/assets/flow.png" width="100%"
      alt="The sspower workflow: a 6-phase pipeline (Route, Design, Plan, Isolate, Execution, Ship) drilling into the SDD per-task loop (implement, structured result, spec review, quality review) and the Codex fix loop (session A implement, session B spec-review, resume A on non-compliant, re-review until compliant).">
@@ -30,7 +30,7 @@
 - [Installation](#-installation)
 - [How SDD Works with Codex](#-how-sdd-works-with-codex)
 - [5 Review Gates Before Merge](#-5-review-gates-before-merge)
-- [All 19 Skills](#-all-19-skills)
+- [All 20 Skills](#-all-20-skills)
 - [Codex Observability](#-codex-observability)
 - [Architecture](#-architecture)
 - [Inspired by](#-inspired-by)
@@ -254,7 +254,7 @@ When a review fails, the controller resumes the implementer's Codex session — 
 
 ---
 
-## 🧩 All 19 Skills
+## 🧩 All 20 Skills
 
 | Skill | Category | What it does |
 |-------|----------|-------------|
@@ -265,7 +265,8 @@ When a review fails, the controller resumes the implementer's Codex session — 
 | `executing-plans` | Execution | Simpler inline/subagent/Codex execution |
 | `test-driven-development` | Testing | RED-GREEN-REFACTOR cycle |
 | `systematic-debugging` | Debugging | 4-phase root cause investigation |
-| `dispatching-parallel-agents` | Collaboration | Concurrent independent work |
+| `dispatching-parallel-agents` | Collaboration | Concurrent independent work (Task tool); routes to `orchestrating-workflows` at scale |
+| `orchestrating-workflows` | Collaboration | Author a native dynamic Workflow (tens–hundreds of background agents) the sspower way — codex lens, completeness critic, git-stays-in-main |
 | `requesting-code-review` | Review | Dispatch reviewer subagent |
 | `receiving-code-review` | Review | Handle feedback with technical rigor |
 | `second-opinion` | Review | Routes to `sanity-reviewer`/`security-reviewer` subagents or Codex `review`/`implement --write` depending on scope (hard gate) |
@@ -367,7 +368,7 @@ sspower/
     prompt-submit              -- Workflow-engine router: auto-start flow / targeted trigger
   scripts/
     flow.sh                    -- plan->review->exec->test->review state machine
-  skills/                      -- 19 skill directories
+  skills/                      -- 20 skill directories
     */SKILL.md                 -- Lean entry point (<100 lines)
     */references/              -- Detailed docs (loaded on demand)
 ```

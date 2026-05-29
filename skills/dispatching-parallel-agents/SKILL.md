@@ -32,6 +32,33 @@ digraph when_to_use {
 
 **Don't use when:** Failures are related, need full system context, agents would interfere (editing same files).
 
+## Task tool vs native Workflow — route first
+
+This skill = the **Task tool**: a small fan-out (≤~8 agents) you dispatch in one
+turn and integrate by hand into *your* context. That is the right tool for a
+few independent problems.
+
+Switch to the native **Workflow** tool when the job crosses the
+**scale-or-verification** gate:
+
+- ≳8 independent units, **OR**
+- each result needs independent adversarial verification before you trust it.
+
+Below the line, stay on the Task tool — add an explicit output format if you
+need structure. Structured output and background/resume *follow from* scale;
+they are not separate triggers. (Same gate `orchestrating-workflows` uses — the
+two skills route on one rule, never contend.)
+
+Then invoke `sspower:orchestrating-workflows`. Routing here is a
+*recommendation*, **not** opt-in: if the user explicitly asked for a
+workflow/background run, author it; if you only inferred it from scale, confirm
+before spinning up the background agents (see that skill's § Opt-in). Workflow
+nests *inside* a flow stage when fan-out-shaped — it does not replace flow.
+
+**Either way, git chokepoints stay in the main thread / flow MERGE** — never
+inside a fan-out agent (parallel git races the index; see
+`orchestrating-workflows` for the full constraint).
+
 ## Batch Sizing
 
 For **bulk file changes** (same edit across many files), batch 5-8 files per agent. Too few agents = slow. Too many files per agent = context overload.

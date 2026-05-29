@@ -56,6 +56,7 @@ out="$(bash "$FLOW" back 2>&1)"
 check "back from plan-review refused" "valid only from test/review/merge" "$out"
 
 out="$(bash "$FLOW" advance)"; check "advance -> exec"        "exec (3/6)"        "$out"
+check "exec orders route fan-out to Workflow" "orchestrating-workflows" "$out"
 out="$(bash "$FLOW" advance)"; check "advance -> test"        "test (4/6)"        "$out"
 
 # back -> exec (valid from test)
@@ -70,6 +71,7 @@ out="$(bash "$FLOW" back)"; check "back from merge returns to exec" "exec (3/6)"
 # advance to review, then to merge, then past -> clears
 bash "$FLOW" advance >/dev/null   # exec -> test
 out="$(bash "$FLOW" advance)"; check "advance -> review" "review (5/6)" "$out"
+check "review orders mention Workflow verifiers" "orchestrating-workflows" "$out"
 out="$(bash "$FLOW" advance)"; check "advance -> merge"  "merge (6/6)"  "$out"
 check "merge stage orders surfaced" "Stage = MERGE" "$out"
 out="$(bash "$FLOW" advance)"; check "advance past merge clears" "complete" "$out"
