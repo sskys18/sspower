@@ -70,13 +70,13 @@
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/auto-review.sh\"",
-            "timeout": 600
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/flow-fence.sh\"",
+            "timeout": 3
           },
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/flow-fence.sh\"",
-            "timeout": 3
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/auto-review.sh\"",
+            "timeout": 600
           }
         ]
       },
