@@ -125,6 +125,43 @@ idx_of() {
 stage="$(jq_get '.flows[$c].stage // empty')"
 task="$(jq_get '.flows[$c].task // empty')"
 plan_path="$(jq_get '.flows[$c].plan_path // empty')"
+design_path="$(jq_get '.flows[$c].design_path // empty')"
+wt="$(jq_get '.flows[$c].worktree // false')"
+wt_path="$(jq_get '.flows[$c].worktree_path // empty')"
+
+# --- review markers -----------------------------------------------------
+# Marker root derives from the SAME git-common-dir as the state key, so markers
+# are stable across worktrees (show-toplevel differs per worktree → would
+# fragment, codex plan-review). dirname(common-dir) = main worktree root.
+_common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+if [ -n "$_common" ]; then MARK_DIR="$(dirname "$_common")/.claude/sspower"; else MARK_DIR="$(pwd -P)/.claude/sspower"; fi
+_sha8() { git hash-object "$1" 2>/dev/null | cut -c1-8; }   # file content hash
+
+# set_review <kind> <verdict> : kind = design|plan
+set_review() {
+  local kind="$1" verdict="$2" path hash
+  case "$kind" in
+    design) path="$design_path" ;;
+    plan)   path="$plan_path" ;;
+    *) die "set_review: kind must be design|plan" ;;
+  esac
+  [ -n "$path" ] && [ -f "$path" ] || die "$kind review: recorded $kind file missing ($path)"
+  case "$verdict" in approve) ;; *) die "$kind review: verdict must be exactly 'approve' (got: $verdict)" ;; esac
+  hash="$(_sha8 "$path")"
+  mkdir -p "$MARK_DIR"
+  printf '{"verdict":"%s","file_hash":"%s","ts":"%s"}\n' "$verdict" "$hash" "$NOW" \
+    > "${MARK_DIR}/${kind}-review.${hash}.json"
+  echo "flow: ${kind}-review recorded (approve, ${hash})"
+}
+
+# review_ok <kind> : 0 if a marker matches the CURRENT file hash
+review_ok() {
+  local kind="$1" path hash
+  case "$kind" in design) path="$design_path" ;; plan) path="$plan_path" ;; esac
+  [ -n "$path" ] && [ -f "$path" ] || return 1
+  hash="$(_sha8 "$path")"
+  [ -f "${MARK_DIR}/${kind}-review.${hash}.json" ]
+}
 
 print_status() {
   if [ -z "$stage" ]; then
@@ -196,13 +233,41 @@ case "$cmd" in
     plan_path="$path"
     echo "flow: plan recorded - $path"
     ;;
+  set-design)
+    [ -n "$stage" ] || die "no active flow"
+    shift; p="$*"; [ -n "$p" ] || die "usage: flow set-design <path>"
+    jq_set '.flows[$c].design_path = $p | .flows[$c].updated = $n' --arg p "$p"
+    design_path="$p"; echo "flow: design recorded - $p" ;;
+  set-design-review) shift; set_review design "${1:-}" ;;
+  set-plan-review)   shift; set_review plan   "${1:-}" ;;
+  enter-worktree)
+    [ -n "$stage" ] || die "no active flow"
+    shift; p="$*"; [ -n "$p" ] || die "usage: flow enter-worktree <path>"
+    [ -d "$p" ] || git worktree add "$p" >/dev/null 2>&1 || die "could not create worktree $p"
+    wt_abs="$(cd "$p" && pwd -P)"
+    jq_set '.flows[$c].worktree = true | .flows[$c].worktree_path = $p | .flows[$c].updated = $n' --arg p "$wt_abs"
+    echo "flow: worktree recorded - $wt_abs"
+    echo "NEXT: run subsequent tools with cwd=$wt_abs (or 'git -C $wt_abs'), then: bash \"$FLOW_SH\" advance" ;;
   advance)
     [ -n "$stage" ] || die "no active flow - run: flow start <task>"
-    # PLAN must record a plan file before leaving the stage - otherwise
-    # plan-review/exec lose the compaction-recovery anchor.
-    if [ "$stage" = "plan" ] && [ -z "$plan_path" ]; then
-      die "plan path required - run: flow set-plan <path> before advancing"
-    fi
+    # Enforce the CURRENT stage's exit gate before computing the next stage.
+    # Every die names its unblock command (wedge-safety, D-HF5).
+    case "$stage" in
+      brainstorm)
+        [ -n "$design_path" ] || die "design path required - run: flow set-design <path>"
+        review_ok design || die "design-review not approved - run codex plan-review, then: flow set-design-review approve" ;;
+      plan)
+        [ -z "$plan_path" ] && die "plan path required - run: flow set-plan <path>" ;;
+      plan-review)
+        review_ok plan || die "plan-review not approved - run codex plan-review, then: flow set-plan-review approve"
+        # if worktree opted-in, it must exist + cwd inside before entering exec
+        if [ "$wt" = "true" ]; then
+          [ -n "$wt_path" ] && [ -d "$wt_path" ] || die "worktree opted-in but missing - run: flow enter-worktree <path>"
+          case "$(pwd -P)" in "$wt_path"*) ;; *) die "cwd not inside worktree $wt_path - cd there first, then advance" ;; esac
+        fi ;;
+      test)
+        [ -f "${MARK_DIR}/test-result.json" ] || echo "flow: WARN no test-result.json - advancing test->review without a test artifact (soft gate)" >&2 ;;
+    esac
     i="$(idx_of "$stage")"
     [ "$i" -ge 0 ] || die "corrupt state (stage=$stage)"
     if [ "$i" -ge $((${#STAGES[@]} - 1)) ]; then
@@ -230,5 +295,5 @@ case "$cmd" in
     ;;
   orders) render_orders "$stage" ;;
   status) print_status ;;
-  *) die "unknown subcommand: $cmd (use start|set-plan|advance|back|status|orders|abort)" ;;
+  *) die "unknown subcommand: $cmd (use start|set-plan|set-design|set-design-review|set-plan-review|enter-worktree|advance|back|status|orders|abort|current-stage)" ;;
 esac

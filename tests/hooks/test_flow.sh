@@ -6,8 +6,18 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FLOW="$ROOT/scripts/flow.sh"
 PASS=0; FAIL=0
 
-setup() { TMP="$(mktemp -d)"; export HOME="$TMP"; }
-teardown() { [ -n "${TMP:-}" ] && [ -d "$TMP" ] && rm -R "$TMP"; }
+# Each block runs inside a fresh temp git repo so BOTH the state file (HOME)
+# and the review markers (MARK_DIR = dirname(git-common-dir)/.claude/sspower)
+# land under TMP and are cleaned by teardown. Without the git repo, MARK_DIR
+# would resolve into the real sspower checkout and hash-stable markers would
+# leak across runs.
+setup() {
+  TMP="$(mktemp -d)"; export HOME="$TMP"
+  REPO="$TMP/repo"; mkdir -p "$REPO/docs/plans"; ( cd "$REPO" && git init -q )
+  echo "plan v1" > "$REPO/docs/plans/demo.md"
+  cd "$REPO"
+}
+teardown() { cd /; [ -n "${TMP:-}" ] && [ -d "$TMP" ] && rm -R "$TMP"; }
 
 check() {
   # $1 = label  $2 = expected substring  $3 = actual
@@ -55,6 +65,12 @@ check "advance surfaces next-stage orders" "Stage = PLAN-REVIEW" "$out"
 out="$(bash "$FLOW" back 2>&1)"
 check "back from plan-review refused" "valid only from test/review/merge" "$out"
 
+# plan-review now gates on an approve marker matching the plan-file hash
+out="$(bash "$FLOW" advance 2>&1)"; rc=$?
+check "advance plan-review->exec blocked w/o marker" "plan-review not approved" "$out"
+[ "$rc" -ne 0 ] && { PASS=$((PASS+1)); echo "ok   - plan-review gate exits nonzero"; } \
+                || { FAIL=$((FAIL+1)); echo "FAIL - plan-review gate exits nonzero"; }
+out="$(bash "$FLOW" set-plan-review approve)"; check "set-plan-review records marker" "plan-review recorded" "$out"
 out="$(bash "$FLOW" advance)"; check "advance -> exec"        "exec (4/7)"        "$out"
 check "exec orders route fan-out to Workflow" "orchestrating-workflows" "$out"
 out="$(bash "$FLOW" advance)"; check "advance -> test"        "test (5/7)"        "$out"
@@ -117,6 +133,47 @@ wait
 n="$(jq '.flows | length' "$HOME/.claude/sspower/flow-state.json" 2>/dev/null || echo 0)"
 if [ "$n" = "8" ]; then PASS=$((PASS+1)); echo "ok   - 8 concurrent starts all persisted"
 else FAIL=$((FAIL+1)); echo "FAIL - concurrent starts: want 8 flows, got $n"; fi
+teardown
+
+# --- plan-review marker goes stale when the plan file changes (hash re-key) ---
+setup
+bash "$FLOW" start "stale-test" >/dev/null
+bash "$FLOW" set-plan "docs/plans/demo.md" >/dev/null
+bash "$FLOW" advance >/dev/null               # plan -> plan-review
+bash "$FLOW" set-plan-review approve >/dev/null
+echo "plan v2 mutated" > "$REPO/docs/plans/demo.md"   # content change -> new hash
+out="$(bash "$FLOW" advance 2>&1)"; rc=$?
+check "stale marker after plan edit re-blocks advance" "plan-review not approved" "$out"
+[ "$rc" -ne 0 ] && { PASS=$((PASS+1)); echo "ok   - stale-marker gate exits nonzero"; } \
+                || { FAIL=$((FAIL+1)); echo "FAIL - stale-marker gate exits nonzero"; }
+teardown
+
+# --- brainstorm gate: needs design path + exact-approve design-review ---
+setup
+bash "$FLOW" start --stage brainstorm "design-test" >/dev/null
+out="$(bash "$FLOW" status)"; check "brainstorm start stage" "brainstorm (1/7)" "$out"
+out="$(bash "$FLOW" advance 2>&1)"; check "brainstorm advance needs design path" "design path required" "$out"
+echo "design doc" > "$REPO/docs/design.md"
+bash "$FLOW" set-design "docs/design.md" >/dev/null
+out="$(bash "$FLOW" advance 2>&1)"; check "brainstorm advance needs design-review" "design-review not approved" "$out"
+out="$(bash "$FLOW" set-design-review reject 2>&1)"; check "non-approve verdict refused" "must be exactly 'approve'" "$out"
+bash "$FLOW" set-design-review approve >/dev/null
+out="$(bash "$FLOW" advance)"; check "brainstorm -> plan after design approve" "plan (2/7)" "$out"
+teardown
+
+# --- enter-worktree records property; plan-review gate enforces cwd-in-worktree ---
+setup
+( cd "$REPO" && git add -A && git -c user.email=t@t -c user.name=t commit -qm init )
+bash "$FLOW" start "wt-test" >/dev/null
+bash "$FLOW" set-plan "docs/plans/demo.md" >/dev/null
+bash "$FLOW" advance >/dev/null               # plan -> plan-review
+bash "$FLOW" set-plan-review approve >/dev/null
+out="$(bash "$FLOW" enter-worktree "$TMP/wt")"; check "enter-worktree records path" "worktree recorded" "$out"
+out="$(bash "$FLOW" advance 2>&1)"; rc=$?
+check "advance blocked when cwd not in worktree" "cwd not inside worktree" "$out"
+[ "$rc" -ne 0 ] && { PASS=$((PASS+1)); echo "ok   - worktree-cwd gate exits nonzero"; } \
+                || { FAIL=$((FAIL+1)); echo "FAIL - worktree-cwd gate exits nonzero"; }
+out="$( cd "$TMP/wt" && bash "$FLOW" advance )"; check "advance ok from inside worktree" "exec (4/7)" "$out"
 teardown
 
 # --- git-common-dir re-key: same flow visible from repo root and subdir ---
