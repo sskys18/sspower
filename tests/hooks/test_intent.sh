@@ -47,6 +47,14 @@ ci "implement a retry layer with backoff and jitter for the api client" \
 ci "refactor the auth module, then add token rotation" \
                                         multi-step     "multi: multi-clause"
 
+# --- classify: design (narrow ideation framing) ---
+ci "design a cache layer"                      design       "design: 'design a cache layer'"
+ci "how should we structure the auth module"   design       "design: structure framing"
+ci "brainstorm options for the cache layer"    design       "design: brainstorm framing"
+ci "build the login page and wire the api"     multi-step   "design NEG: bare build stays multi-step"
+ci "what calls foo"                            architecture "design NEG: architecture stays flow-free"
+ci "review this design doc"                    simple-coding "design NEG: review guard wins"
+
 # --- target_trigger ---
 tt "the parser is broken"               debugging      "trig: debugging"
 tt "tests fail after the merge"         debugging      "trig: test-fail"

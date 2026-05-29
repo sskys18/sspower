@@ -109,6 +109,20 @@ case "$INTENT" in
     emit_trigger "$CLEAN"
     exit 0
     ;;
+  design)
+    TASK="$(printf '%s' "$CLEAN" | head -n1 | cut -c1-100)"
+    if ( cd "$CWD" 2>/dev/null && bash "$FLOW_SH" start --stage brainstorm "$TASK" ) >/dev/null 2>&1; then
+      ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
+      if [ -n "$ORDERS" ]; then
+        emit "AUTO-FLOW (design): a brainstorm-first pipeline was auto-started. Quick single answer? run: bash \"$FLOW_SH\" abort - and just answer. Otherwise: ${ORDERS}"
+        exit 0
+      fi
+    fi
+    command -v log_event >/dev/null 2>&1 && \
+      log_event warn hook.prompt-submit kind=autostart_failed_design
+    emit_trigger "$CLEAN"
+    exit 0
+    ;;
   explicit-skill)
     emit "sspower: you named a skill - invoke it via the Skill tool before acting."
     exit 0

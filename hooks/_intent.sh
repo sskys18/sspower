@@ -112,6 +112,16 @@ sspower_classify_intent() {
       echo simple-coding; return 0 ;;
   esac
 
+  # 4b. design - explicit ideation framing only (narrow). Bare
+  #     build/implement stay multi-step; this matches the "let's figure out
+  #     WHAT to build" shape, which routes to a brainstorm-first flow.
+  #     Sits after the review guard so "review this design" stays a review.
+  case "$p" in
+    "design "*|*" design a "*|*" design the "*|*"how should we structure"*|\
+    *"explore options"*|*"brainstorm"*|*"should we "*)
+      echo design; return 0 ;;
+  esac
+
   # 5. multi-step test - strong action verb AND substantial
   local multi=0
   case " $p " in
