@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # sspower auto plan-review hook (PreToolUse:Bash)
 #
+# STATUS: INTENTIONALLY UNWIRED since c884a04 (decision D-A5). NOT registered in
+# hooks.json — does not fire. Plan-review enforcement was repackaged as an
+# explicit codex plan-review call inside the writing-plans / brainstorming
+# skills (SKILL.md HARD-GATEs). This script is kept functional + e2e-tested
+# (tests/hooks/auto-spec-gate-e2e.sh) as a re-wireable component. Do NOT re-wire
+# without revisiting D-A5 (it would re-introduce the commit-time double-gate
+# that was deliberately removed). See docs/specs/2026-05-29-hardened-autosteer-
+# flow-design.md for the marker-based successor.
+#
 # Fires before `git commit`. Asks git itself (`git commit --dry-run
 # --porcelain --no-verify <args>`) which files THIS specific commit
 # would record. If any of those are plan markdown (docs/plans/*.md),
