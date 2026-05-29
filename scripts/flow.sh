@@ -23,16 +23,38 @@ umask 077
 
 STATE_DIR="${HOME}/.claude/sspower"
 STATE_FILE="${STATE_DIR}/flow-state.json"
-STAGES=(plan plan-review exec test review merge)
+STAGES=(brainstorm plan plan-review exec test review merge)
 TOTAL_STAGES="${#STAGES[@]}"
 # plugin root = scripts/.. - used to build absolute paths in stage orders.
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 FLOW_SH="${PLUGIN_ROOT}/scripts/flow.sh"
 
 die() { echo "flow: $*" >&2; exit 1; }
+
+# Flow state key: the absolute git common dir (stable across all worktrees of
+# one repo); falls back to physical cwd outside a git repo. Bare
+# --git-common-dir is cwd-relative (.git vs ../.git) — force absolute.
+flow_key() {
+  local k
+  k="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+    && [ -n "$k" ] && { printf '%s' "$k"; return; }
+  pwd -P
+}
+
+# current-stage: bare stage token or empty; ALWAYS exit 0 (per-event hook
+# consumer must never wedge on dep gaps). Must precede the jq hard-die.
+if [ "${1:-}" = "current-stage" ]; then
+  command -v jq >/dev/null 2>&1 || { printf ''; exit 0; }
+  _k="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; [ -z "$_k" ] && _k="$(pwd -P)"
+  [ -f "${HOME}/.claude/sspower/flow-state.json" ] || { printf ''; exit 0; }
+  jq -r --arg c "$_k" '.flows[$c].stage // empty' \
+    "${HOME}/.claude/sspower/flow-state.json" 2>/dev/null || printf ''
+  exit 0
+fi
+
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
-CWD="$(pwd -P)"
+CWD="$(flow_key)"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 [ -L "$STATE_FILE" ] && die "refusing to follow symlink: $STATE_FILE"
@@ -67,6 +89,16 @@ done
 # to create the state file.
 [ -f "$STATE_FILE" ] || printf '{"version":1,"flows":{}}\n' > "$STATE_FILE"
 chmod 600 "$STATE_FILE" 2>/dev/null || true
+
+# Migration: legacy pwd-keyed flows → common-dir key (one-time, in-lock).
+_legacy="$(pwd -P)"
+if [ "$_legacy" != "$CWD" ]; then
+  jq --arg old "$_legacy" --arg new "$CWD" '
+    if (.flows[$old] != null) and (.flows[$new] == null)
+    then .flows[$new] = .flows[$old] | del(.flows[$old]) else . end' \
+    "$STATE_FILE" > "${STATE_FILE}.mig" 2>/dev/null \
+    && mv "${STATE_FILE}.mig" "$STATE_FILE" || rm -f "${STATE_FILE}.mig"
+fi
 
 jq_get() { jq -r --arg c "$CWD" "$1" "$STATE_FILE" 2>/dev/null; }
 
@@ -146,11 +178,14 @@ cmd="${1:-status}"
 case "$cmd" in
   start)
     shift
+    start_stage="plan"
+    if [ "${1:-}" = "--stage" ]; then start_stage="${2:?--stage requires a value}"; shift 2; fi
+    case "$start_stage" in brainstorm|plan) ;; *) die "start --stage must be brainstorm|plan" ;; esac
     task="$*"
-    [ -n "$task" ] || die "usage: flow start <task description>"
+    [ -n "$task" ] || die "usage: flow start [--stage brainstorm|plan] <task>"
     [ -z "$stage" ] || die "flow already active (${stage}) - abort it first"
-    jq_set '.flows[$c] = {stage:"plan",task:$t,plan_path:"",started:$n,updated:$n}' --arg t "$task"
-    stage="plan"; print_stage
+    jq_set '.flows[$c] = {stage:$s,task:$t,plan_path:"",design_path:"",worktree:false,worktree_path:"",started:$n,updated:$n}' --arg t "$task" --arg s "$start_stage"
+    stage="$start_stage"; print_stage
     ;;
   set-plan)
     [ -n "$stage" ] || die "no active flow - run: flow start <task>"
