@@ -96,9 +96,11 @@ Rejected:
 - **git-gate trace** — confirm whether a background Workflow subagent's Bash
   routes through the same PreToolUse chain as the main thread (resolves D-WF3
   reason 2 from `[Medium]` to `[High]`). Deferred — reason 1 holds the rule.
-- **Live trigger run** — eval files added + registered (see Resolved §4); the
-  remaining step is executing `tests/skill-triggering/run-all.sh` (spawns
-  `claude -p`) in CI/locally to confirm the new skill actually triggers.
+- **Deterministic trigger contract** — `tests/skill-triggering/run-all.sh` now
+  defaults to the no-spawn description-coverage lint (`test-description-coverage.sh`,
+  32/0). For rare live model-selection checks, run
+  `SSPOWER_LIVE_SKILL_TRIGGERING=1 tests/skill-triggering/run-all.sh` or invoke
+  `run-test.sh` directly with `--max-turns 1`.
 - **Boundary/negative evals** — `run-test.sh` only asserts *positive* triggering
   (did skill X fire?). It cannot express "dispatching only, NOT orchestrating"
   or "confirmation requested before authoring." Adding those needs a
@@ -129,9 +131,10 @@ All 5 findings addressed:
    explicit: real=true only when `quality-review-output.verdict` ==
    `needs-attention` with a matching blocking issue.
 4. **[med]** missing eval → `tests/skill-triggering/prompts/
-   orchestrating-workflows.txt` added + registered in `run-all.sh`; two
-   flow-order substring guards added to `tests/hooks/test_flow.sh` (31/31 pass).
-   Live `claude -p` trigger run = CI/user step (spawns claude).
+   orchestrating-workflows.txt` covered by the deterministic default of
+   `run-all.sh` (`test-description-coverage.sh`); two flow-order substring
+   guards added to `tests/hooks/test_flow.sh` (31/31 pass). Live
+   model-selection checks are explicit opt-in (`SSPOWER_LIVE_SKILL_TRIGGERING=1`).
 5. **[low]** description summarized behavior → trimmed to trigger-only per
    `writing-skills`.
 

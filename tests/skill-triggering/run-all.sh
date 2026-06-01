@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# Run all skill triggering tests
+# Run skill-triggering checks.
+# Default: deterministic description-coverage lint (no model spawn, no billing).
+# Set SSPOWER_LIVE_SKILL_TRIGGERING=1 for the legacy live `claude -p` run.
 # Usage: ./run-all.sh
+#   SSPOWER_LIVE_SKILL_TRIGGERING=1 ./run-all.sh   # rare live behavior check
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "${SSPOWER_LIVE_SKILL_TRIGGERING:-0}" != "1" ]; then
+    exec "$SCRIPT_DIR/test-description-coverage.sh"
+fi
+
 PROMPTS_DIR="$SCRIPT_DIR/prompts"
 
 SKILLS=(
