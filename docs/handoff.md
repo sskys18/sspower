@@ -1,45 +1,36 @@
 # Session Handoff
-> Generated: 2026-05-29 — supersedes 2026-05-26 graph-P1→P2 (graph terminal at P4/1.5.0, P5+ killed; that handoff fully stale).
+> Generated: 2026-06-01 — Skill-triggering eval moved off `claude -p` to a deterministic description-coverage lint. Built + verified. Pushing.
 
 ## Task
-Two workstreams shipped this session; one build remains:
-1. **sspower × native Workflow integration** — SHIPPED (committed + pushed).
-2. **Hardened auto-steer flow** — design + spec + implementation plan SHIPPED; **the BUILD is the next action.**
+Resume #3 from prior sspower handoff was a live `claude -p` skill-trigger eval for `orchestrating-workflows`. User directive: **drop `claude -p`** — run the eval well without it. **DONE.**
 
 ## Status
-### Completed (on `main`, pushed)
-- `d7ea09a` feat(skills): `orchestrating-workflows` skill + dispatching router + flow.sh exec/review pointers + README 20 skills. Design: `docs/specs/2026-05-29-sspower-workflow-integration-design.md`. (5 codex rounds.)
-- `d4a5d75` docs(spec): hardened auto-steer flow design + `auto-spec-gate.sh` STATUS header. Spec: `docs/specs/2026-05-29-hardened-autosteer-flow-design.md`. (4 codex rounds.)
-- `e10c64f` docs(plan): **`docs/plans/2026-05-29-hardened-autosteer-flow.md`** — TDD task groups A–E. (codex plan-review applied.)
+### Completed (on `main`, commit `8fc9b7d`)
+- `tests/skill-triggering/test-description-coverage.sh` — NEW deterministic contract lint. 32/0, no spawn, no billing. Pins each skill's trigger phrases as substrings of its `SKILL.md` `description:`, a length budget, and fixture presence. Mutation-verified: drop `"fan out"` from OW desc → FAIL + nonzero exit; restore → 32/0.
+- `tests/skill-triggering/prompts/orchestrating-workflows.txt` — reworded to explicitly **"author a Workflow … Please write the workflow."** Old prompt ("orchestrate across agents in the background") was the dispatching-parallel-agents shape, so the harness asserted the wrong boundary.
 
 ### In Progress
-- None. Plan is reviewed + committed; build unstarted.
+- None. After push, local == origin/main.
 
 ## Resume Here
-1. **Execute the plan via `sspower:subagent-driven-development`** (or `executing-plans` inline) on `docs/plans/2026-05-29-hardened-autosteer-flow.md`, **task group A first** (flow.sh: git-common-dir state re-key + `current-stage` + brainstorm stage). Each group ends with `bash -n` + its test + a SUPERVISOR commit.
-2. Then B (advance-gating + markers), C (orders), D (`flow-fence.sh` + hooks.json), E (intent `design` class). A→B→D are ordered (B/D need A's `current-stage`); C/E independent.
-3. Live `claude -p` skill-trigger eval for `orchestrating-workflows` (`tests/skill-triggering/run-all.sh`) — NOT run this session (spawns claude). Run in CI/locally to confirm trigger.
+1. **Nothing pending in sspower.**
+2. **Optional — model-selection check (deliberately NOT automated):** the lint proves description *coverage*, not that the model *selects* OW from the reworded prompt. If you ever want that confirmed, use a ONE-SHOT in-session subagent (Agent tool: hand it the skill catalog + the naive prompt, ask which skill it'd invoke). Do NOT reinstate the billed `claude -p` loop. If you must script it, `--max-turns 1` (skill fires turn 1; the old harness's 3 turns were ~3× waste).
+3. **Optional (deferred, separate repo):** re-add `◆ flow <stage>` statusline segment — wire to `flow.sh current-stage`, edit claude-mine `src/` + rebuild. NOT the symlink. (Carried from prior handoff.)
 
 ## Decisions (do NOT revisit)
-- **Workflow = thin layer over native tool, nests in flow stages** (D-WF1..4): codex-lens (sampled, not per-finding), completeness-critic, git-in-main. NOT a reimplementation.
-- **Hardened flow = funnel-not-push** (D-HF1): early-phase fences return PreToolUse `ask` (human valve), NOT hard-deny. Only git stays hard-deny. Rejected hard-deny everywhere — compounds the existing 3-round codex wedge.
-- **Fences MAIN-THREAD ONLY; Workflow/Task subagents EXEMPT** (D-HF6). RESOLVED `[High]`: PreToolUse hooks DO fire for subagents (CC added agent_id/agent_type to hook events; wiki-archive.py reads subagent_type) → flow-fence MUST detect agent_id/agent_type and pass.
-- **Worktree is a PROPERTY, not a stage** (codex plan-review): the stage was unreachable (chicken-egg on `wt`). `enter-worktree` settable at plan-review; exec gate checks cwd-in-worktree when `worktree:true`.
-- **Marker root = `dirname(git-common-dir)`/.claude/sspower** — same stable key as flow state (show-toplevel differs per worktree → fragments).
-- **`auto-spec-gate.sh` is intentionally unwired dead code (D-A5)** — do NOT re-wire (regression; re-introduces removed double-gate). Plan-review enforced at writing-plans/brainstorming skill checkpoint. Header documents this.
-- **Plan-review pass-set = exact `approve`** (matches the contract auto-spec-gate used).
+- **2026-06-01 D-EVAL-NO-CLAUDE-P**: skill-trigger regression is tested by a deterministic description-contract lint, not a live `claude -p` run. Reason — several skills (OW especially) are description-only routed (`hooks/_intent.sh` has no workflow/orchestrate class), so the real failure mode is a trigger phrase dropped from frontmatter; a string-contract lint catches that with zero spawn/billing/nondeterminism. `claude -p` harness (`run-test.sh`/`run-all.sh`) is NOT deleted — kept for rare manual behavior checks — but is no longer the default gate.
+- **2026-06-01 D-OW-PROMPT-AUTHORS**: the OW fixture must explicitly ask to *author/write a workflow*. "orchestrate across agents in the background" alone is the dispatching-parallel-agents trigger (that skill self-describes as "the routing gate for whether a job warrants a Workflow"); a model correctly picking it would have been scored FAIL.
+- Carries forward: D-A (state key = git-common-dir), D-HF1 (funnel-not-push), flow-fence-before-auto-review, brainstorm → `/7`, hash-keyed review markers, fences main-thread-only.
 
 ## Gotchas
-- **Codex misreads an implementation-PLAN as an execute-request** (refuses "read-only, can't commit"). For plan-review, prepend a "REVIEW only, do NOT implement/commit" wrapper to the prompt — see this session's re-run. Design-doc reviews don't hit this.
-- **Plan commits are SUPERVISOR-run.** The codex worker cannot `git commit/push/merge` (policy). subagent-driven execution must commit from the main thread.
-- **`flow.sh current-stage` must fail-open** (print empty + exit 0 on missing jq/corrupt/non-git) — it's called every PreToolUse event; must never inherit flow.sh's top-level `jq` hard-die or it wedges the session.
-- Plan line-number refs are hints — anchor on text/function names (file drifts).
+- **Lint is coverage, not behavior.** It cannot catch a description that's well-phrased but semantically wrong, nor prove model selection. That's the intentional boundary — see Resume #2.
+- `desc_of()` in the lint assumes frontmatter = exactly `{name, description}`. If a third frontmatter key is ever added to a SKILL.md, the extraction (drop `name:`, strip `description:` label, fold) will fold that key's text into the description string. Adjust `desc_of` if frontmatter shape changes.
+- Git chokepoint: `cd <path> && git commit` is DENIED by `chained-shell-check`. Use `git -C <path> commit` standalone (hit this once this session).
+- **Pre-existing test failure** (unchanged): `tests/hooks/auto-review-detect.sh` fails 3 (codex-bridge env) — not from this work.
+- All prior gotchas hold (statusline symlink → claude-mine build, semble-rewrite mangles recursive `grep -rn`, `flow.sh current-stage` fail-open, tests in temp git repo, sspower-graph terminal at P4).
 
 ## Context
-- **Repo**: `~/.claude/plugins/marketplaces/sskys18/plugins/sspower` (sskys18/sspower remote)
-- **Branch**: `main`, in sync with `origin/main` @ `e10c64f`. Clean working tree.
-- **Tests**: `bash tests/hooks/test_flow.sh` (31/31 ✓ incl. 2 new Workflow guards). New build adds `test_flow_fence.sh` + extends `test_intent.sh`/`test_flow.sh` (see plan).
-- **Unknowns** (verify before acting):
-  - `_intent.sh` exact class-precedence location for inserting the `design` branch (must sit before multi-step action-verb test) — read the file.
-  - `hooks/hooks.json` existing PreToolUse structure before registering flow-fence (preserve order; semble-rewrite→cmd-rewrite→auto-review chain).
-  - Whether to delete vs keep the `auto-spec-gate.sh` dead script — left documented; user's call.
+- **Repo**: `~/.claude/plugins/marketplaces/sskys18/plugins/sspower` (sskys18/sspower), branch `main`.
+- **Tests run this session**: new lint 32/0 (+ mutation test), `tests/hooks/test_intent.sh` 35/0 (confirmed unaffected). New script `bash -n` clean.
+- **Also pending (DIFFERENT repo `~/.claude`, NOT this session's work, NOT pushed):** `M skills/daily/SKILL.md`, `?? skills/arc-farm/` (untracked new skill), `M docs/handoff.md`. User has not asked to commit these — left untouched. Confirm intent before sweeping them in.
+- **Confirmed earlier**: trust-dir for `…/infinite-block/legacy/docs` already present in `~/.codex/config.toml` (line 198-199) — prior-handoff Resume #1 was already done.
