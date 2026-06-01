@@ -80,9 +80,7 @@ trap 'rm -rf "$WORK"' EXIT
 #   - SSPOWER_STUB_MAIN_VERDICT  -> verdict for the MAIN reviewer
 #       (the hook invokes main with `--profile`; auto-review.sh:387)
 #   - SSPOWER_STUB_SEC_VERDICT   -> verdict for the SECURITY reviewer
-#       (invoked with `--effort`; auto-review.sh:409). Sanity also uses
-#       `--effort` but is disabled by default (SSPOWER_SANITY_REVIEW
-#       unset, auto-review.sh:420) so `--effort` == security here.
+#       (invoked with `--effort`; auto-review.sh:409).
 #   - SSPOWER_STUB_RAW           -> emit this raw string verbatim
 #       (used to drive the unparseable -> RESULT="" -> unknown path;
 #        auto-review.sh:586-589)
@@ -310,7 +308,7 @@ assert_eq "verdict cache file present in sandbox" "1" \
 #     verdict-cache bleed. SSPOWER_REVIEW_CACHE_TTL=0 defangs the cache
 #     entirely so every invocation re-runs assembly.
 echo "[(d) verdict assembly]"
-NO_CACHE='SSPOWER_REVIEW_CACHE_TTL=0 SSPOWER_REVIEW_AUTO_APPLY=off'
+NO_CACHE='SSPOWER_REVIEW_CACHE_TTL=0'
 
 # --- (d3) approve happy-path control: assembly -> allow, NO deny ------
 # Establishes discrimination: the deny cases below are not blanket-deny.

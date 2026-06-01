@@ -1,36 +1,38 @@
 # Session Handoff
-> Generated: 2026-06-01 — Skill-triggering eval moved off `claude -p` to a deterministic description-coverage lint. Built + verified. Pushing.
+> Generated: 2026-06-01 — SSPOWER_* env-flag cleanup. 2 dead flags removed + CLAUDE.md consolidated. Plan-reviewed (approve-with-followups). Uncommitted, awaiting supervisor commit.
 
 ## Task
-Resume #3 from prior sspower handoff was a live `claude -p` skill-trigger eval for `orchestrating-workflows`. User directive: **drop `claude -p`** — run the eval well without it. **DONE.**
+Reduce SSPOWER_* env-flag surface. User wanted "minimum (~22)"; codex review + docs sweep proved most flags are a documented operator API → corrected scope to "remove genuinely-dead flags only + fix CLAUDE.md prose". DONE.
 
 ## Status
-### Completed (on `main`, commit `8fc9b7d`)
-- `tests/skill-triggering/test-description-coverage.sh` — NEW deterministic contract lint. 32/0, no spawn, no billing. Pins each skill's trigger phrases as substrings of its `SKILL.md` `description:`, a length budget, and fixture presence. Mutation-verified: drop `"fan out"` from OW desc → FAIL + nonzero exit; restore → 32/0.
-- `tests/skill-triggering/prompts/orchestrating-workflows.txt` — reworded to explicitly **"author a Workflow … Please write the workflow."** Old prompt ("orchestrate across agents in the background") was the dispatching-parallel-agents shape, so the harness asserted the wrong boundary.
+### Completed (uncommitted on `main`)
+- `tests/hooks/test-integration.sh` — removed 2 dead flags: `SSPOWER_REVIEW_AUTO_APPLY` (from `NO_CACHE`, :313) + stale `SSPOWER_SANITY_REVIEW` comment block (:83-85). Suite **40/0**.
+- `CLAUDE.md` — review-tunable enumeration (`SSPOWER_REVIEW_CACHE_TTL/APPROVE_TTL/TIMEOUT/MAX_ROUNDS`) replaced with pointer to `docs/ARCHITECTURE.md §Tunables`.
+- `docs/plans/2026-06-01-sspower-env-flag-reduction.md` — NEW, plan-reviewed `approve-with-followups`. Contains the §Rejected list (do-not-inline) + §6 Tier-2 (feature-deletion path, not done).
+- Net: 53 → **51** distinct flags in code. (Earlier this session, ALSO done + PUSHED @ `73bb72e`: skill-triggering coverage lint — separate, unrelated.)
 
 ### In Progress
-- None. After push, local == origin/main.
+- None. 3 files uncommitted (below). Supervisor commits (plan rule: codex worker must not git commit).
 
 ## Resume Here
-1. **Nothing pending in sspower.**
-2. **Optional — model-selection check (deliberately NOT automated):** the lint proves description *coverage*, not that the model *selects* OW from the reworded prompt. If you ever want that confirmed, use a ONE-SHOT in-session subagent (Agent tool: hand it the skill catalog + the naive prompt, ask which skill it'd invoke). Do NOT reinstate the billed `claude -p` loop. If you must script it, `--max-turns 1` (skill fires turn 1; the old harness's 3 turns were ~3× waste).
-3. **Optional (deferred, separate repo):** re-add `◆ flow <stage>` statusline segment — wire to `flow.sh current-stage`, edit claude-mine `src/` + rebuild. NOT the symlink. (Carried from prior handoff.)
+1. **Commit the 3 uncommitted changes + push** (standalone `git -C` chokepoints, auto-review-gated): `CLAUDE.md`, `tests/hooks/test-integration.sh`, `docs/plans/2026-06-01-sspower-env-flag-reduction.md`. Suggested msg: `refactor(env): remove 2 dead SSPOWER_* flags + point CLAUDE.md tunables at ARCHITECTURE.md`.
+2. **Nothing else pending.** 51 is the no-regret floor.
+3. **Optional (only if user wants <51):** §6 Tier-2 of the plan — deletes features (codex-surface hook, LSP block-modes) or reworks p4-eval off env toggles. Needs explicit "delete those features" decision.
 
 ## Decisions (do NOT revisit)
-- **2026-06-01 D-EVAL-NO-CLAUDE-P**: skill-trigger regression is tested by a deterministic description-contract lint, not a live `claude -p` run. Reason — several skills (OW especially) are description-only routed (`hooks/_intent.sh` has no workflow/orchestrate class), so the real failure mode is a trigger phrase dropped from frontmatter; a string-contract lint catches that with zero spawn/billing/nondeterminism. `claude -p` harness (`run-test.sh`/`run-all.sh`) is NOT deleted — kept for rare manual behavior checks — but is no longer the default gate.
-- **2026-06-01 D-OW-PROMPT-AUTHORS**: the OW fixture must explicitly ask to *author/write a workflow*. "orchestrate across agents in the background" alone is the dispatching-parallel-agents trigger (that skill self-describes as "the routing gate for whether a job warrants a Workflow"); a model correctly picking it would have been scored FAIL.
-- Carries forward: D-A (state key = git-common-dir), D-HF1 (funnel-not-push), flow-fence-before-auto-review, brainstorm → `/7`, hash-keyed review markers, fences main-thread-only.
+- **2026-06-01 D-ENV-FLOOR-51**: SSPOWER_* env flags are a documented operator API (`docs/ARCHITECTURE.md §Tunables`), NOT clutter. Only 2 were dead (`REVIEW_AUTO_APPLY`, `SANITY_REVIEW`). Inlining documented tunables/toggles = breaking contracts + deleting capability. Rejected: the 22/25/31 inlining targets (codex plan-review needs-attention'd them; `BRIDGE_PATH` live in `sspower_mem`, `FLOW_FENCE`/`SEMBLE_REWRITE`/`REVIEW_TIMEOUT` documented escape hatches). The "too many" feeling was CLAUDE.md prose, not code — fixed by the ARCHITECTURE.md pointer.
+- **2026-06-01 D-EVAL-NO-CLAUDE-P** (prior, shipped @ `73bb72e`): skill-trigger regression tested by deterministic description-contract lint, not live `claude -p`. `run-all.sh` defaults to lint unless `SSPOWER_LIVE_SKILL_TRIGGERING=1`.
+- Carries forward: D-A (state key = git-common-dir), D-HF1 (funnel-not-push), flow-fence-before-auto-review, brainstorm → `/7`, hash-keyed review markers.
 
 ## Gotchas
-- **Lint is coverage, not behavior.** It cannot catch a description that's well-phrased but semantically wrong, nor prove model selection. That's the intentional boundary — see Resume #2.
-- `desc_of()` in the lint assumes frontmatter = exactly `{name, description}`. If a third frontmatter key is ever added to a SKILL.md, the extraction (drop `name:`, strip `description:` label, fold) will fold that key's text into the description string. Adjust `desc_of` if frontmatter shape changes.
-- Git chokepoint: `cd <path> && git commit` is DENIED by `chained-shell-check`. Use `git -C <path> commit` standalone (hit this once this session).
-- **Pre-existing test failure** (unchanged): `tests/hooks/auto-review-detect.sh` fails 3 (codex-bridge env) — not from this work.
-- All prior gotchas hold (statusline symlink → claude-mine build, semble-rewrite mangles recursive `grep -rn`, `flow.sh current-stage` fail-open, tests in temp git repo, sspower-graph terminal at P4).
+- **zsh does NOT word-split unquoted vars** (`for v in $LIST` treats LIST as one word). Use `bash <<'EOF'` for loop-over-list greps (bit me twice this session).
+- **ARCHITECTURE.md is the env SSOT** — never delete a flag from it to "reduce count"; that removes operator capability. CLAUDE.md points AT it.
+- **Distinguish doc types**: `docs/plans/*` + `.claude/wiki/*` = historical record (quote old code, not live contracts); `docs/ARCHITECTURE.md` + `README.md` = live operator reference. A flag in a plan doc ≠ documented knob; a flag in ARCHITECTURE.md = documented knob (keep).
+- **Codex worker sandbox is read-only + forbids `rm -rf`** — it can't run the hook test suites (their `trap rm -rf EXIT` cleanup) or the plan-review mkdtemp. Run suites + bridge from supervisor session.
+- **Pre-existing test failure** (NOT mine): `tests/hooks/auto-review-detect.sh` 124/3 — the 3 (`--cd otherrepo`, `bridge ran` ×2) are codex-bridge-env failures, identical before this work.
+- Prior gotchas hold (statusline symlink → claude-mine build, semble-rewrite mangles recursive `grep -rn`, tests in temp git repo, `cd && git` denied → use `git -C`).
 
 ## Context
-- **Repo**: `~/.claude/plugins/marketplaces/sskys18/plugins/sspower` (sskys18/sspower), branch `main`.
-- **Tests run this session**: new lint 32/0 (+ mutation test), `tests/hooks/test_intent.sh` 35/0 (confirmed unaffected). New script `bash -n` clean.
-- **Also pending (DIFFERENT repo `~/.claude`, NOT this session's work, NOT pushed):** `M skills/daily/SKILL.md`, `?? skills/arc-farm/` (untracked new skill), `M docs/handoff.md`. User has not asked to commit these — left untouched. Confirm intent before sweeping them in.
-- **Confirmed earlier**: trust-dir for `…/infinite-block/legacy/docs` already present in `~/.codex/config.toml` (line 198-199) — prior-handoff Resume #1 was already done.
+- **Repo**: `~/.claude/plugins/marketplaces/sskys18/plugins/sspower` (sskys18/sspower), branch `main`, currently AHEAD of origin only by uncommitted (no unpushed commits — `73bb72e` is pushed).
+- **Tests**: `test-integration.sh` 40/0 ✓; `auto-review-detect.sh` 124/3 (pre-existing); skill lint 32/0.
+- **Also pending (DIFFERENT repo `~/.claude`, untouched):** `M skills/daily/SKILL.md`, `?? skills/arc-farm/`, `M docs/handoff.md`. Not this session's work.
