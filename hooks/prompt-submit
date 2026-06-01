@@ -93,6 +93,13 @@ emit_trigger() {
 INTENT="$(sspower_classify_intent "$CLEAN")"
 [ "$INTENT" = "multi-step" ] && [ "$QUICK" -eq 1 ] && INTENT="simple-coding"
 
+# Autostart opt-out: SSPOWER_FLOW_AUTOSTART=off -> never auto-start a flow.
+# multi-step/design degrade to a skill-trigger nudge (skill routing preserved;
+# flow.sh start is never called). Active flows + /flow start still work.
+if [ "${SSPOWER_FLOW_AUTOSTART:-on}" = "off" ]; then
+  case "$INTENT" in multi-step|design) INTENT="simple-coding" ;; esac
+fi
+
 case "$INTENT" in
   multi-step)
     TASK="$(printf '%s' "$CLEAN" | head -n1 | cut -c1-100)"
