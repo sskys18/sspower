@@ -53,13 +53,11 @@ digraph skill_flow {
 
 Three axes for parallel work, do not confuse them:
 
-- **flow** (`/flow`) — the macro lifecycle across turns (plan→…→merge).
 - **`dispatching-parallel-agents`** — small Task-tool fan-out (≤~8), integrated
   into your context this turn.
 - **`orchestrating-workflows`** — the native Workflow tool for large fan-out
   (tens–hundreds of background agents). Structured output, adversarial
-  verification, and resume are what it *gives* you. Nests *inside* a flow stage;
-  does not replace flow.
+  verification, and resume are what it *gives* you.
 
 Single routing gate (identical in both skills): `dispatching-parallel-agents`
 hands off to `orchestrating-workflows` when a job is **large (≳8 units)** or

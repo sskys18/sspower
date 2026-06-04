@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-# UserPromptSubmit hook: workflow-engine router.
+# UserPromptSubmit hook: skill router.
 #
-#   ACTIVE FLOW -> inject the current stage's marching orders (flow.sh).
-#   IDLE        -> classify intent (hooks/_intent.sh):
-#     multi-step    -> auto-start a flow (conservative; model can abort)
+#   Classify intent (hooks/_intent.sh):
+#     multi-step    -> planning skill trigger (writing-plans)
+#     design        -> brainstorming skill trigger
 #     explicit-skill-> short skill-confirmation line
 #     simple-coding -> one targeted skill trigger
 #     qa            -> nothing
+#
+# The flow state machine was removed (2026-06-04): work now reaches main via
+# the user-owned `/ship` skill, not an auto-advancing pipeline. This hook only
+# routes skills now.
 #
 # Failure policy: never blocks submission (EXIT trap -> exit 0). On
 # ambiguity (no jq, malformed/empty payload, _intent.sh missing) it falls
@@ -18,7 +22,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/_log.sh" 2>/dev/null || true
 trap '_sspower_exit_guard $? "0" hook.prompt-submit' EXIT
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-FLOW_SH="${PLUGIN_ROOT}/scripts/flow.sh"
 INTENT_SH="${PLUGIN_ROOT}/hooks/_intent.sh"
 
 REMINDER="sspower: BEFORE responding, check which skills apply (even 1% chance = invoke via Skill tool). Priority: process skills first (brainstorming, systematic-debugging), then implementation skills (test-driven-development, writing-plans, executing-plans, subagent-driven-development). Rigid skills (TDD, debugging): follow exactly. Flexible skills: adapt to context. If about to claim done: verification-before-completion. If completing a feature: requesting-code-review. Skip only for pure Q&A with zero coding/planning intent."
@@ -45,17 +48,7 @@ else
   CWD="$(pwd -P)"
 fi
 
-# --- Step 1: ACTIVE FLOW wins (even on a bad prompt) ------------------
-ORDERS=""
-if [ -f "$FLOW_SH" ]; then
-  ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
-fi
-if [ -n "$ORDERS" ]; then
-  emit "$ORDERS"
-  exit 0
-fi
-
-# --- Step 2: idle - malformed/empty payload -> legacy reminder ---------
+# --- Step 1: malformed/empty payload -> legacy reminder ---------------
 if [ "$PAYLOAD_OK" -eq 0 ] || [ -z "$PROMPT" ]; then
   emit "$REMINDER"
   exit 0
@@ -93,41 +86,13 @@ emit_trigger() {
 INTENT="$(sspower_classify_intent "$CLEAN")"
 [ "$INTENT" = "multi-step" ] && [ "$QUICK" -eq 1 ] && INTENT="simple-coding"
 
-# Autostart opt-out: SSPOWER_FLOW_AUTOSTART=off -> never auto-start a flow.
-# multi-step/design degrade to a skill-trigger nudge (skill routing preserved;
-# flow.sh start is never called). Active flows + /flow start still work.
-if [ "${SSPOWER_FLOW_AUTOSTART:-on}" = "off" ]; then
-  case "$INTENT" in multi-step|design) INTENT="simple-coding" ;; esac
-fi
-
 case "$INTENT" in
   multi-step)
-    TASK="$(printf '%s' "$CLEAN" | head -n1 | cut -c1-100)"
-    if ( cd "$CWD" 2>/dev/null && bash "$FLOW_SH" start "$TASK" ) >/dev/null 2>&1; then
-      ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
-      if [ -n "$ORDERS" ]; then
-        emit "AUTO-FLOW: a pipeline was auto-started for this task. If this is actually a quick, single-step change, run: bash \"$FLOW_SH\" abort - and just do it directly. Otherwise: ${ORDERS}"
-        exit 0
-      fi
-    fi
-    # auto-start failed -> log, then fall back to the simple-coding trigger
-    command -v log_event >/dev/null 2>&1 && \
-      log_event warn hook.prompt-submit kind=autostart_failed
-    emit_trigger "$CLEAN"
+    emit "sspower -> invoke sspower:writing-plans for this multi-step work; when implementation is done and you want it on main, run /ship."
     exit 0
     ;;
   design)
-    TASK="$(printf '%s' "$CLEAN" | head -n1 | cut -c1-100)"
-    if ( cd "$CWD" 2>/dev/null && bash "$FLOW_SH" start --stage brainstorm "$TASK" ) >/dev/null 2>&1; then
-      ORDERS="$(cd "$CWD" 2>/dev/null && bash "$FLOW_SH" orders 2>/dev/null || true)"
-      if [ -n "$ORDERS" ]; then
-        emit "AUTO-FLOW (design): a brainstorm-first pipeline was auto-started. Quick single answer? run: bash \"$FLOW_SH\" abort - and just answer. Otherwise: ${ORDERS}"
-        exit 0
-      fi
-    fi
-    command -v log_event >/dev/null 2>&1 && \
-      log_event warn hook.prompt-submit kind=autostart_failed_design
-    emit_trigger "$CLEAN"
+    emit "sspower -> invoke sspower:brainstorming before designing."
     exit 0
     ;;
   explicit-skill)

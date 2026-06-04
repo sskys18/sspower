@@ -336,15 +336,16 @@ One line per event, append-only, rotated at 1000 lines (keeps last 500).
 
 **Diagnose**: say "examine codex log" or invoke the `codex-diagnostics` skill — it groups errors, matches known patterns, and proposes patches.
 
-**Workflow-engine routing** (`hooks/prompt-submit` + `hooks/_intent.sh`):
+**Skill routing** (`hooks/prompt-submit` + `hooks/_intent.sh`):
 - One shared intent classifier (`_intent.sh`) labels each prompt
-  `qa` / `explicit-skill` / `simple-coding` / `multi-step`.
-- An active flow → the hook injects the current stage's marching orders.
-- Idle + `multi-step` → a flow is **auto-started** (`scripts/flow.sh`); the
-  injection carries an "abort if trivial" bail-out.
-- Idle + `simple-coding` → one targeted skill trigger; `qa` → nothing.
-- Opt out of auto-start for one prompt: prefix it with `quick:`.
-- Inspect/clear a flow: `/flow status`, `/flow abort`.
+  `qa` / `explicit-skill` / `simple-coding` / `multi-step` / `design`.
+- `multi-step` → `writing-plans` trigger (+ a `/ship` reminder); `design` →
+  `brainstorming` trigger; `simple-coding` → one targeted skill trigger;
+  `qa` → nothing.
+- Opt out for one prompt: prefix it with `quick:`.
+- Getting work to main: run `/ship` (stage→commit→push→PR→merge, one confirm
+  before push). The old auto-advancing flow state machine was removed
+  2026-06-04 — it stopped at `review` and never reached main.
 
 ---
 
@@ -364,11 +365,9 @@ sspower/
     sanity-reviewer.md         -- Independent second opinion (real-blocker-only)
   hooks/
     _intent.sh                 -- Shared intent classifier (sourced)
-    session-start              -- Injects a short workflow-engine notice
-    prompt-submit              -- Workflow-engine router: auto-start flow / targeted trigger
-  scripts/
-    flow.sh                    -- plan->review->exec->test->review state machine
-  skills/                      -- 20 skill directories
+    session-start              -- Injects a short skill-routing notice
+    prompt-submit              -- Skill router: intent -> targeted skill trigger
+  skills/                      -- skill directories
     */SKILL.md                 -- Lean entry point (<100 lines)
     */references/              -- Detailed docs (loaded on demand)
 ```

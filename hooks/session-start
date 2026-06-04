@@ -83,7 +83,7 @@ if [ -n "$payload_cwd" ]; then
     esac
 fi
 
-session_context="<EXTREMELY_IMPORTANT>\nYou have sspower - a workflow engine. The prompt-submit hook routes skills by intent and auto-starts a plan->review->exec->test->review flow on multi-step work. Run \`/flow status\` to inspect an active flow, \`/flow abort\` to clear one. Invoke skills via the Skill tool; \`/using-sspower\` is the skill reference.\n</EXTREMELY_IMPORTANT>${mem_block}"
+session_context="<EXTREMELY_IMPORTANT>\nYou have sspower - a skill framework. The prompt-submit hook routes skills by prompt intent. Invoke skills via the Skill tool; \`/using-sspower\` is the skill reference. When work is done and you want it on main, run \`/ship\` (stage->commit->push->PR->merge, one confirm before push).\n</EXTREMELY_IMPORTANT>${mem_block}"
 
 # Output context injection as JSON (Claude Code format).
 # Uses printf instead of heredoc to work around bash 5.3+ heredoc hang.
