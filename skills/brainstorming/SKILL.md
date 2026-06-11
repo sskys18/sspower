@@ -24,6 +24,41 @@ If the command is unavailable or returns no results, skip silently (the
 project may not have a memory backend yet). Surface any contradiction between
 the user's request and a prior decision before proposing.
 
+## Interview benchmark (score-then-ask)
+
+Before EVERY question round, self-score the brief — one line of
+justification per dimension:
+
+| Dimension | Greenfield weight | Brownfield weight | Floor |
+|---|---|---|---|
+| Goal clarity | .40 | .35 | .75 |
+| Constraint clarity | .30 | .25 | .65 |
+| Success-criteria clarity | .30 | .25 | .70 |
+| Context clarity | — | .15 | .60 |
+
+Use ONE column of weights (they each sum to 1.0): greenfield = no
+existing codebase; brownfield = working in an existing repo.
+`ambiguity = 1 − weighted sum`. **Seed-ready: ambiguity ≤ 0.2 AND all
+floors met.** Questions target the weakest failing dimension only — no
+generic "anything else?" rounds.
+
+**4-class gap resolution.** Classify every open gap before asking:
+1. **user-fact** — already answered in the brief; extract it
+2. **repo-fact** — answerable by reading the repo; read it, don't ask
+3. **safe-default** — conservative + reversible; take it and record it
+4. **blocker** — credentials, prod decisions, destructive scope; the
+   ONLY class that earns a user question
+
+**Round cap: 5.** At cap, close remaining gaps with auditable safe
+defaults; hard-block only when defaulting is genuinely unsafe.
+
+**Audit trail (mandatory in the design doc):** `## Clarity scorecard`
+(final per-dimension scores + justifications) and `## Defaults taken`
+(each default + reversal path).
+
+**Optional fresh-context re-score** for large specs: spawn one verifier
+subagent to re-score the scorecard blind before presenting the design.
+
 ## Recording decisions
 
 When the design is approved, record each load-bearing architectural call:
@@ -46,7 +81,7 @@ You MUST create a task for each item and complete them in order:
 
 1. **Explore project context** — check files, docs, recent commits
 2. **Offer visual companion** (if visual questions ahead) — own message, not combined with other content
-3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
+3. **Ask clarifying questions** — score-then-ask (see Interview benchmark); one at a time; blockers only
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — sections scaled to complexity, get user approval after each
 6. **Write design doc** — save to `docs/specs/YYYY-MM-DD-<topic>-design.md` and commit

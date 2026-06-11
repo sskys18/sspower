@@ -11,12 +11,6 @@
           },
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/diet-activate.js\"",
-            "timeout": 5,
-            "async": false
-          },
-          {
-            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/semble-session.sh\"",
             "timeout": 5,
             "async": false
@@ -31,12 +25,6 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/prompt-submit\"",
-            "async": false
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/diet-track.js\"",
-            "timeout": 5,
             "async": false
           },
           {
