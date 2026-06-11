@@ -54,7 +54,7 @@
 <details>
 <summary><b>Full detail</b></summary>
 
-- **Diet mode** — terse-output mode for token efficiency. SessionStart hook activates `full` by default; `/diet lite|full|ultra|off` toggles intensity. Per-turn reinforcement keeps it from drifting. The diet ruleset also governs commit-message and code-review formatting (terse Conventional Commits, one-line review comments) — no separate skill needed. Companion skill: `/compress-memory`.
+- **Diet mode** — terse-output mode for token efficiency. Manual-invoke only since 1.3.0 (`/diet lite|full|ultra|off`); the SessionStart auto-activation and per-turn reinforcement hooks were unregistered for Fable 5, whose harness already favors concise output (hook files kept for revert). The diet ruleset also governs commit-message and code-review formatting (terse Conventional Commits, one-line review comments) — no separate skill needed. Companion skill: `/compress-memory`.
 - **Project memory (sspower-mem)** — PreCompact + SessionEnd hooks archive each session: a structured JSON sidecar into `<cwd>/.claude/wiki/sessions/` (legacy belt) and an `episodic` block ingested into the `sspower-mem` backend. The per-session markdown file and `index.md` are no longer written (Phase E). The JSON sidecar is symlinked into `~/.claude/sessions/` for cross-project tooling.
 - **Wired skills** — `brainstorming`, `writing-plans`, and `systematic-debugging` read/write decisions + gotchas via the `sspower-mem` CLI before proposing work, so prior context informs every new design and bug investigation.
 - **Codex defaults** — tier/model/effort are governed by `~/.codex/config.toml` profiles (`quick`/`normal`/`deep`, single source of truth). `codex-bridge.mjs` selects a per-command profile (`COMMAND_PROFILE`) and passes `-p`; override per-call with `--profile` / `--model` / `--effort` (explicit flags patch individual profile fields).
@@ -395,7 +395,7 @@ open-source community. Thanks to:
 | [rtk](https://github.com/rtk-ai/rtk) | The default command-rewriter for token-saving shell substitutions (`hooks/cmd-rewrite.sh`). |
 | [mem0](https://github.com/mem0ai/mem0) | The memory store powering `sspower-mem` — raw + extracted records, embeddings, vector search. |
 | `semble_rs` | gitignore-aware `tree` / `search` rewriting used by `hooks/semble-rewrite.sh`. |
-| `caveman` | The token-diet output mode (`/diet`, SessionStart diet-activate hook). |
+| `caveman` | The token-diet output mode (`/diet`; auto-activation hooks unregistered in 1.3.0). |
 
 ---
 
